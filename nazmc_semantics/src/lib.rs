@@ -6,7 +6,6 @@ mod type_var_check;
 mod typed_ast;
 mod types;
 
-use iter_tools::Itertools;
 use nazmc_data_pool::{typed_index_collections::TiSlice, IdKey};
 
 pub(crate) use nazmc_ast::*;
@@ -164,19 +163,20 @@ impl<'a> SemanticsAnalyzer<'a> {
             .type_inf_ctx
             .unify(&self.current_scope_expected_return_ty, &found_return_ty)
         {
-            let span = self.ast.scopes[self.ast.fns[fn_key].scope_key]
-                .return_expr
-                .map_or_else(
-                    || self.get_type_expr_span(self.ast.fns[fn_key].return_type.unwrap()),
-                    |expr_key| self.get_expr_span(expr_key),
-                );
+            // Show error if there is a return expr
+            // and let control flow analysis detect explicit returns
+            if let Some(return_expr_key) =
+                self.ast.scopes[self.ast.fns[fn_key].scope_key].return_expr
+            {
+                let span = self.get_expr_span(return_expr_key);
 
-            self.add_type_mismatch_in_fn_return_ty_err(
-                fn_key,
-                &self.current_scope_expected_return_ty.clone(),
-                &found_return_ty,
-                span,
-            );
+                self.add_type_mismatch_in_fn_return_ty_err(
+                    fn_key,
+                    &self.current_scope_expected_return_ty.clone(),
+                    &found_return_ty,
+                    span,
+                );
+            }
         }
 
         self.check_scope_ty_vars(self.ast.fns[fn_key].scope_key);
