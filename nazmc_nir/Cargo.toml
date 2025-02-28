@@ -1,0 +1,10 @@
+[package]
+name = "nazmc_nir"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nazmc_data_pool = { path = "../nazmc_data_pool" }
+nazmc_diagnostics = { path = "../nazmc_diagnostics" }
+derive_more = { version = "*", features = ["from", "into"] }
+thin-vec = "*"
