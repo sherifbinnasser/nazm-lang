@@ -43,7 +43,7 @@ pub struct Static {
 
 pub struct Fn {
     pub info: ItemInfo,
-    pub args: TiVec<ArgKey, Binding>,
+    pub args: TiVec<ArgKey, Arg>,
     pub cfg: CFG,
 }
 
@@ -59,15 +59,23 @@ pub struct CFG {
     pub branches: TiVec<BranchKey, Branch>,
     /// All presented bindings
     pub bindings: TiVec<BindingKey, Binding>,
+    /// All mutable bindings
+    pub mut_bindings: HashMap<BindingKey, ()>,
     /// All temporaries
     pub temps: TiVec<TempKey, Temp>,
+}
+
+pub struct Arg {
+    pub id_key: IdKey,
+    pub id_span: Span,
+    pub typ: TypeKey,
+    pub is_mut: bool,
 }
 
 pub struct Binding {
     pub id_key: IdKey,
     pub id_span: Span,
     pub typ: TypeKey,
-    pub is_mut: bool,
 }
 
 pub struct Temp {
