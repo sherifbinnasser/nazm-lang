@@ -1,13 +1,13 @@
 use nazmc_ast::{
-    ASTId, ArrayTypeExprKey, ConstKey, FieldsStructKey, FieldsStructPathKey, FileKey, FnKey, Item,
-    ItemInfo, ItemPath, LetStmKey, PathNoPkgKey, PathTypeExprKey, PathWithPkgKey, PkgKey, PkgPath,
-    ScopeKey, StarImportStm, StaticKey, TupleStructKey, TupleStructPathKey, UnitStructKey,
-    UnitStructPathKey, VisModifier,
+    ASTId, ArrayTypeExprKey, ConstKey, FieldsStructKey, FieldsStructPathKey, FnKey, Item, ItemPath,
+    LetStmKey, PathNoPkgKey, PathTypeExprKey, PathWithPkgKey, PkgPath, ScopeKey, StarImportStm,
+    StaticKey, TupleStructKey, TupleStructPathKey, UnitStructKey, UnitStructPathKey, VisModifier,
 };
 use nazmc_data_pool::{
     typed_index_collections::{ti_vec, TiSlice, TiVec},
     IdKey,
 };
+use nazmc_data_pool::{FileKey, ItemInfo, PkgKey};
 use nazmc_diagnostics::{
     eprint_diagnostics, file_info::FileInfo, span::Span, CodeWindow, Diagnostic,
 };
@@ -730,10 +730,7 @@ impl<'a> NameResolver<'a> {
 
         let note_msg = match accessible_items_with_same_name.len() {
             2 => {
-                format!(
-                    "تم استيراد عنصرين بنفس الاسم `{}` من المسارات التالية",
-                    name
-                )
+                format!("تم استيراد عنصرين بنفس الاسم `{}` من المسارات التالية", name)
             }
             n @ 3..=10 => {
                 format!(

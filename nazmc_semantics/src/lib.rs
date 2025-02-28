@@ -6,7 +6,7 @@ mod type_var_check;
 mod typed_ast;
 mod types;
 
-use nazmc_data_pool::{typed_index_collections::TiSlice, IdKey};
+use nazmc_data_pool::{typed_index_collections::TiSlice, FileKey, IdKey, PkgKey};
 
 pub(crate) use nazmc_ast::*;
 use nazmc_diagnostics::{
@@ -133,7 +133,6 @@ impl<'a> SemanticsAnalyzer<'a> {
     }
 
     fn analyze_fn_bodies(&mut self) {
-        // Will be restored to true by inner lambda scopes
         self.current_lambda_scope_key = None;
         self.current_lambda_first_implicit_return_ty_span = None;
 

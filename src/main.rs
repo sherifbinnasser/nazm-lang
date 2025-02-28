@@ -1,11 +1,11 @@
 mod cli;
 use cli::print_err;
-use nazmc_ast::{FileKey, Item, PkgKey, PkgPoolBuilder};
-use nazmc_data_pool::typed_index_collections::{ti_vec, TiVec};
+use nazmc_ast::{Item, PkgPoolBuilder};
+use nazmc_data_pool::typed_index_collections::TiVec;
+use nazmc_data_pool::FileKey;
+use nazmc_data_pool::PkgKey;
 use nazmc_data_pool::{IdPoolBuilder, StrPoolBuilder};
 use nazmc_diagnostics::file_info::FileInfo;
-use nazmc_diagnostics::span::Span;
-use nazmc_diagnostics::{eprint_diagnostics, CodeWindow, Diagnostic};
 use nazmc_lexer::LexerIter;
 use nazmc_parser::parse;
 use nazmc_resolve::NameResolver;
@@ -14,9 +14,7 @@ use serde::Deserialize;
 use serde_yaml::Value;
 use std::io;
 use std::io::Write;
-use std::process::id;
 use std::{
-    collections::HashMap,
     fs, panic,
     process::{exit, Command},
 };

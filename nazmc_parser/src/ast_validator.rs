@@ -1,5 +1,5 @@
 use crate::*;
-use nazmc_ast::{ASTId, ExprKind, FileKey, ReturnExpr, ScopeKey};
+use nazmc_ast::{ASTId, ExprKind, ReturnExpr, ScopeKey};
 use nazmc_data_pool::{typed_index_collections::TiSlice, IdKey};
 use nazmc_diagnostics::eprint_diagnostics;
 use std::{collections::HashMap, process::exit};
@@ -223,7 +223,7 @@ impl<'a> ASTValidator<'a> {
 
                     self.items_names_in_current_file.insert(id_key, id_span);
 
-                    let info = nazmc_ast::ItemInfo {
+                    let info = nazmc_data_pool::ItemInfo {
                         file_key: self.file_key,
                         id_key,
                         id_span,
@@ -256,7 +256,7 @@ impl<'a> ASTValidator<'a> {
 
                     self.items_names_in_current_file.insert(id_key, id_span);
 
-                    let info = nazmc_ast::ItemInfo {
+                    let info = nazmc_data_pool::ItemInfo {
                         file_key: self.file_key,
                         id_key,
                         id_span,
@@ -288,7 +288,7 @@ impl<'a> ASTValidator<'a> {
 
                     self.items_names_in_current_file.insert(id_key, id_span);
 
-                    let info = nazmc_ast::ItemInfo {
+                    let info = nazmc_data_pool::ItemInfo {
                         file_key: self.file_key,
                         id_key,
                         id_span,
@@ -383,7 +383,7 @@ impl<'a> ASTValidator<'a> {
 
                     self.items_names_in_current_file.insert(id_key, id_span);
 
-                    let info = nazmc_ast::ItemInfo {
+                    let info = nazmc_data_pool::ItemInfo {
                         file_key: self.file_key,
                         id_key,
                         id_span,

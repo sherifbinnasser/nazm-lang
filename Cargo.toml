@@ -15,6 +15,7 @@ nazmc_diagnostics = { path = "nazmc_diagnostics" }
 nazmc_ast = { path = "nazmc_ast" }
 nazmc_resolve = { path = "nazmc_resolve" }
 nazmc_semantics = { path = "nazmc_semantics" }
+nazmc_nir = { path = "nazmc_nir" }
 serde = { version = "*", features = ["derive"] }
 serde_yaml = "*"
 thin-vec = "*"

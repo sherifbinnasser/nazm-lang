@@ -6,3 +6,4 @@ edition = "2021"
 [dependencies]
 typed-index-collections = "*"
 derive_more = { version = "*", features = ["from", "into"] }
+nazmc_diagnostics = { path = "../nazmc_diagnostics" }

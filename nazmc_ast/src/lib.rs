@@ -3,7 +3,7 @@ pub use item::*;
 use nazmc_data_pool::{
     new_data_pool_key,
     typed_index_collections::{ti_vec, TiVec},
-    DataPoolBuilder, IdKey, StrKey,
+    DataPoolBuilder, FileKey, IdKey, ItemInfo, PkgKey, StrKey,
 };
 use nazmc_diagnostics::span::{Span, SpanCursor};
 use std::collections::HashMap;
@@ -29,8 +29,6 @@ new_data_pool_key! { TupleTypeExprKey }
 new_data_pool_key! { ArrayTypeExprKey }
 new_data_pool_key! { LambdaTypeExprKey }
 
-new_data_pool_key! { PkgKey }
-new_data_pool_key! { FileKey }
 new_data_pool_key! { UnitStructKey }
 new_data_pool_key! { TupleStructKey }
 new_data_pool_key! { FieldsStructKey }
@@ -42,8 +40,6 @@ new_data_pool_key! { LetStmKey }
 new_data_pool_key! { ExprKey }
 
 pub type PkgPoolBuilder = DataPoolBuilder<PkgKey, ThinVec<IdKey>>;
-
-pub const TOP_PKG_KEY: PkgKey = PkgKey(0);
 
 #[derive(Default)]
 pub struct Unresolved {
@@ -220,13 +216,6 @@ pub enum VisModifier {
     Default,
     Public,
     Private,
-}
-
-#[derive(Clone, Copy, Default)]
-pub struct ItemInfo {
-    pub file_key: FileKey,
-    pub id_key: IdKey,
-    pub id_span: Span,
 }
 
 #[derive(Clone, Default)]

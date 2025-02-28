@@ -1,6 +1,6 @@
 pub use ast_validator::ASTValidator;
 use error::*;
-use nazmc_ast::{FileKey, PkgKey};
+use nazmc_data_pool::{FileKey, PkgKey};
 use nazmc_diagnostics::{
     file_info::FileInfo, fmt_diagnostics, span::SpanCursor, CodeWindow, Diagnostic,
 };

@@ -1,5 +1,7 @@
 use std::vec;
 
+use nazmc_data_pool::ItemInfo;
+
 use crate::{
     type_infer::{CompositeType, ConcreteType, PrimitiveType, Type, TypeVarSubstitution},
     *,

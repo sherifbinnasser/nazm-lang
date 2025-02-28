@@ -1,4 +1,5 @@
 use derive_more::{From, Into};
+use nazmc_diagnostics::span::Span;
 use std::{collections::HashMap, hash::Hash, marker::PhantomData, usize};
 pub use typed_index_collections;
 use typed_index_collections::TiVec;
@@ -24,8 +25,16 @@ macro_rules! new_data_pool_key {
 }
 
 new_data_pool_key! { IdKey }
-
 new_data_pool_key! { StrKey }
+new_data_pool_key! { PkgKey }
+new_data_pool_key! { FileKey }
+
+#[derive(Clone, Copy, Default)]
+pub struct ItemInfo {
+    pub file_key: FileKey,
+    pub id_key: IdKey,
+    pub id_span: Span,
+}
 
 pub type IdPoolBuilder = DataPoolBuilder<IdKey, String>;
 
