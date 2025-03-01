@@ -1,6 +1,7 @@
 mod consts;
 mod errors;
 mod exprs;
+mod nir_builder;
 mod type_infer;
 mod type_var_check;
 mod typed_ast;
@@ -12,6 +13,7 @@ pub(crate) use nazmc_ast::*;
 use nazmc_diagnostics::{
     eprint_diagnostics, file_info::FileInfo, span::Span, CodeWindow, Diagnostic,
 };
+use nir_builder::{CFGBuilder, NIRBuilder};
 use std::{collections::HashMap, process::exit};
 use thin_vec::ThinVec;
 use type_infer::{CompositeType, ConcreteType, Type, TypeInferenceCtx, TypeVarKey};
@@ -48,6 +50,8 @@ pub struct SemanticsAnalyzer<'a> {
     current_file_key: FileKey,
     current_fn_key: FnKey,
     type_inf_ctx: TypeInferenceCtx,
+    nir_builder: NIRBuilder,
+    cfg_builder: CFGBuilder,
     /// For fns and lambdas only
     current_scope_expected_return_ty: Type,
     current_lambda_first_implicit_return_ty_span: Option<Span>,

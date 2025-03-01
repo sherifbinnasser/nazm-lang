@@ -14,6 +14,7 @@ new_data_pool_key! { ArgKey }
 new_data_pool_key! { BindingKey }
 new_data_pool_key! { TypeKey }
 new_data_pool_key! { ArrayTypeKey }
+new_data_pool_key! { TupleTypeKey }
 new_data_pool_key! { LambdaTypeKey }
 new_data_pool_key! { FnPtrTypeKey }
 new_data_pool_key! { TempKey }
@@ -23,10 +24,11 @@ new_data_pool_key! { LValueKey }
 pub struct NIR {
     pub types: TiVec<TypeKey, Type>,
     pub array_types: TiVec<ArrayTypeKey, ArrayType>,
+    pub tuple_types: TiVec<TupleTypeKey, TupleType>,
     pub lambda_types: TiVec<LambdaTypeKey, LambdaType>,
     pub fn_ptr_types: TiVec<FnPtrTypeKey, FnPtrType>,
     pub structs: TiVec<StructKey, Struct>,
-    pub statics: TiVec<StaticKey, Struct>,
+    pub statics: TiVec<StaticKey, Static>,
     pub fns: TiVec<FnKey, Fn>,
 }
 
@@ -51,12 +53,15 @@ pub const START_BASIC_BLOCK: BasicBlockKey = BasicBlockKey(0);
 
 pub const END_BASIC_BLOCK: BasicBlockKey = BasicBlockKey(1);
 
+#[derive(Default)]
 /// A control flow graph of a function or an execution block
 pub struct CFG {
     /// The start has a key of 0 and the end block has a key of 1
     pub basic_blocks: TiVec<BasicBlockKey, BasicBlock>,
     /// All branches between basic blocks
     pub branches: TiVec<BranchKey, Branch>,
+    /// All lvalues
+    pub lvalues: TiVec<LValueKey, LValue>,
     /// All presented bindings
     pub bindings: TiVec<BindingKey, Binding>,
     /// All mutable bindings
@@ -86,6 +91,7 @@ pub struct BasicBlock {
     pub incoming: ThinVec<BranchKey>,
     pub conditional_goto: Option<BranchKey>,
     pub goto: BranchKey,
+    pub stms: ThinVec<Stm>,
 }
 
 pub struct Branch {
@@ -100,7 +106,9 @@ pub enum BranchKind {
     JNZ,
 }
 
+#[derive(Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Type {
+    #[default]
     Unit,
     I,
     I1,
@@ -122,22 +130,31 @@ pub enum Type {
     Ptr(TypeKey),
     MutPtr(TypeKey),
     Array(ArrayTypeKey),
+    Tuple(TupleTypeKey),
     Lambda(LambdaTypeKey),
     FnPtr(FnPtrTypeKey),
 }
 
+#[derive(Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ArrayType {
-    pub underlying_type: TypeKey,
+    pub underlying_typ: TypeKey,
     pub size: u32,
 }
 
+#[derive(Default, Clone, PartialEq, Eq, Hash)]
+pub struct TupleType {
+    pub types: ThinVec<TypeKey>,
+}
+
+#[derive(Default, Clone, PartialEq, Eq, Hash)]
 pub struct LambdaType {
     pub params_types: ThinVec<TypeKey>,
     pub return_type: TypeKey,
 }
 
+#[derive(Default, Clone, PartialEq, Eq, Hash)]
 pub struct FnPtrType {
-    pub paramas_types: ThinVec<TypeKey>,
+    pub params_types: ThinVec<TypeKey>,
     pub return_type: TypeKey,
 }
 
@@ -152,6 +169,7 @@ pub enum LValue {
     Temp(TempKey),
     Arg(ArgKey),
     Static(StaticKey),
+    Fn(FnKey),
     Deref(LValueKey),
     Field { on: LValueKey, field_id: IdKey },
     TupleIdx { on: LValueKey, idx: u32 },
@@ -182,6 +200,10 @@ pub enum RValue {
     UnaryOp {
         op: UnaryOp,
         operand: LValueKey,
+    },
+    Call {
+        on: LValueKey,
+        args: ThinVec<LValueKey>,
     },
 }
 
@@ -233,4 +255,45 @@ pub enum UnaryOp {
     LNot,
     BNot,
     Minus,
+}
+
+use std::fs::File;
+use std::io::{self, Write};
+
+impl CFG {
+    pub fn write_dot(&self, filename: &str) -> io::Result<()> {
+        let mut file = File::create(filename)?;
+
+        writeln!(file, "digraph CFG {{")?;
+        writeln!(file, "    node [shape=rect];")?;
+
+        // Write basic blocks
+        for (bb_key, _) in self.basic_blocks.iter_enumerated() {
+            let label = if bb_key == START_BASIC_BLOCK {
+                "Start"
+            } else if bb_key == END_BASIC_BLOCK {
+                "End"
+            } else {
+                &format!("BB {:?}", bb_key)
+            };
+            writeln!(file, "    {:?} [label=\"{}\", style=bold];", bb_key, label)?;
+        }
+
+        // Write edges
+        for branch in &self.branches {
+            let label = match branch.kind {
+                BranchKind::Straight => "",
+                BranchKind::JZ => "JZ",
+                BranchKind::JNZ => "JNZ",
+            };
+            writeln!(
+                file,
+                "    {:?} -> {:?} [label=\"{}\"]",
+                branch.from, branch.to, label
+            )?;
+        }
+
+        writeln!(file, "}}")?;
+        Ok(())
+    }
 }

@@ -7,6 +7,7 @@ edition = "2021"
 nazmc_ast = { path = "../nazmc_ast" }
 nazmc_data_pool = { path = "../nazmc_data_pool" }
 nazmc_diagnostics = { path = "../nazmc_diagnostics" }
+nazmc_nir = { path = "../nazmc_nir" }
 derive_more = { version = "*", features = ["from", "into"] }
 thin-vec = "*"
 iter_tools = "*"
