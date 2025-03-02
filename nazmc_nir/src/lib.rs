@@ -208,6 +208,7 @@ pub enum RValue {
 }
 
 pub enum Const {
+    Unit,
     I(isize),
     I1(i8),
     I2(i16),

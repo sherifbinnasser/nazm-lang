@@ -1,11 +1,11 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, usize};
 
 use nazmc_ast::{ExprKey, LetStmKey, ScopeKey};
 use nazmc_data_pool::{typed_index_collections::TiVec, DataPoolBuilder, IdKey};
 use nazmc_nir::{
-    ArrayType, ArrayTypeKey, BindingKey, FnPtrType, FnPtrTypeKey, LValue, LambdaType,
-    LambdaTypeKey, RValue, Stm, Struct, StructKey, Temp, TempKey, TupleType, TupleTypeKey, Type,
-    TypeKey, CFG,
+    ArrayType, ArrayTypeKey, BasicBlockKey, BindingKey, Const, FnPtrType, FnPtrTypeKey, LValue,
+    LambdaType, LambdaTypeKey, RValue, Stm, Struct, StructKey, Temp, TempKey, TupleType,
+    TupleTypeKey, Type, TypeKey, CFG,
 };
 
 use crate::SemanticsAnalyzer;
@@ -215,7 +215,55 @@ impl<'a> SemanticsAnalyzer<'a> {
         }
     }
 
-    pub(crate) fn lower_expr(&mut self, expr_key: ExprKey) {
-        todo!()
+    fn new_temp(&mut self, typ: TypeKey) {
+        let temp_key = self.cfg_builder.cfg.temps.push_and_get_key(Temp { typ });
+    }
+
+    fn lower_expr(&mut self, expr_key: ExprKey) {
+        let typ = self.nir_builder.exprs_types[expr_key];
+
+        let rvalue = match &self.ast.exprs[expr_key].kind {
+            nazmc_ast::ExprKind::Unit => RValue::Const(Const::Unit),
+            nazmc_ast::ExprKind::Literal(literal_expr) => match *literal_expr {
+                nazmc_ast::LiteralExpr::Str(str_key) => RValue::Const(Const::Str(str_key)),
+                nazmc_ast::LiteralExpr::Char(ch) => RValue::Const(Const::Char(ch)),
+                nazmc_ast::LiteralExpr::Bool(b) => RValue::Const(Const::Bool(b)),
+                nazmc_ast::LiteralExpr::Num(num_kind) => match num_kind {
+                    nazmc_ast::NumKind::F4(n) => RValue::Const(Const::F4(n)),
+                    nazmc_ast::NumKind::F8(n) => RValue::Const(Const::F8(n)),
+                    nazmc_ast::NumKind::I(n) => RValue::Const(Const::I(n)),
+                    nazmc_ast::NumKind::I1(n) => RValue::Const(Const::I1(n)),
+                    nazmc_ast::NumKind::I2(n) => RValue::Const(Const::I2(n)),
+                    nazmc_ast::NumKind::I4(n) => RValue::Const(Const::I4(n)),
+                    nazmc_ast::NumKind::I8(n) => RValue::Const(Const::I8(n)),
+                    nazmc_ast::NumKind::U(n) => RValue::Const(Const::U(n)),
+                    nazmc_ast::NumKind::U1(n) => RValue::Const(Const::U1(n)),
+                    nazmc_ast::NumKind::U2(n) => RValue::Const(Const::U2(n)),
+                    nazmc_ast::NumKind::U4(n) => RValue::Const(Const::U4(n)),
+                    nazmc_ast::NumKind::U8(n) => RValue::Const(Const::U8(n)),
+                    _ => unreachable!(),
+                },
+            },
+            nazmc_ast::ExprKind::PathNoPkg(path_no_pkg_key) => todo!(),
+            nazmc_ast::ExprKind::PathInPkg(path_with_pkg_key) => todo!(),
+            nazmc_ast::ExprKind::Call(call_expr) => todo!(),
+            nazmc_ast::ExprKind::UnitStruct(unit_struct_path_key) => todo!(),
+            nazmc_ast::ExprKind::TupleStruct(tuple_struct_expr) => todo!(),
+            nazmc_ast::ExprKind::FieldsStruct(fields_struct_expr) => todo!(),
+            nazmc_ast::ExprKind::Field(field_expr) => todo!(),
+            nazmc_ast::ExprKind::Idx(idx_expr) => todo!(),
+            nazmc_ast::ExprKind::TupleIdx(tuple_idx_expr) => todo!(),
+            nazmc_ast::ExprKind::Tuple(thin_vec) => todo!(),
+            nazmc_ast::ExprKind::ArrayElemnts(thin_vec) => todo!(),
+            nazmc_ast::ExprKind::ArrayElemntsSized(array_elements_sized_expr) => todo!(),
+            nazmc_ast::ExprKind::If(if_expr) => todo!(),
+            nazmc_ast::ExprKind::Lambda(lambda_expr) => todo!(),
+            nazmc_ast::ExprKind::UnaryOp(unary_op_expr) => todo!(),
+            nazmc_ast::ExprKind::BinaryOp(binary_op_expr) => todo!(),
+            nazmc_ast::ExprKind::Return(return_expr) => todo!(),
+            nazmc_ast::ExprKind::Break(scope_key) => todo!(),
+            nazmc_ast::ExprKind::Continue(scope_key) => todo!(),
+            nazmc_ast::ExprKind::On => todo!(),
+        };
     }
 }

@@ -943,4 +943,20 @@ impl<'a> SemanticsAnalyzer<'a> {
         );
         self.diagnostics.push(diagnostic);
     }
+
+    pub(crate) fn add_num_lit_exceeds_its_limits(
+        &mut self,
+        span: Span,
+        ty_str: &'static str,
+        min_num_str: &str,
+        max_num_str: &str,
+    ) {
+        let msg = format!("قيمة العدد خارج النطاق المسموح به للنوع `{ty_str}`");
+        let label =
+            format!("قيمة النوع `{ty_str}` يجب أن تنحصر بين `{min_num_str}` و`{max_num_str}`");
+        let mut code_window = CodeWindow::new(&self.files_infos[self.current_file_key], span.start);
+        code_window.mark_error(span, vec![label]);
+        let diagnostic = Diagnostic::error(msg, vec![code_window]);
+        self.diagnostics.push(diagnostic);
+    }
 }

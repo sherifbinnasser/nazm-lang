@@ -1,7 +1,39 @@
 use crate::{
-    type_infer::{NumberConstraints, TypeVarSubstitution},
+    type_infer::{NumberConstraints, PrimitiveType, TypeVarSubstitution},
     *,
 };
+
+macro_rules! check_int_bounds {
+    ($self: ident, $lit_span: ident, $n: ident, $typ: ty, $type_name: expr) => {
+        if $n > <$typ>::MAX as u64 {
+            $self.add_num_lit_exceeds_its_limits(
+                $lit_span,
+                $type_name,
+                &<$typ>::MIN.to_string(),
+                &<$typ>::MAX.to_string(),
+            );
+        }
+    };
+}
+
+macro_rules! check_signed_int_bounds {
+    ($self: ident, $lit_span: ident, $n: ident, $typ: ty, $type_name: expr) => {
+        if $n > <$typ>::MAX as u64 + 1 {
+            $self.add_num_lit_exceeds_its_limits(
+                $lit_span,
+                $type_name,
+                &<$typ>::MIN.to_string(),
+                &<$typ>::MAX.to_string(),
+            );
+        }
+    };
+}
+
+macro_rules! num_lit_expr_kind {
+    ($num_expr: expr) => {
+        ExprKind::Literal(LiteralExpr::Num($num_expr))
+    };
+}
 
 impl<'a> SemanticsAnalyzer<'a> {
     pub(crate) fn ty_var_check(&mut self, base_ty: &Type, span: Span, is_expr: bool) -> Type {
@@ -247,8 +279,52 @@ impl<'a> SemanticsAnalyzer<'a> {
                 return;
             }
             ExprKind::UnaryOp(unary_op_expr) => {
-                self.check_expr_ty_vars(unary_op_expr.expr);
-                ExprKind::UnaryOp(unary_op_expr)
+                if let (ExprKind::Literal(LiteralExpr::Num(num)), UnaryOp::Minus) =
+                    (&self.ast.exprs[unary_op_expr.expr].kind, &unary_op_expr.op)
+                {
+                    match num {
+                        NumKind::F4(f) => num_lit_expr_kind!(NumKind::F4(-f)),
+                        NumKind::F8(f) => num_lit_expr_kind!(NumKind::F8(-f)),
+                        NumKind::I(n) => num_lit_expr_kind!(NumKind::I(-n)),
+                        NumKind::I1(n) => num_lit_expr_kind!(NumKind::I1(-n)),
+                        NumKind::I2(n) => num_lit_expr_kind!(NumKind::I2(-n)),
+                        NumKind::I4(n) => num_lit_expr_kind!(NumKind::I4(-n)),
+                        NumKind::I8(n) => num_lit_expr_kind!(NumKind::I8(-n)),
+                        NumKind::UnspecifiedFloat(f) => {
+                            self.check_unspecified_float(
+                                expr_key,
+                                self.get_expr_span(unary_op_expr.expr), // Show the literal span
+                                -f,
+                            );
+
+                            self.typed_ast.exprs.insert(
+                                unary_op_expr.expr,
+                                self.typed_ast.exprs[&expr_key].clone(),
+                            ); // Set the literal type to the whole expression type
+
+                            return;
+                        }
+                        NumKind::UnspecifiedInt(n) => {
+                            let lit_span = self.get_expr_span(expr_key); // The span includes the minus sign
+
+                            self.check_signed_unspecified_int(expr_key, lit_span, *n);
+
+                            self.typed_ast.exprs.insert(
+                                unary_op_expr.expr,
+                                self.typed_ast.exprs[&expr_key].clone(),
+                            ); // Set the literal type to the whole expression type
+
+                            return;
+                        }
+                        _ => {
+                            self.check_expr_ty_vars(unary_op_expr.expr);
+                            ExprKind::UnaryOp(unary_op_expr)
+                        }
+                    }
+                } else {
+                    self.check_expr_ty_vars(unary_op_expr.expr);
+                    ExprKind::UnaryOp(unary_op_expr)
+                }
             }
             ExprKind::BinaryOp(binary_op_expr) => {
                 self.check_expr_ty_vars(binary_op_expr.left);
@@ -281,6 +357,14 @@ impl<'a> SemanticsAnalyzer<'a> {
                 // So the error must be reported where it is and not here
                 return;
             }
+            ExprKind::Literal(LiteralExpr::Num(NumKind::UnspecifiedInt(n))) => {
+                self.check_unspecified_int(expr_key, self.get_expr_span(expr_key), n);
+                return;
+            }
+            ExprKind::Literal(LiteralExpr::Num(NumKind::UnspecifiedFloat(f))) => {
+                self.check_unspecified_float(expr_key, self.get_expr_span(expr_key), f);
+                return;
+            }
             ExprKind::TupleStruct(_) => todo!(),
             ExprKind::ArrayElemntsSized(_) => todo!(),
             ExprKind::On => todo!(),
@@ -288,6 +372,7 @@ impl<'a> SemanticsAnalyzer<'a> {
         };
 
         self.ast.exprs[expr_key].kind = kind;
+
         let span = self.get_expr_span(expr_key);
 
         let Some(ty) = self.typed_ast.exprs.remove(&expr_key) else {
@@ -296,6 +381,161 @@ impl<'a> SemanticsAnalyzer<'a> {
 
         let ty = self.ty_var_check(&ty, span, true);
 
-        self.typed_ast.exprs.insert(expr_key, ty.clone());
+        self.typed_ast.exprs.insert(expr_key, ty);
+    }
+
+    fn check_signed_unspecified_int(&mut self, expr_key: ExprKey, lit_span: Span, n: u64) {
+        let Some(ty) = self.typed_ast.exprs.remove(&expr_key) else {
+            unreachable!();
+        };
+
+        let span = self.get_expr_span(expr_key);
+
+        let ty = self.ty_var_check(&ty, span, true);
+
+        let kind = if let Type::Concrete(ConcreteType::Primitive(prim_ty)) = &ty {
+            match prim_ty {
+                PrimitiveType::I => {
+                    check_signed_int_bounds!(self, lit_span, n, isize, "ص");
+                    let n = if n == isize::MAX as u64 + 1 {
+                        isize::MIN
+                    } else {
+                        -(n as isize)
+                    };
+                    ExprKind::Literal(LiteralExpr::Num(NumKind::I(n)))
+                }
+                PrimitiveType::I1 => {
+                    check_signed_int_bounds!(self, lit_span, n, i8, "ص1");
+                    let n = if n == i8::MAX as u64 + 1 {
+                        i8::MIN
+                    } else {
+                        -(n as i8)
+                    };
+                    ExprKind::Literal(LiteralExpr::Num(NumKind::I1(n)))
+                }
+                PrimitiveType::I2 => {
+                    check_signed_int_bounds!(self, lit_span, n, i16, "ص2");
+                    let n = if n == i16::MAX as u64 + 1 {
+                        i16::MIN
+                    } else {
+                        -(n as i16)
+                    };
+                    ExprKind::Literal(LiteralExpr::Num(NumKind::I2(n)))
+                }
+                PrimitiveType::I4 => {
+                    check_signed_int_bounds!(self, lit_span, n, i32, "ص4");
+                    let n = if n == i32::MAX as u64 + 1 {
+                        i32::MIN
+                    } else {
+                        -(n as i32)
+                    };
+                    ExprKind::Literal(LiteralExpr::Num(NumKind::I4(n)))
+                }
+                PrimitiveType::I8 => {
+                    check_signed_int_bounds!(self, lit_span, n, i64, "ص8");
+                    let n = if n == i64::MAX as u64 + 1 {
+                        i64::MIN
+                    } else {
+                        -(n as i64)
+                    };
+                    ExprKind::Literal(LiteralExpr::Num(NumKind::I8(n)))
+                }
+                _ => ExprKind::Literal(LiteralExpr::Num(NumKind::I8(n as i64))),
+            }
+        } else {
+            ExprKind::Literal(LiteralExpr::Num(NumKind::I8(n as i64)))
+        };
+
+        self.ast.exprs[expr_key].kind = kind;
+
+        self.typed_ast.exprs.insert(expr_key, ty);
+    }
+
+    fn check_unspecified_int(&mut self, expr_key: ExprKey, lit_span: Span, n: u64) {
+        let Some(ty) = self.typed_ast.exprs.remove(&expr_key) else {
+            unreachable!();
+        };
+
+        let span = self.get_expr_span(expr_key);
+
+        let ty = self.ty_var_check(&ty, span, true);
+
+        let kind = if let Type::Concrete(ConcreteType::Primitive(prim_ty)) = &ty {
+            match prim_ty {
+                PrimitiveType::I => {
+                    check_int_bounds!(self, lit_span, n, isize, "ص");
+                    ExprKind::Literal(LiteralExpr::Num(NumKind::I(n as isize)))
+                }
+                PrimitiveType::I1 => {
+                    check_int_bounds!(self, lit_span, n, i8, "ص1");
+                    ExprKind::Literal(LiteralExpr::Num(NumKind::I1(n as i8)))
+                }
+                PrimitiveType::I2 => {
+                    check_int_bounds!(self, lit_span, n, i16, "ص2");
+                    ExprKind::Literal(LiteralExpr::Num(NumKind::I2(n as i16)))
+                }
+                PrimitiveType::I4 => {
+                    check_int_bounds!(self, lit_span, n, i32, "ص4");
+                    ExprKind::Literal(LiteralExpr::Num(NumKind::I4(n as i32)))
+                }
+                PrimitiveType::I8 => {
+                    check_int_bounds!(self, lit_span, n, i64, "ص8");
+                    ExprKind::Literal(LiteralExpr::Num(NumKind::I8(n as i64)))
+                }
+                PrimitiveType::U => {
+                    check_int_bounds!(self, lit_span, n, usize, "ط");
+                    ExprKind::Literal(LiteralExpr::Num(NumKind::U(n as usize)))
+                }
+                PrimitiveType::U1 => {
+                    check_int_bounds!(self, lit_span, n, u8, "ط1");
+                    ExprKind::Literal(LiteralExpr::Num(NumKind::U1(n as u8)))
+                }
+                PrimitiveType::U2 => {
+                    check_int_bounds!(self, lit_span, n, u16, "ط2");
+                    ExprKind::Literal(LiteralExpr::Num(NumKind::U2(n as u16)))
+                }
+                PrimitiveType::U4 => {
+                    check_int_bounds!(self, lit_span, n, u32, "ط4");
+                    ExprKind::Literal(LiteralExpr::Num(NumKind::U4(n as u32)))
+                }
+                _ => ExprKind::Literal(LiteralExpr::Num(NumKind::U8(n))),
+            }
+        } else {
+            ExprKind::Literal(LiteralExpr::Num(NumKind::U8(n)))
+        };
+
+        self.ast.exprs[expr_key].kind = kind;
+
+        self.typed_ast.exprs.insert(expr_key, ty);
+    }
+
+    fn check_unspecified_float(&mut self, expr_key: ExprKey, lit_span: Span, f: f64) {
+        let Some(ty) = self.typed_ast.exprs.remove(&expr_key) else {
+            unreachable!();
+        };
+
+        let ty = self.ty_var_check(&ty, lit_span, true);
+
+        let kind = if let Type::Concrete(ConcreteType::Primitive(prim_ty)) = &ty {
+            if let PrimitiveType::F4 = prim_ty {
+                if f.abs() < f32::MIN_POSITIVE as f64 || f.abs() > f32::MAX as f64 {
+                    self.add_num_lit_exceeds_its_limits(
+                        lit_span,
+                        "ع4",
+                        "1.17549435^^-38",
+                        "3.40282347^^+38",
+                    );
+                }
+                ExprKind::Literal(LiteralExpr::Num(NumKind::F4(f as f32)))
+            } else {
+                ExprKind::Literal(LiteralExpr::Num(NumKind::F8(f)))
+            }
+        } else {
+            ExprKind::Literal(LiteralExpr::Num(NumKind::F8(f)))
+        };
+
+        self.ast.exprs[expr_key].kind = kind;
+
+        self.typed_ast.exprs.insert(expr_key, ty);
     }
 }
