@@ -3,15 +3,16 @@ use std::{collections::HashMap, usize};
 use nazmc_ast::{ExprKey, LetStmKey, ScopeKey};
 use nazmc_data_pool::{typed_index_collections::TiVec, DataPoolBuilder, IdKey};
 use nazmc_nir::{
-    ArrayType, ArrayTypeKey, BasicBlockKey, BindingKey, Const, FnPtrType, FnPtrTypeKey, LValue,
-    LambdaType, LambdaTypeKey, RValue, Stm, Struct, StructKey, Temp, TempKey, TupleType,
-    TupleTypeKey, Type, TypeKey, CFG,
+    ArgKey, ArrayType, ArrayTypeKey, BasicBlockKey, BindingKey, Const, FnKey, FnPtrType,
+    FnPtrTypeKey, LValue, LValueKey, LambdaType, LambdaTypeKey, Operand, OperandKind, RValue, Stm,
+    Struct, StructKey, Temp, TempKey, TupleType, TupleTypeKey, Type, TypeKey, CFG, NIR,
 };
 
 use crate::SemanticsAnalyzer;
 
 #[derive(Default)]
 pub(crate) struct NIRBuilder {
+    pub(crate) nir: NIR,
     pub(crate) all_types: DataPoolBuilder<TypeKey, Type>,
     pub(crate) all_array_types: DataPoolBuilder<ArrayTypeKey, ArrayType>,
     pub(crate) all_tuple_types: DataPoolBuilder<TupleTypeKey, TupleType>,
@@ -177,6 +178,7 @@ impl NIRBuilder {
 pub(crate) struct CFGBuilder {
     pub(crate) cfg: CFG,
     pub(crate) locals: HashMap<(LetStmKey, IdKey), BindingKey>,
+    pub(crate) lvalues: DataPoolBuilder<LValueKey, LValue>,
 }
 
 impl<'a> SemanticsAnalyzer<'a> {
@@ -187,83 +189,361 @@ impl<'a> SemanticsAnalyzer<'a> {
                 nazmc_ast::Stm::Let(let_stm_key) => todo!(),
                 nazmc_ast::Stm::While(while_stm) => todo!(),
                 nazmc_ast::Stm::Expr(expr_key) => {
-                    //     let rvalue = self.lower_expr(expr_key);
-
-                    //     let temp_key = self.cfg_builder.cfg.temps.push_and_get_key(Temp {
-                    //         typ: self.nir_builder.exprs_types[expr_key],
-                    //     });
-
-                    //     let lvalue_key = self
-                    //         .cfg_builder
-                    //         .cfg
-                    //         .lvalues
-                    //         .push_and_get_key(LValue::Temp(temp_key));
-
-                    //     let assign = Stm::Assign {
-                    //         lhs: lvalue_key,
-                    //         rhs: rvalue,
-                    //     };
-                    //     self.cfg_builder
-                    //         .cfg
-                    //         .basic_blocks
-                    //         .last_mut()
-                    //         .unwrap()
-                    //         .stms
-                    //         .push(assign);
+                    self.lower_expr_in_temp(expr_key);
                 }
             }
         }
     }
 
-    fn new_temp(&mut self, typ: TypeKey) {
-        let temp_key = self.cfg_builder.cfg.temps.push_and_get_key(Temp { typ });
+    fn get_lvalue_key(&mut self, lvalue: LValue) -> LValueKey {
+        self.cfg_builder.lvalues.get_key(&lvalue)
     }
 
-    fn lower_expr(&mut self, expr_key: ExprKey) {
+    fn lower_expr_in_temp(&mut self, expr_key: ExprKey) -> TempKey {
+        // let (typ, rvalue) = self.lower_expr(expr_key);
+        // self.add_new_temp_assign_stm(typ, rvalue)
+        todo!()
+    }
+
+    fn add_new_temp_assign_stm_and_return_operand(
+        &mut self,
+        typ: TypeKey,
+        rvalue: RValue,
+    ) -> OperandKind {
+        let temp = self.add_new_temp_assign_stm(typ, rvalue);
+        let lvalue_key = self.get_lvalue_key(LValue::Temp(temp));
+        OperandKind::LValue(lvalue_key)
+    }
+
+    fn add_new_temp_assign_stm(&mut self, typ: TypeKey, rvalue: RValue) -> TempKey {
+        let assign_stm_idx = self.cfg_builder.cfg.basic_blocks.last().unwrap().stms.len() as u32;
+
+        let temp = self.cfg_builder.cfg.temps.push_and_get_key(Temp {
+            typ,
+            assign_stm_idx,
+        });
+
+        let lvalue_key = self.get_lvalue_key(LValue::Temp(temp));
+
+        let assign = Stm::Assign {
+            lhs: lvalue_key,
+            rhs: rvalue,
+        };
+
+        self.cfg_builder
+            .cfg
+            .basic_blocks
+            .last_mut()
+            .unwrap()
+            .stms
+            .push(assign);
+
+        temp
+    }
+
+    fn is_mut_lvalue(&self, lvalue_key: LValueKey) -> bool {
+        match &self.cfg_builder.cfg.lvalues[lvalue_key] {
+            LValue::ReturnPtr => unreachable!(),
+            LValue::Binding(binding_key) => {
+                self.cfg_builder.cfg.mut_bindings.contains_key(binding_key)
+            }
+            LValue::Arg(arg_key) => {
+                let fn_key = FnKey::from(usize::from(self.current_fn_key));
+                self.nir_builder.nir.fns[fn_key].args[*arg_key].is_mut
+            }
+            LValue::Deref(lvalue_key) => todo!(),
+            LValue::Temp(_)
+            | LValue::Field { .. }
+            | LValue::TupleIdx { .. }
+            | LValue::ArrayIdx { .. }
+            | LValue::ArrayConstIdx { .. } => false,
+            LValue::Static(_)
+            | LValue::MutField { .. }
+            | LValue::MutTupleIdx { .. }
+            | LValue::MutArrayIdx { .. }
+            | LValue::MutArrayConstIdx { .. } => true,
+        }
+    }
+
+    fn lower_expr(&mut self, expr_key: ExprKey) -> Operand {
+        let expr_kind = std::mem::take(&mut self.ast.exprs[expr_key].kind);
+
         let typ = self.nir_builder.exprs_types[expr_key];
 
-        let rvalue = match &self.ast.exprs[expr_key].kind {
-            nazmc_ast::ExprKind::Unit => RValue::Const(Const::Unit),
-            nazmc_ast::ExprKind::Literal(literal_expr) => match *literal_expr {
-                nazmc_ast::LiteralExpr::Str(str_key) => RValue::Const(Const::Str(str_key)),
-                nazmc_ast::LiteralExpr::Char(ch) => RValue::Const(Const::Char(ch)),
-                nazmc_ast::LiteralExpr::Bool(b) => RValue::Const(Const::Bool(b)),
-                nazmc_ast::LiteralExpr::Num(num_kind) => match num_kind {
-                    nazmc_ast::NumKind::F4(n) => RValue::Const(Const::F4(n)),
-                    nazmc_ast::NumKind::F8(n) => RValue::Const(Const::F8(n)),
-                    nazmc_ast::NumKind::I(n) => RValue::Const(Const::I(n)),
-                    nazmc_ast::NumKind::I1(n) => RValue::Const(Const::I1(n)),
-                    nazmc_ast::NumKind::I2(n) => RValue::Const(Const::I2(n)),
-                    nazmc_ast::NumKind::I4(n) => RValue::Const(Const::I4(n)),
-                    nazmc_ast::NumKind::I8(n) => RValue::Const(Const::I8(n)),
-                    nazmc_ast::NumKind::U(n) => RValue::Const(Const::U(n)),
-                    nazmc_ast::NumKind::U1(n) => RValue::Const(Const::U1(n)),
-                    nazmc_ast::NumKind::U2(n) => RValue::Const(Const::U2(n)),
-                    nazmc_ast::NumKind::U4(n) => RValue::Const(Const::U4(n)),
-                    nazmc_ast::NumKind::U8(n) => RValue::Const(Const::U8(n)),
+        let kind = match expr_kind {
+            nazmc_ast::ExprKind::Unit => OperandKind::Const(Const::Unit),
+            nazmc_ast::ExprKind::Literal(literal_expr) => {
+                let const_opernad = match literal_expr {
+                    nazmc_ast::LiteralExpr::Str(str_key) => Const::Str(str_key),
+                    nazmc_ast::LiteralExpr::Char(ch) => Const::Char(ch),
+                    nazmc_ast::LiteralExpr::Bool(b) => Const::Bool(b),
+                    nazmc_ast::LiteralExpr::Num(num_kind) => match num_kind {
+                        nazmc_ast::NumKind::F4(n) => Const::F4(n),
+                        nazmc_ast::NumKind::F8(n) => Const::F8(n),
+                        nazmc_ast::NumKind::I(n) => Const::I(n),
+                        nazmc_ast::NumKind::I1(n) => Const::I1(n),
+                        nazmc_ast::NumKind::I2(n) => Const::I2(n),
+                        nazmc_ast::NumKind::I4(n) => Const::I4(n),
+                        nazmc_ast::NumKind::I8(n) => Const::I8(n),
+                        nazmc_ast::NumKind::U(n) => Const::U(n),
+                        nazmc_ast::NumKind::U1(n) => Const::U1(n),
+                        nazmc_ast::NumKind::U2(n) => Const::U2(n),
+                        nazmc_ast::NumKind::U4(n) => Const::U4(n),
+                        nazmc_ast::NumKind::U8(n) => Const::U8(n),
+                        _ => unreachable!(),
+                    },
+                };
+
+                OperandKind::Const(const_opernad)
+            }
+            nazmc_ast::ExprKind::PathNoPkg(path_no_pkg_key) => {
+                let item = self.ast.state.paths_no_pkgs_exprs[path_no_pkg_key];
+
+                match item {
+                    nazmc_ast::Item::Const { vis, key } => todo!(),
+                    nazmc_ast::Item::Static { vis, key } => todo!(),
+                    nazmc_ast::Item::Fn { vis, key } => {
+                        let fn_key = FnKey::from(usize::from(key));
+                        OperandKind::Const(Const::Fn(fn_key))
+                    }
+                    nazmc_ast::Item::LocalVar { id, key } => {
+                        let binding_key = self.cfg_builder.locals[&(key, id)];
+                        let lvalue_key = self.get_lvalue_key(LValue::Binding(binding_key));
+                        OperandKind::LValue(lvalue_key)
+                    }
+                    nazmc_ast::Item::FnParam { idx, fn_key } => {
+                        let lvalue_key = self.get_lvalue_key(LValue::Arg(ArgKey::from(idx)));
+                        OperandKind::LValue(lvalue_key)
+                    }
+                    nazmc_ast::Item::LambdaParam { id, scope_key } => todo!(),
                     _ => unreachable!(),
-                },
-            },
-            nazmc_ast::ExprKind::PathNoPkg(path_no_pkg_key) => todo!(),
-            nazmc_ast::ExprKind::PathInPkg(path_with_pkg_key) => todo!(),
-            nazmc_ast::ExprKind::Call(call_expr) => todo!(),
+                }
+            }
+            nazmc_ast::ExprKind::PathInPkg(path_with_pkg_key) => {
+                let item = self.ast.state.paths_with_pkgs_exprs[path_with_pkg_key];
+
+                match item {
+                    nazmc_ast::Item::Const { vis, key } => todo!(),
+                    nazmc_ast::Item::Static { vis, key } => todo!(),
+                    nazmc_ast::Item::Fn { vis, key } => {
+                        let fn_key = FnKey::from(usize::from(key));
+                        OperandKind::Const(Const::Fn(fn_key))
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            nazmc_ast::ExprKind::Call(call_expr) => {
+                let on = self.lower_expr(call_expr.on);
+
+                let args = call_expr
+                    .args
+                    .iter()
+                    .map(|&arg_expr_key| self.lower_expr(arg_expr_key))
+                    .collect();
+
+                let rvalue = RValue::Call { on, args };
+
+                self.add_new_temp_assign_stm_and_return_operand(typ, rvalue)
+            }
+            nazmc_ast::ExprKind::FieldsStruct(fields_struct_expr) => {
+                let fields = fields_struct_expr
+                    .fields
+                    .iter()
+                    .map(|(id, expr_key)| (id.id, self.lower_expr(*expr_key)))
+                    .collect();
+
+                let struct_key =
+                    self.ast.state.field_structs_paths_exprs[fields_struct_expr.path_key];
+
+                let struct_key = StructKey::from(usize::from(struct_key));
+
+                let rvalue = RValue::Struct { struct_key, fields };
+
+                self.add_new_temp_assign_stm_and_return_operand(typ, rvalue)
+            }
+            nazmc_ast::ExprKind::Tuple(elements) => {
+                let elements = elements
+                    .iter()
+                    .map(|expr_key| self.lower_expr(*expr_key))
+                    .collect();
+
+                let rvalue = RValue::Tuple(elements);
+
+                self.add_new_temp_assign_stm_and_return_operand(typ, rvalue)
+            }
+            nazmc_ast::ExprKind::ArrayElements(elements) => {
+                let elements = elements
+                    .iter()
+                    .map(|expr_key| self.lower_expr(*expr_key))
+                    .collect();
+
+                let rvalue = RValue::ArrayElements(elements);
+
+                self.add_new_temp_assign_stm_and_return_operand(typ, rvalue)
+            }
+            nazmc_ast::ExprKind::ArrayRepeated(array_repeated_expr) => {
+                let repeated = self.lower_expr(array_repeated_expr.repeat);
+
+                let Type::Array(array_type_key) = self.nir_builder.nir.types[typ] else {
+                    unreachable!()
+                };
+
+                let ArrayType {
+                    underlying_typ: _,
+                    size,
+                } = self.nir_builder.nir.array_types[array_type_key];
+
+                let rvalue = RValue::ArrayRepeated { repeated, size };
+
+                self.add_new_temp_assign_stm_and_return_operand(typ, rvalue)
+            }
+            nazmc_ast::ExprKind::Field(field_expr) => {
+                let Operand {
+                    typ: _,
+                    kind: OperandKind::LValue(lvalue_key),
+                } = self.lower_expr(field_expr.on)
+                else {
+                    unreachable!()
+                };
+
+                let lvalue = if self.is_mut_lvalue(lvalue_key) {
+                    LValue::MutField {
+                        on: lvalue_key,
+                        field_id: field_expr.name.id,
+                    }
+                } else {
+                    LValue::Field {
+                        on: lvalue_key,
+                        field_id: field_expr.name.id,
+                    }
+                };
+
+                let lvalue_key = self.get_lvalue_key(lvalue);
+
+                OperandKind::LValue(lvalue_key)
+            }
+            nazmc_ast::ExprKind::TupleIdx(tuple_idx_expr) => {
+                let Operand {
+                    typ: _,
+                    kind: OperandKind::LValue(lvalue_key),
+                } = self.lower_expr(tuple_idx_expr.on)
+                else {
+                    unreachable!()
+                };
+
+                let lvalue = if self.is_mut_lvalue(lvalue_key) {
+                    LValue::MutTupleIdx {
+                        on: lvalue_key,
+                        idx: tuple_idx_expr.idx,
+                    }
+                } else {
+                    LValue::TupleIdx {
+                        on: lvalue_key,
+                        idx: tuple_idx_expr.idx,
+                    }
+                };
+
+                let lvalue_key = self.get_lvalue_key(lvalue);
+
+                OperandKind::LValue(lvalue_key)
+            }
+
+            nazmc_ast::ExprKind::Idx(idx_expr) => {
+                let Operand {
+                    typ: _,
+                    kind: OperandKind::LValue(on_lvalue_key),
+                } = self.lower_expr(idx_expr.on)
+                else {
+                    unreachable!()
+                };
+
+                let Operand {
+                    typ: _,
+                    kind: idx_operand_kind,
+                } = self.lower_expr(idx_expr.idx);
+
+                // TODO: Support ranges indexing
+                let lvalue = if self.is_mut_lvalue(on_lvalue_key) {
+                    match idx_operand_kind {
+                        OperandKind::LValue(idx_lvalue_key) => LValue::MutArrayIdx {
+                            on: on_lvalue_key,
+                            idx: idx_lvalue_key,
+                        },
+                        OperandKind::Const(Const::U(idx)) => LValue::MutArrayConstIdx {
+                            on: on_lvalue_key,
+                            idx: idx as u32,
+                        },
+                        _ => unreachable!(), // Other numeric consts are invalid
+                    }
+                } else {
+                    match idx_operand_kind {
+                        OperandKind::LValue(idx_lvalue_key) => LValue::ArrayIdx {
+                            on: on_lvalue_key,
+                            idx: idx_lvalue_key,
+                        },
+                        OperandKind::Const(Const::U(idx)) => LValue::ArrayConstIdx {
+                            on: on_lvalue_key,
+                            idx: idx as u32,
+                        },
+                        _ => unreachable!(), // Other numeric consts are invalid
+                    }
+                };
+
+                let lvalue_key = self.get_lvalue_key(lvalue);
+
+                OperandKind::LValue(lvalue_key)
+            }
+            nazmc_ast::ExprKind::UnaryOp(unary_op_expr) => {
+                let operand = self.lower_expr(unary_op_expr.expr);
+
+                if let OperandKind::Const(_const) = operand.kind {
+                    let new_const = match unary_op_expr.op {
+                        nazmc_ast::UnaryOp::Minus => match _const {
+                            Const::I(n) => Const::I(-n),
+                            Const::I1(n) => Const::I1(-n),
+                            Const::I2(n) => Const::I2(-n),
+                            Const::I4(n) => Const::I4(-n),
+                            Const::I8(n) => Const::I8(-n),
+                            Const::F4(n) => Const::F4(-n),
+                            Const::F8(n) => Const::F8(-n),
+                            _ => unreachable!(),
+                        },
+                        nazmc_ast::UnaryOp::LNot => match _const {
+                            Const::Bool(b) => Const::Bool(!b),
+                            _ => unreachable!(),
+                        },
+                        nazmc_ast::UnaryOp::BNot => match _const {
+                            Const::I(n) => Const::I(!n),
+                            Const::I1(n) => Const::I1(!n),
+                            Const::I2(n) => Const::I2(!n),
+                            Const::I4(n) => Const::I4(!n),
+                            Const::I8(n) => Const::I8(!n),
+                            Const::U(n) => Const::U(!n),
+                            Const::U1(n) => Const::U1(!n),
+                            Const::U2(n) => Const::U2(!n),
+                            Const::U4(n) => Const::U4(!n),
+                            Const::U8(n) => Const::U8(!n),
+                            _ => unreachable!(),
+                        },
+                        nazmc_ast::UnaryOp::Deref => unreachable!(),
+                        nazmc_ast::UnaryOp::Borrow => todo!(),
+                        nazmc_ast::UnaryOp::BorrowMut => todo!(),
+                    };
+                }
+
+                todo!()
+            }
+            nazmc_ast::ExprKind::BinaryOp(binary_op_expr) => todo!(),
             nazmc_ast::ExprKind::UnitStruct(unit_struct_path_key) => todo!(),
             nazmc_ast::ExprKind::TupleStruct(tuple_struct_expr) => todo!(),
-            nazmc_ast::ExprKind::FieldsStruct(fields_struct_expr) => todo!(),
-            nazmc_ast::ExprKind::Field(field_expr) => todo!(),
-            nazmc_ast::ExprKind::Idx(idx_expr) => todo!(),
-            nazmc_ast::ExprKind::TupleIdx(tuple_idx_expr) => todo!(),
-            nazmc_ast::ExprKind::Tuple(thin_vec) => todo!(),
-            nazmc_ast::ExprKind::ArrayElemnts(thin_vec) => todo!(),
-            nazmc_ast::ExprKind::ArrayElemntsSized(array_elements_sized_expr) => todo!(),
             nazmc_ast::ExprKind::If(if_expr) => todo!(),
             nazmc_ast::ExprKind::Lambda(lambda_expr) => todo!(),
-            nazmc_ast::ExprKind::UnaryOp(unary_op_expr) => todo!(),
-            nazmc_ast::ExprKind::BinaryOp(binary_op_expr) => todo!(),
             nazmc_ast::ExprKind::Return(return_expr) => todo!(),
             nazmc_ast::ExprKind::Break(scope_key) => todo!(),
             nazmc_ast::ExprKind::Continue(scope_key) => todo!(),
             nazmc_ast::ExprKind::On => todo!(),
         };
+
+        Operand { typ, kind }
     }
 }

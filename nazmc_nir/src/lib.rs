@@ -21,6 +21,7 @@ new_data_pool_key! { TempKey }
 new_data_pool_key! { LValueKey }
 
 /// NIR, the Nazm Intermediate Representation
+#[derive(Default)]
 pub struct NIR {
     pub types: TiVec<TypeKey, Type>,
     pub array_types: TiVec<ArrayTypeKey, ArrayType>,
@@ -66,7 +67,7 @@ pub struct CFG {
     pub bindings: TiVec<BindingKey, Binding>,
     /// All mutable bindings
     pub mut_bindings: HashMap<BindingKey, ()>,
-    /// All temporaries
+    /// All temporaries, they are all mutable
     pub temps: TiVec<TempKey, Temp>,
 }
 
@@ -85,6 +86,7 @@ pub struct Binding {
 
 pub struct Temp {
     pub typ: TypeKey,
+    pub assign_stm_idx: u32,
 }
 
 pub struct BasicBlock {
@@ -163,47 +165,93 @@ pub enum Stm {
     Drop(LValueKey),
 }
 
+pub struct Operand {
+    pub typ: TypeKey,
+    pub kind: OperandKind,
+}
+
+pub enum OperandKind {
+    LValue(LValueKey),
+    Const(Const),
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LValue {
+    #[default]
     ReturnPtr,
     Binding(BindingKey),
-    Temp(TempKey),
     Arg(ArgKey),
     Static(StaticKey),
-    Fn(FnKey),
+    Temp(TempKey),
     Deref(LValueKey),
-    Field { on: LValueKey, field_id: IdKey },
-    TupleIdx { on: LValueKey, idx: u32 },
-    ArrayIdx { on: LValueKey, idx: LValueKey },
+    Field {
+        on: LValueKey,
+        field_id: IdKey,
+    },
+    TupleIdx {
+        on: LValueKey,
+        idx: u32,
+    },
+    ArrayIdx {
+        on: LValueKey,
+        idx: LValueKey,
+    },
+    ArrayConstIdx {
+        on: LValueKey,
+        idx: u32,
+    },
+    /// Comes from a mutable lvalue
+    MutField {
+        on: LValueKey,
+        field_id: IdKey,
+    },
+    /// Comes from a mutable lvalue
+    MutTupleIdx {
+        on: LValueKey,
+        idx: u32,
+    },
+    /// Comes from a mutable lvalue
+    MutArrayIdx {
+        on: LValueKey,
+        idx: LValueKey,
+    },
+    /// Comes from a mutable lvalue
+    MutArrayConstIdx {
+        on: LValueKey,
+        idx: u32,
+    },
 }
 
 pub enum RValue {
-    Const(Const),
-    Use(LValueKey),
+    Use(Operand),
     Ref(LValueKey),
     RefMut(LValueKey),
-    Tuple(ThinVec<LValueKey>),
-    Struct(ThinVec<(IdKey, LValueKey)>),
-    ArrayElements(ThinVec<LValueKey>),
-    Array {
-        repeated: LValueKey,
+    Tuple(ThinVec<Operand>),
+    ArrayElements(ThinVec<Operand>),
+    ArrayRepeated {
+        repeated: Operand,
         size: u32,
     },
+    Struct {
+        struct_key: StructKey,
+        fields: ThinVec<(IdKey, Operand)>,
+    },
     Cast {
-        val: LValueKey,
+        val: Operand,
         to: TypeKey,
     },
     BinOp {
         op: BinOp,
-        lhs: LValueKey,
-        rhs: LValueKey,
+        lhs: Operand,
+        rhs: Operand,
     },
     UnaryOp {
         op: UnaryOp,
-        operand: LValueKey,
+        operand: Operand,
     },
     Call {
-        on: LValueKey,
-        args: ThinVec<LValueKey>,
+        on: Operand,
+        args: ThinVec<Operand>,
     },
 }
 
@@ -224,9 +272,7 @@ pub enum Const {
     Bool(bool),
     Char(char),
     Str(StrKey),
-    Struct(ThinVec<Const>),
-    Tuple(ThinVec<Const>),
-    Array(ThinVec<Const>),
+    Fn(FnKey),
 }
 
 pub enum BinOp {

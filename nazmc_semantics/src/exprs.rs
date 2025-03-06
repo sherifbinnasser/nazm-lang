@@ -37,9 +37,9 @@ impl<'a> SemanticsAnalyzer<'a> {
                 (self.infer_call_expr(&call_expr), ExprKind::Call(call_expr))
             }
             ExprKind::Idx(idx_expr) => (self.infer_idx_expr(&idx_expr), ExprKind::Idx(idx_expr)),
-            ExprKind::ArrayElemnts(elements) => (
+            ExprKind::ArrayElements(elements) => (
                 self.infer_array_elements(&elements),
-                ExprKind::ArrayElemnts(elements),
+                ExprKind::ArrayElements(elements),
             ),
             ExprKind::TupleIdx(tuple_idx_expr) => (
                 self.infer_tuple_idx_expr(&tuple_idx_expr),
@@ -59,7 +59,7 @@ impl<'a> SemanticsAnalyzer<'a> {
                 ExprKind::Lambda(lambda_expr),
             ),
             ExprKind::TupleStruct(_) => todo!(),
-            ExprKind::ArrayElemntsSized(_) => todo!(),
+            ExprKind::ArrayRepeated(_) => todo!(),
             ExprKind::On => todo!(),
             ExprKind::UnaryOp(unary_op_expr) => (
                 self.infer_unary_op_expr(&unary_op_expr),
@@ -270,7 +270,7 @@ impl<'a> SemanticsAnalyzer<'a> {
 
         let idx_ty = self.infer(*idx);
 
-        // TODO: Support ranges idexing
+        // TODO: Support ranges indexing
         if let Err(err) = self.type_inf_ctx.unify(&Type::u(), &idx_ty) {
             self.add_type_mismatch_err(&Type::u(), &idx_ty, self.get_expr_span(*idx));
         }
@@ -303,7 +303,7 @@ impl<'a> SemanticsAnalyzer<'a> {
 
     fn infer_tuple_idx_expr(&mut self, TupleIdxExpr { on, idx, idx_span }: &TupleIdxExpr) -> Type {
         let on = *on;
-        let idx = *idx;
+        let idx = *idx as usize;
 
         let on_expr_ty = self.infer(on);
         let on_expr_ty = self.type_inf_ctx.apply(&on_expr_ty);

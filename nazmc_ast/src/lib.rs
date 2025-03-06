@@ -319,8 +319,8 @@ pub enum ExprKind {
     Idx(Box<IdxExpr>),
     TupleIdx(Box<TupleIdxExpr>),
     Tuple(ThinVec<ExprKey>),
-    ArrayElemnts(ThinVec<ExprKey>),
-    ArrayElemntsSized(Box<ArrayElementsSizedExpr>),
+    ArrayElements(ThinVec<ExprKey>),
+    ArrayRepeated(Box<ArrayRepeatedExpr>),
     If(Box<IfExpr>),
     Lambda(Box<LambdaExpr>),
     UnaryOp(Box<UnaryOpExpr>),
@@ -385,7 +385,7 @@ pub struct FieldExpr {
 #[derive(Clone, Debug)]
 pub struct TupleIdxExpr {
     pub on: ExprKey,
-    pub idx: usize,
+    pub idx: u32,
     pub idx_span: Span,
 }
 
@@ -397,7 +397,7 @@ pub struct IdxExpr {
 }
 
 #[derive(Clone, Debug)]
-pub struct ArrayElementsSizedExpr {
+pub struct ArrayRepeatedExpr {
     pub repeat: ExprKey,
     pub size: ExprKey,
 }

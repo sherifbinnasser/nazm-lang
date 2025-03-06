@@ -1071,7 +1071,7 @@ impl<'a> ASTValidator<'a> {
                     self.get_expr_span(on).merged_with(&idx.span),
                     nazmc_ast::ExprKind::TupleIdx(Box::new(nazmc_ast::TupleIdxExpr {
                         on,
-                        idx: idx.data,
+                        idx: idx.data as u32,
                         idx_span: idx.span,
                     })),
                 ),
@@ -1351,7 +1351,7 @@ impl<'a> ASTValidator<'a> {
                 elements.push(self.lower_expr(r.unwrap().item));
             }
 
-            self.new_expr(span, nazmc_ast::ExprKind::ArrayElemnts(elements))
+            self.new_expr(span, nazmc_ast::ExprKind::ArrayElements(elements))
         } else if let Some(ArrayExprKind::ExplicitSize(ExplicitSizeArrayExpr {
             repeated_expr,
             semicolon: _,
@@ -1360,17 +1360,16 @@ impl<'a> ASTValidator<'a> {
         {
             let repeat = self.lower_expr(repeated_expr.unwrap());
             let size = self.lower_expr(size_expr.unwrap());
-            let array_elements_sized_expr =
-                Box::new(nazmc_ast::ArrayElementsSizedExpr { repeat, size });
+            let array_elements_sized_expr = Box::new(nazmc_ast::ArrayRepeatedExpr { repeat, size });
 
             self.new_expr(
                 span,
-                nazmc_ast::ExprKind::ArrayElemntsSized(array_elements_sized_expr),
+                nazmc_ast::ExprKind::ArrayRepeated(array_elements_sized_expr),
             )
         } else {
             let elements = ThinVec::new();
 
-            self.new_expr(span, nazmc_ast::ExprKind::ArrayElemnts(elements))
+            self.new_expr(span, nazmc_ast::ExprKind::ArrayElements(elements))
         }
     }
 

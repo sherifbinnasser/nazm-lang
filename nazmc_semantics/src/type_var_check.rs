@@ -223,12 +223,12 @@ impl<'a> SemanticsAnalyzer<'a> {
 
                 ExprKind::Tuple(exprs)
             }
-            ExprKind::ArrayElemnts(elements) => {
+            ExprKind::ArrayElements(elements) => {
                 elements
                     .iter()
                     .for_each(|&expr_key| self.check_expr_ty_vars(expr_key));
 
-                ExprKind::ArrayElemnts(elements)
+                ExprKind::ArrayElements(elements)
             }
             ExprKind::If(if_expr) => {
                 self.check_expr_ty_vars(if_expr.if_.1);
@@ -366,7 +366,7 @@ impl<'a> SemanticsAnalyzer<'a> {
                 return;
             }
             ExprKind::TupleStruct(_) => todo!(),
-            ExprKind::ArrayElemntsSized(_) => todo!(),
+            ExprKind::ArrayRepeated(_) => todo!(),
             ExprKind::On => todo!(),
             kind @ _ => kind,
         };
