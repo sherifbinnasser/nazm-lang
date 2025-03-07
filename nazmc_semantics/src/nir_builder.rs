@@ -1,11 +1,11 @@
-use std::{collections::HashMap, usize};
+use std::{collections::HashMap, ops::DerefMut, usize};
 
 use nazmc_ast::{ExprKey, LetStmKey, ScopeKey};
 use nazmc_data_pool::{typed_index_collections::TiVec, DataPoolBuilder, IdKey};
 use nazmc_nir::{
     ArgKey, ArrayType, ArrayTypeKey, BasicBlockKey, BindingKey, Const, FnKey, FnPtrType,
-    FnPtrTypeKey, LValue, LValueKey, LambdaType, LambdaTypeKey, Operand, OperandKind, RValue, Stm,
-    Struct, StructKey, Temp, TempKey, TupleType, TupleTypeKey, Type, TypeKey, CFG, NIR,
+    FnPtrTypeKey, LValue, LValueKey, LambdaType, LambdaTypeKey, Operand, OperandKind, RValue,
+    StaticKey, Stm, Struct, StructKey, Temp, TupleType, TupleTypeKey, Type, TypeKey, CFG, NIR,
 };
 
 use crate::SemanticsAnalyzer;
@@ -41,7 +41,7 @@ impl NIRBuilder {
                     let crate::Type::Concrete(underlying_typ) = *underlying_typ else {
                         unreachable!()
                     };
-                    Type::Ptr(self.get_unique_type(underlying_typ))
+                    Type::MutPtr(self.get_unique_type(underlying_typ))
                 }
                 crate::CompositeType::Ref(underlying_typ) => todo!(),
                 crate::CompositeType::RefMut(underlying_typ) => todo!(),
@@ -178,7 +178,7 @@ impl NIRBuilder {
 pub(crate) struct CFGBuilder {
     pub(crate) cfg: CFG,
     pub(crate) locals: HashMap<(LetStmKey, IdKey), BindingKey>,
-    pub(crate) lvalues: DataPoolBuilder<LValueKey, LValue>,
+    pub(crate) lvalues: HashMap<LValue, LValueKey>,
 }
 
 impl<'a> SemanticsAnalyzer<'a> {
@@ -188,42 +188,32 @@ impl<'a> SemanticsAnalyzer<'a> {
             match stm {
                 nazmc_ast::Stm::Let(let_stm_key) => todo!(),
                 nazmc_ast::Stm::While(while_stm) => todo!(),
-                nazmc_ast::Stm::Expr(expr_key) => {
-                    self.lower_expr_in_temp(expr_key);
-                }
+                nazmc_ast::Stm::Expr(expr_key) => {}
             }
         }
     }
 
     fn get_lvalue_key(&mut self, lvalue: LValue) -> LValueKey {
-        self.cfg_builder.lvalues.get_key(&lvalue)
+        if let Some(&lvalue_key) = self.cfg_builder.lvalues.get(&lvalue) {
+            lvalue_key
+        } else {
+            let lvalue_key = self.cfg_builder.cfg.lvalues.push_and_get_key(lvalue);
+            self.cfg_builder.lvalues.insert(lvalue, lvalue_key);
+            lvalue_key
+        }
     }
 
-    fn lower_expr_in_temp(&mut self, expr_key: ExprKey) -> TempKey {
-        // let (typ, rvalue) = self.lower_expr(expr_key);
-        // self.add_new_temp_assign_stm(typ, rvalue)
-        todo!()
-    }
-
-    fn add_new_temp_assign_stm_and_return_operand(
-        &mut self,
-        typ: TypeKey,
-        rvalue: RValue,
-    ) -> OperandKind {
-        let temp = self.add_new_temp_assign_stm(typ, rvalue);
-        let lvalue_key = self.get_lvalue_key(LValue::Temp(temp));
-        OperandKind::LValue(lvalue_key)
-    }
-
-    fn add_new_temp_assign_stm(&mut self, typ: TypeKey, rvalue: RValue) -> TempKey {
+    fn add_new_temp_assign_stm(&mut self, typ: TypeKey, rvalue: RValue) -> OperandKind {
         let assign_stm_idx = self.cfg_builder.cfg.basic_blocks.last().unwrap().stms.len() as u32;
 
-        let temp = self.cfg_builder.cfg.temps.push_and_get_key(Temp {
+        let temp = Temp {
             typ,
             assign_stm_idx,
-        });
+        };
 
-        let lvalue_key = self.get_lvalue_key(LValue::Temp(temp));
+        let temp_key = self.cfg_builder.cfg.temps.push_and_get_key(temp);
+
+        let lvalue_key = self.get_lvalue_key(LValue::Temp(temp_key));
 
         let assign = Stm::Assign {
             lhs: lvalue_key,
@@ -238,7 +228,7 @@ impl<'a> SemanticsAnalyzer<'a> {
             .stms
             .push(assign);
 
-        temp
+        OperandKind::LValue(lvalue_key)
     }
 
     fn is_mut_lvalue(&self, lvalue_key: LValueKey) -> bool {
@@ -251,13 +241,14 @@ impl<'a> SemanticsAnalyzer<'a> {
                 let fn_key = FnKey::from(usize::from(self.current_fn_key));
                 self.nir_builder.nir.fns[fn_key].args[*arg_key].is_mut
             }
-            LValue::Deref(lvalue_key) => todo!(),
-            LValue::Temp(_)
+            LValue::Deref(_)
             | LValue::Field { .. }
             | LValue::TupleIdx { .. }
             | LValue::ArrayIdx { .. }
             | LValue::ArrayConstIdx { .. } => false,
-            LValue::Static(_)
+            LValue::Temp(_)
+            | LValue::Static(_)
+            | LValue::MutDeref(_)
             | LValue::MutField { .. }
             | LValue::MutTupleIdx { .. }
             | LValue::MutArrayIdx { .. }
@@ -301,7 +292,11 @@ impl<'a> SemanticsAnalyzer<'a> {
 
                 match item {
                     nazmc_ast::Item::Const { vis, key } => todo!(),
-                    nazmc_ast::Item::Static { vis, key } => todo!(),
+                    nazmc_ast::Item::Static { vis, key } => {
+                        let static_key = StaticKey::from(usize::from(key));
+                        let lvalue_key = self.get_lvalue_key(LValue::Static(static_key));
+                        OperandKind::LValue(lvalue_key)
+                    }
                     nazmc_ast::Item::Fn { vis, key } => {
                         let fn_key = FnKey::from(usize::from(key));
                         OperandKind::Const(Const::Fn(fn_key))
@@ -324,7 +319,11 @@ impl<'a> SemanticsAnalyzer<'a> {
 
                 match item {
                     nazmc_ast::Item::Const { vis, key } => todo!(),
-                    nazmc_ast::Item::Static { vis, key } => todo!(),
+                    nazmc_ast::Item::Static { vis, key } => {
+                        let static_key = StaticKey::from(usize::from(key));
+                        let lvalue_key = self.get_lvalue_key(LValue::Static(static_key));
+                        OperandKind::LValue(lvalue_key)
+                    }
                     nazmc_ast::Item::Fn { vis, key } => {
                         let fn_key = FnKey::from(usize::from(key));
                         OperandKind::Const(Const::Fn(fn_key))
@@ -343,7 +342,7 @@ impl<'a> SemanticsAnalyzer<'a> {
 
                 let rvalue = RValue::Call { on, args };
 
-                self.add_new_temp_assign_stm_and_return_operand(typ, rvalue)
+                self.add_new_temp_assign_stm(typ, rvalue)
             }
             nazmc_ast::ExprKind::FieldsStruct(fields_struct_expr) => {
                 let fields = fields_struct_expr
@@ -359,7 +358,7 @@ impl<'a> SemanticsAnalyzer<'a> {
 
                 let rvalue = RValue::Struct { struct_key, fields };
 
-                self.add_new_temp_assign_stm_and_return_operand(typ, rvalue)
+                self.add_new_temp_assign_stm(typ, rvalue)
             }
             nazmc_ast::ExprKind::Tuple(elements) => {
                 let elements = elements
@@ -369,7 +368,7 @@ impl<'a> SemanticsAnalyzer<'a> {
 
                 let rvalue = RValue::Tuple(elements);
 
-                self.add_new_temp_assign_stm_and_return_operand(typ, rvalue)
+                self.add_new_temp_assign_stm(typ, rvalue)
             }
             nazmc_ast::ExprKind::ArrayElements(elements) => {
                 let elements = elements
@@ -379,7 +378,7 @@ impl<'a> SemanticsAnalyzer<'a> {
 
                 let rvalue = RValue::ArrayElements(elements);
 
-                self.add_new_temp_assign_stm_and_return_operand(typ, rvalue)
+                self.add_new_temp_assign_stm(typ, rvalue)
             }
             nazmc_ast::ExprKind::ArrayRepeated(array_repeated_expr) => {
                 let repeated = self.lower_expr(array_repeated_expr.repeat);
@@ -395,7 +394,7 @@ impl<'a> SemanticsAnalyzer<'a> {
 
                 let rvalue = RValue::ArrayRepeated { repeated, size };
 
-                self.add_new_temp_assign_stm_and_return_operand(typ, rvalue)
+                self.add_new_temp_assign_stm(typ, rvalue)
             }
             nazmc_ast::ExprKind::Field(field_expr) => {
                 let Operand {
@@ -493,12 +492,63 @@ impl<'a> SemanticsAnalyzer<'a> {
 
                 OperandKind::LValue(lvalue_key)
             }
-            nazmc_ast::ExprKind::UnaryOp(unary_op_expr) => {
+            nazmc_ast::ExprKind::UnaryOp(unary_op_expr) => 'label: {
                 let operand = self.lower_expr(unary_op_expr.expr);
 
-                if let OperandKind::Const(_const) = operand.kind {
-                    let new_const = match unary_op_expr.op {
-                        nazmc_ast::UnaryOp::Minus => match _const {
+                match operand.kind {
+                    OperandKind::LValue(lvalue_key) => {
+                        let rvalue = match unary_op_expr.op {
+                            nazmc_ast::UnaryOp::Deref => {
+                                let operand_type_key =
+                                    self.nir_builder.exprs_types[unary_op_expr.expr];
+                                let lvalue = if let Type::MutPtr(_) =
+                                    self.nir_builder.nir.types[operand_type_key]
+                                {
+                                    LValue::MutDeref(lvalue_key)
+                                } else {
+                                    LValue::Deref(lvalue_key)
+                                };
+                                let lvalue_key = self.get_lvalue_key(lvalue);
+                                break 'label OperandKind::LValue(lvalue_key);
+                            }
+                            nazmc_ast::UnaryOp::Minus => RValue::UnaryOp {
+                                op: nazmc_nir::UnaryOp::Minus,
+                                operand,
+                            },
+                            nazmc_ast::UnaryOp::LNot => RValue::UnaryOp {
+                                op: nazmc_nir::UnaryOp::LNot,
+                                operand,
+                            },
+                            nazmc_ast::UnaryOp::BNot => RValue::UnaryOp {
+                                op: nazmc_nir::UnaryOp::BNot,
+                                operand,
+                            },
+                            nazmc_ast::UnaryOp::Borrow => {
+                                let lvalue = self.cfg_builder.cfg.lvalues[lvalue_key];
+                                if let LValue::Temp(_) = lvalue {
+                                    self.add_cannot_borrow_rvalue(
+                                        unary_op_expr.op_span,
+                                        self.get_expr_span(unary_op_expr.expr),
+                                    );
+                                }
+                                RValue::Ref(lvalue_key)
+                            }
+                            nazmc_ast::UnaryOp::BorrowMut => {
+                                let lvalue = self.cfg_builder.cfg.lvalues[lvalue_key];
+                                if let LValue::Temp(_) = lvalue {
+                                    self.add_cannot_borrow_rvalue(
+                                        unary_op_expr.op_span,
+                                        self.get_expr_span(unary_op_expr.expr),
+                                    );
+                                }
+                                RValue::RefMut(lvalue_key)
+                            }
+                        };
+                        self.add_new_temp_assign_stm(typ, rvalue)
+                    }
+                    OperandKind::Const(_const) => match unary_op_expr.op {
+                        nazmc_ast::UnaryOp::Deref => unreachable!(),
+                        nazmc_ast::UnaryOp::Minus => OperandKind::Const(match _const {
                             Const::I(n) => Const::I(-n),
                             Const::I1(n) => Const::I1(-n),
                             Const::I2(n) => Const::I2(-n),
@@ -507,12 +557,12 @@ impl<'a> SemanticsAnalyzer<'a> {
                             Const::F4(n) => Const::F4(-n),
                             Const::F8(n) => Const::F8(-n),
                             _ => unreachable!(),
-                        },
-                        nazmc_ast::UnaryOp::LNot => match _const {
+                        }),
+                        nazmc_ast::UnaryOp::LNot => OperandKind::Const(match _const {
                             Const::Bool(b) => Const::Bool(!b),
                             _ => unreachable!(),
-                        },
-                        nazmc_ast::UnaryOp::BNot => match _const {
+                        }),
+                        nazmc_ast::UnaryOp::BNot => OperandKind::Const(match _const {
                             Const::I(n) => Const::I(!n),
                             Const::I1(n) => Const::I1(!n),
                             Const::I2(n) => Const::I2(!n),
@@ -524,14 +574,27 @@ impl<'a> SemanticsAnalyzer<'a> {
                             Const::U4(n) => Const::U4(!n),
                             Const::U8(n) => Const::U8(!n),
                             _ => unreachable!(),
-                        },
-                        nazmc_ast::UnaryOp::Deref => unreachable!(),
-                        nazmc_ast::UnaryOp::Borrow => todo!(),
-                        nazmc_ast::UnaryOp::BorrowMut => todo!(),
-                    };
+                        }),
+                        nazmc_ast::UnaryOp::Borrow => {
+                            self.add_cannot_borrow_rvalue(
+                                unary_op_expr.op_span,
+                                self.get_expr_span(unary_op_expr.expr),
+                            );
+                            let lvalue_key = self.get_lvalue_key(LValue::ReturnPtr);
+                            let rvalue = RValue::Ref(lvalue_key);
+                            self.add_new_temp_assign_stm(typ, rvalue)
+                        }
+                        nazmc_ast::UnaryOp::BorrowMut => {
+                            self.add_cannot_borrow_rvalue(
+                                unary_op_expr.op_span,
+                                self.get_expr_span(unary_op_expr.expr),
+                            );
+                            let lvalue_key = self.get_lvalue_key(LValue::ReturnPtr);
+                            let rvalue = RValue::RefMut(lvalue_key);
+                            self.add_new_temp_assign_stm(typ, rvalue)
+                        }
+                    },
                 }
-
-                todo!()
             }
             nazmc_ast::ExprKind::BinaryOp(binary_op_expr) => todo!(),
             nazmc_ast::ExprKind::UnitStruct(unit_struct_path_key) => todo!(),

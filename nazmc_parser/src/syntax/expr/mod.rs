@@ -35,15 +35,14 @@ pub(crate) struct PrimaryExpr {
 
 #[derive(NazmcParse, Debug)]
 pub(crate) enum PrimaryExprKind {
-    Unary(UnaryExpr),
+    Unary(Box<UnaryExpr>),
     Atomic(AtomicExpr),
 }
 
 #[derive(NazmcParse, Debug)]
 pub(crate) struct UnaryExpr {
-    pub(crate) first_op: UnaryOp,
-    pub(crate) rest_ops: Vec<UnaryOp>,
-    pub(crate) expr: ParseResult<AtomicExpr>,
+    pub(crate) op: UnaryOp,
+    pub(crate) expr: ParseResult<PrimaryExpr>,
 }
 
 #[derive(NazmcParse, Debug)]

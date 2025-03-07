@@ -1026,8 +1026,8 @@ impl<'a> ParseErrorsReporter<'a> {
 
     fn check_primary_expr(&mut self, expr: &PrimaryExpr) {
         match &expr.kind {
-            PrimaryExprKind::Unary(UnaryExpr { expr, .. }) => match expr {
-                Ok(expr) => self.check_atomic_expr(expr),
+            PrimaryExprKind::Unary(unary_expr) => match &unary_expr.expr {
+                Ok(expr) => self.check_primary_expr(expr),
                 Err(err) => self.report_expected("تعبير برمجي", err, vec![]),
             },
             PrimaryExprKind::Atomic(expr) => self.check_atomic_expr(expr),

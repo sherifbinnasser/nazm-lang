@@ -165,11 +165,13 @@ pub enum Stm {
     Drop(LValueKey),
 }
 
+#[derive(Clone, Copy)]
 pub struct Operand {
     pub typ: TypeKey,
     pub kind: OperandKind,
 }
 
+#[derive(Clone, Copy)]
 pub enum OperandKind {
     LValue(LValueKey),
     Const(Const),
@@ -201,6 +203,8 @@ pub enum LValue {
         idx: u32,
     },
     /// Comes from a mutable lvalue
+    MutDeref(LValueKey),
+    /// Comes from a mutable lvalue
     MutField {
         on: LValueKey,
         field_id: IdKey,
@@ -223,7 +227,7 @@ pub enum LValue {
 }
 
 pub enum RValue {
-    Use(Operand),
+    Load(LValueKey),
     Ref(LValueKey),
     RefMut(LValueKey),
     Tuple(ThinVec<Operand>),
@@ -255,6 +259,7 @@ pub enum RValue {
     },
 }
 
+#[derive(Clone, Copy)]
 pub enum Const {
     Unit,
     I(isize),

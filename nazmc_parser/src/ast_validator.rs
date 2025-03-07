@@ -1035,7 +1035,7 @@ impl<'a> ASTValidator<'a> {
 
     fn lower_primary_expr(&mut self, primary_expr: PrimaryExpr) -> nazmc_ast::ExprKey {
         let expr = match primary_expr.kind {
-            PrimaryExprKind::Unary(unary_expr) => self.lower_unary_expr(unary_expr),
+            PrimaryExprKind::Unary(unary_expr) => self.lower_unary_expr(*unary_expr),
             PrimaryExprKind::Atomic(atomic_expr) => self.lower_atomic_expr(atomic_expr),
         };
 
@@ -1164,24 +1164,10 @@ impl<'a> ASTValidator<'a> {
     }
 
     fn lower_unary_expr(&mut self, unary_expr: UnaryExpr) -> nazmc_ast::ExprKey {
-        let mut expr = self.lower_atomic_expr(unary_expr.expr.unwrap());
+        let mut expr = self.lower_primary_expr(unary_expr.expr.unwrap());
 
-        for op in unary_expr.rest_ops.into_iter().rev() {
-            let op_span = op.span;
-            let op = lower_unary_op(op.data);
-
-            expr = self.new_expr(
-                op_span.merged_with(&self.get_expr_span(expr)),
-                nazmc_ast::ExprKind::UnaryOp(Box::new(nazmc_ast::UnaryOpExpr {
-                    op,
-                    op_span,
-                    expr,
-                })),
-            );
-        }
-
-        let op_span = unary_expr.first_op.span;
-        let op = lower_unary_op(unary_expr.first_op.data);
+        let op_span = unary_expr.op.span;
+        let op = lower_unary_op(unary_expr.op.data);
 
         self.new_expr(
             op_span.merged_with(&self.get_expr_span(expr)),

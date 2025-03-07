@@ -959,4 +959,16 @@ impl<'a> SemanticsAnalyzer<'a> {
         let diagnostic = Diagnostic::error(msg, vec![code_window]);
         self.diagnostics.push(diagnostic);
     }
+
+    pub(crate) fn add_cannot_borrow_rvalue(&mut self, borrow_op_span: Span, rvalue_span: Span) {
+        let msg = "لا يمكن استعارة قيمة مؤقتة".into();
+        let label1 = "القيمة مؤقتة".into();
+        let label2 = "قُم بتخزينها في متغير لإتمام عملية استعارة المؤشر".into();
+        let mut code_window =
+            CodeWindow::new(&self.files_infos[self.current_file_key], rvalue_span.start);
+        code_window.mark_secondary(borrow_op_span, vec![]);
+        code_window.mark_error(rvalue_span, vec![label1, label2]);
+        let diagnostic = Diagnostic::error(msg, vec![code_window]);
+        self.diagnostics.push(diagnostic);
+    }
 }
