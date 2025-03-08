@@ -1,14 +1,14 @@
-use std::{collections::HashMap, ops::DerefMut, usize};
+use std::collections::HashMap;
 
-use nazmc_ast::{ExprKey, LetStmKey, ScopeKey};
+use nazmc_ast::{BinaryOpExpr, ExprKey, LetStmKey, ScopeKey};
 use nazmc_data_pool::{typed_index_collections::TiVec, DataPoolBuilder, IdKey};
 use nazmc_nir::{
-    ArgKey, ArrayType, ArrayTypeKey, BasicBlockKey, BindingKey, Const, FnKey, FnPtrType,
+    ArgKey, ArrayType, ArrayTypeKey, BasicBlockKey, BinOp, BindingKey, Const, FnKey, FnPtrType,
     FnPtrTypeKey, LValue, LValueKey, LambdaType, LambdaTypeKey, Operand, OperandKind, RValue,
     StaticKey, Stm, Struct, StructKey, Temp, TupleType, TupleTypeKey, Type, TypeKey, CFG, NIR,
 };
 
-use crate::SemanticsAnalyzer;
+use crate::{get_bin_op_span, SemanticsAnalyzer};
 
 #[derive(Default)]
 pub(crate) struct NIRBuilder {
@@ -203,18 +203,7 @@ impl<'a> SemanticsAnalyzer<'a> {
         }
     }
 
-    fn add_new_temp_assign_stm(&mut self, typ: TypeKey, rvalue: RValue) -> OperandKind {
-        let assign_stm_idx = self.cfg_builder.cfg.basic_blocks.last().unwrap().stms.len() as u32;
-
-        let temp = Temp {
-            typ,
-            assign_stm_idx,
-        };
-
-        let temp_key = self.cfg_builder.cfg.temps.push_and_get_key(temp);
-
-        let lvalue_key = self.get_lvalue_key(LValue::Temp(temp_key));
-
+    fn add_assign_to_lvalue(&mut self, lvalue_key: LValueKey, rvalue: RValue) {
         let assign = Stm::Assign {
             lhs: lvalue_key,
             rhs: rvalue,
@@ -227,6 +216,21 @@ impl<'a> SemanticsAnalyzer<'a> {
             .unwrap()
             .stms
             .push(assign);
+    }
+
+    fn add_new_temp_assign_stm(&mut self, typ: TypeKey, rvalue: RValue) -> OperandKind {
+        let assign_stm_idx = self.cfg_builder.cfg.basic_blocks.last().unwrap().stms.len() as u32;
+
+        let temp = Temp {
+            typ,
+            assign_stm_idx,
+        };
+
+        let temp_key = self.cfg_builder.cfg.temps.push_and_get_key(temp);
+
+        let lvalue_key = self.get_lvalue_key(LValue::Temp(temp_key));
+
+        self.add_assign_to_lvalue(lvalue_key, rvalue);
 
         OperandKind::LValue(lvalue_key)
     }
@@ -254,6 +258,31 @@ impl<'a> SemanticsAnalyzer<'a> {
             | LValue::MutArrayIdx { .. }
             | LValue::MutArrayConstIdx { .. } => true,
         }
+    }
+
+    fn assign_to_lhs(
+        &mut self,
+        lhs: Operand,
+        rvalue: RValue,
+        binary_op_expr: &BinaryOpExpr,
+    ) -> OperandKind {
+        if let OperandKind::LValue(lvalue_key) = lhs.kind {
+            if self.is_mut_lvalue(lvalue_key) {
+                self.add_assign_to_lvalue(lvalue_key, rvalue);
+            } else {
+                self.add_cannot_mutate_immutable_lvalue(
+                    self.get_expr_span(binary_op_expr.left),
+                    get_bin_op_span(binary_op_expr.op, binary_op_expr.op_span_cursor),
+                );
+            }
+        } else {
+            self.add_cannot_assign_to_rvalue(
+                self.get_expr_span(binary_op_expr.left),
+                get_bin_op_span(binary_op_expr.op, binary_op_expr.op_span_cursor),
+            );
+        }
+
+        OperandKind::Const(Const::Unit)
     }
 
     fn lower_expr(&mut self, expr_key: ExprKey) -> Operand {
@@ -596,7 +625,158 @@ impl<'a> SemanticsAnalyzer<'a> {
                     },
                 }
             }
-            nazmc_ast::ExprKind::BinaryOp(binary_op_expr) => todo!(),
+            nazmc_ast::ExprKind::BinaryOp(binary_op_expr) => 'label: {
+                let lhs = self.lower_expr(binary_op_expr.left);
+                let rhs = self.lower_expr(binary_op_expr.right);
+
+                if let (OperandKind::Const(lhs), OperandKind::Const(rhs)) = (lhs.kind, rhs.kind) {
+                    macro_rules! eval_bin_op_int_const {
+			($op: tt) => {
+			    match (lhs, rhs) {
+				(Const::I(n1), Const::I(n2)) => Const::I(n1 $op n2),
+				(Const::I1(n1), Const::I1(n2)) => Const::I1(n1 $op n2),
+				(Const::I2(n1), Const::I2(n2)) => Const::I2(n1 $op n2),
+				(Const::I4(n1), Const::I4(n2)) => Const::I4(n1 $op n2),
+				(Const::I8(n1), Const::I8(n2)) => Const::I8(n1 $op n2),
+				(Const::U(n1), Const::U(n2)) => Const::U(n1 $op n2),
+				(Const::U1(n1), Const::U1(n2)) => Const::U1(n1 $op n2),
+				(Const::U2(n1), Const::U2(n2)) => Const::U2(n1 $op n2),
+				(Const::U4(n1), Const::U4(n2)) => Const::U4(n1 $op n2),
+				(Const::U8(n1), Const::U8(n2)) => Const::U8(n1 $op n2),
+				_ => unreachable!()
+			    }
+			};
+		    }
+
+                    macro_rules! eval_bin_op_num_const {
+			($op: tt) => {
+			    match (lhs, rhs) {
+				(Const::F4(n1), Const::F4(n2)) => Const::F4(n1 $op n2),
+				(Const::F8(n1), Const::F8(n2)) => Const::F8(n1 $op n2),
+				_ => eval_bin_op_int_const!($op),
+			    }
+			};
+		    }
+
+                    macro_rules! eval_bin_op_cmp_num_const {
+			($op: tt) => {
+			    Const::Bool(match (lhs, rhs) {
+				(Const::I(n1), Const::I(n2)) => n1 $op n2,
+				(Const::I1(n1), Const::I1(n2)) => n1 $op n2,
+				(Const::I2(n1), Const::I2(n2)) => n1 $op n2,
+				(Const::I4(n1), Const::I4(n2)) => n1 $op n2,
+				(Const::I8(n1), Const::I8(n2)) => n1 $op n2,
+				(Const::U(n1), Const::U(n2)) => n1 $op n2,
+				(Const::U1(n1), Const::U1(n2)) => n1 $op n2,
+				(Const::U2(n1), Const::U2(n2)) => n1 $op n2,
+				(Const::U4(n1), Const::U4(n2)) => n1 $op n2,
+				(Const::U8(n1), Const::U8(n2)) => n1 $op n2,
+				(Const::F4(n1), Const::F4(n2)) => n1 $op n2,
+				(Const::F8(n1), Const::F8(n2)) => n1 $op n2,
+				_ => unreachable!()
+			    })
+			};
+		    }
+
+                    let new_const = match binary_op_expr.op {
+                        nazmc_ast::BinOp::LOr => {
+                            let (Const::Bool(lhs), Const::Bool(rhs)) = (lhs, rhs) else {
+                                unreachable!()
+                            };
+                            Const::Bool(lhs || rhs)
+                        }
+                        nazmc_ast::BinOp::LAnd => {
+                            let (Const::Bool(lhs), Const::Bool(rhs)) = (lhs, rhs) else {
+                                unreachable!()
+                            };
+                            Const::Bool(lhs && rhs)
+                        }
+                        nazmc_ast::BinOp::EqualEqual => Const::Bool(lhs == rhs),
+                        nazmc_ast::BinOp::NotEqual => Const::Bool(lhs != rhs),
+                        nazmc_ast::BinOp::GE => eval_bin_op_cmp_num_const!(>=),
+                        nazmc_ast::BinOp::GT => eval_bin_op_cmp_num_const!(>),
+                        nazmc_ast::BinOp::LE => eval_bin_op_cmp_num_const!(<=),
+                        nazmc_ast::BinOp::LT => eval_bin_op_cmp_num_const!(<),
+                        nazmc_ast::BinOp::OpenOpenRange => todo!(),
+                        nazmc_ast::BinOp::CloseOpenRange => todo!(),
+                        nazmc_ast::BinOp::OpenCloseRange => todo!(),
+                        nazmc_ast::BinOp::CloseCloseRange => todo!(),
+                        nazmc_ast::BinOp::BOr => eval_bin_op_int_const!(|),
+                        nazmc_ast::BinOp::Xor => eval_bin_op_int_const!(^),
+                        nazmc_ast::BinOp::BAnd => eval_bin_op_int_const!(&),
+                        nazmc_ast::BinOp::Shr => eval_bin_op_int_const!(>>),
+                        nazmc_ast::BinOp::Shl => eval_bin_op_int_const!(<<),
+                        nazmc_ast::BinOp::Plus => eval_bin_op_num_const!(+),
+                        nazmc_ast::BinOp::Minus => eval_bin_op_num_const!(-),
+                        nazmc_ast::BinOp::Times => eval_bin_op_num_const!(*),
+                        nazmc_ast::BinOp::Div => eval_bin_op_num_const!(/),
+                        nazmc_ast::BinOp::Mod => eval_bin_op_num_const!(%),
+                        _ => {
+                            self.add_cannot_assign_to_rvalue(
+                                self.get_expr_span(binary_op_expr.left),
+                                get_bin_op_span(binary_op_expr.op, binary_op_expr.op_span_cursor),
+                            );
+                            Const::Unit
+                        }
+                    };
+
+                    break 'label OperandKind::Const(new_const);
+                }
+
+                macro_rules! bin_op {
+                    ($op: expr) => {
+                        self.add_new_temp_assign_stm(typ, RValue::BinOp { op: $op, lhs, rhs })
+                    };
+                }
+
+                macro_rules! aug_assign {
+                    ($op: expr) => {
+                        self.assign_to_lhs(
+                            lhs,
+                            RValue::BinOp { op: $op, lhs, rhs },
+                            &binary_op_expr,
+                        )
+                    };
+                }
+
+                match binary_op_expr.op {
+                    nazmc_ast::BinOp::LOr => todo!(),
+                    nazmc_ast::BinOp::LAnd => todo!(),
+                    nazmc_ast::BinOp::OpenOpenRange => todo!(),
+                    nazmc_ast::BinOp::CloseOpenRange => todo!(),
+                    nazmc_ast::BinOp::OpenCloseRange => todo!(),
+                    nazmc_ast::BinOp::CloseCloseRange => todo!(),
+                    nazmc_ast::BinOp::EqualEqual => bin_op!(BinOp::EqualEqual),
+                    nazmc_ast::BinOp::NotEqual => bin_op!(BinOp::NotEqual),
+                    nazmc_ast::BinOp::GE => bin_op!(BinOp::GE),
+                    nazmc_ast::BinOp::GT => bin_op!(BinOp::GT),
+                    nazmc_ast::BinOp::LE => bin_op!(BinOp::LE),
+                    nazmc_ast::BinOp::LT => bin_op!(BinOp::LT),
+                    nazmc_ast::BinOp::BOr => bin_op!(BinOp::BOr),
+                    nazmc_ast::BinOp::Xor => bin_op!(BinOp::Xor),
+                    nazmc_ast::BinOp::BAnd => bin_op!(BinOp::BAnd),
+                    nazmc_ast::BinOp::Shr => bin_op!(BinOp::Shr),
+                    nazmc_ast::BinOp::Shl => bin_op!(BinOp::Shl),
+                    nazmc_ast::BinOp::Plus => bin_op!(BinOp::Plus),
+                    nazmc_ast::BinOp::Minus => bin_op!(BinOp::Minus),
+                    nazmc_ast::BinOp::Times => bin_op!(BinOp::Times),
+                    nazmc_ast::BinOp::Div => bin_op!(BinOp::Div),
+                    nazmc_ast::BinOp::Mod => bin_op!(BinOp::Mod),
+                    nazmc_ast::BinOp::MinusAssign => aug_assign!(BinOp::Minus),
+                    nazmc_ast::BinOp::TimesAssign => aug_assign!(BinOp::Times),
+                    nazmc_ast::BinOp::DivAssign => aug_assign!(BinOp::Div),
+                    nazmc_ast::BinOp::ModAssign => aug_assign!(BinOp::Mod),
+                    nazmc_ast::BinOp::BOrAssign => aug_assign!(BinOp::BOr),
+                    nazmc_ast::BinOp::XorAssign => aug_assign!(BinOp::Xor),
+                    nazmc_ast::BinOp::BAndAssign => aug_assign!(BinOp::BAnd),
+                    nazmc_ast::BinOp::ShrAssign => aug_assign!(BinOp::Shr),
+                    nazmc_ast::BinOp::ShlAssign => aug_assign!(BinOp::Shl),
+                    nazmc_ast::BinOp::PlusAssign => aug_assign!(BinOp::Plus),
+                    nazmc_ast::BinOp::Assign => {
+                        self.assign_to_lhs(lhs, RValue::Use(rhs), &binary_op_expr)
+                    }
+                }
+            }
             nazmc_ast::ExprKind::UnitStruct(unit_struct_path_key) => todo!(),
             nazmc_ast::ExprKind::TupleStruct(tuple_struct_expr) => todo!(),
             nazmc_ast::ExprKind::If(if_expr) => todo!(),

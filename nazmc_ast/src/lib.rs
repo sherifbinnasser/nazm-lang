@@ -447,7 +447,7 @@ pub struct BinaryOpExpr {
     pub right: ExprKey,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum BinOp {
     LOr,
     LAnd,

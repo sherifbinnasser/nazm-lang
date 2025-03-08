@@ -747,50 +747,7 @@ impl<'a> SemanticsAnalyzer<'a> {
     ) -> Type {
         let left_ty = self.infer(*left);
 
-        let op_len = match op {
-            BinOp::OpenOpenRange => 4,
-            BinOp::CloseOpenRange | BinOp::OpenCloseRange | BinOp::ShlAssign | BinOp::ShrAssign => {
-                3
-            }
-
-            BinOp::LOr
-            | BinOp::LAnd
-            | BinOp::EqualEqual
-            | BinOp::NotEqual
-            | BinOp::GE
-            | BinOp::LE
-            | BinOp::Shr
-            | BinOp::Shl
-            | BinOp::PlusAssign
-            | BinOp::MinusAssign
-            | BinOp::TimesAssign
-            | BinOp::DivAssign
-            | BinOp::ModAssign
-            | BinOp::BAndAssign
-            | BinOp::BOrAssign
-            | BinOp::XorAssign
-            | BinOp::CloseCloseRange => 2,
-
-            BinOp::GT
-            | BinOp::LT
-            | BinOp::BOr
-            | BinOp::Xor
-            | BinOp::BAnd
-            | BinOp::Plus
-            | BinOp::Minus
-            | BinOp::Times
-            | BinOp::Div
-            | BinOp::Mod
-            | BinOp::Assign => 1,
-        };
-
-        let op_span = Span {
-            start: *op_span_cursor,
-            end: SpanCursor {
-                line: op_span_cursor.line,
-                col: op_span_cursor.col + op_len,
-            },
-        };
+        let op_span = get_bin_op_span(*op, *op_span_cursor);
 
         match op {
             BinOp::LOr | BinOp::LAnd => {

@@ -227,7 +227,7 @@ pub enum LValue {
 }
 
 pub enum RValue {
-    Load(LValueKey),
+    Use(Operand),
     Ref(LValueKey),
     RefMut(LValueKey),
     Tuple(ThinVec<Operand>),
@@ -280,6 +280,35 @@ pub enum Const {
     Fn(FnKey),
 }
 
+impl PartialEq for Const {
+    fn eq(&self, other: &Self) -> bool {
+        use Const::*;
+
+        match (self, other) {
+            (Unit, Unit) => true,
+            (I(a), I(b)) => a == b,
+            (I1(a), I1(b)) => a == b,
+            (I2(a), I2(b)) => a == b,
+            (I4(a), I4(b)) => a == b,
+            (I8(a), I8(b)) => a == b,
+            (U(a), U(b)) => a == b,
+            (U1(a), U1(b)) => a == b,
+            (U2(a), U2(b)) => a == b,
+            (U4(a), U4(b)) => a == b,
+            (U8(a), U8(b)) => a == b,
+            (F4(a), F4(b)) => a.to_bits() == b.to_bits(), // Handle NaN correctly
+            (F8(a), F8(b)) => a.to_bits() == b.to_bits(),
+            (Bool(a), Bool(b)) => a == b,
+            (Char(a), Char(b)) => a == b,
+            (Str(a), Str(b)) => a == b,
+            (Fn(a), Fn(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Const {}
+
 pub enum BinOp {
     EqualEqual,
     NotEqual,
@@ -287,10 +316,6 @@ pub enum BinOp {
     GT,
     LE,
     LT,
-    OpenOpenRange,
-    CloseOpenRange,
-    OpenCloseRange,
-    CloseCloseRange,
     BOr,
     Xor,
     BAnd,

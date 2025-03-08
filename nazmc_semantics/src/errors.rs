@@ -971,4 +971,30 @@ impl<'a> SemanticsAnalyzer<'a> {
         let diagnostic = Diagnostic::error(msg, vec![code_window]);
         self.diagnostics.push(diagnostic);
     }
+
+    pub(crate) fn add_cannot_assign_to_rvalue(&mut self, rvalue_span: Span, assign_span: Span) {
+        let msg = "لا يمكن تخصيص قيمة لتعبير لقيمة مؤقتة".into();
+        let label = "التعبير غير قابل للتخصيص".into();
+        let mut code_window =
+            CodeWindow::new(&self.files_infos[self.current_file_key], assign_span.start);
+        code_window.mark_secondary(rvalue_span, vec![label]);
+        code_window.mark_error(assign_span, vec![]);
+        let diagnostic = Diagnostic::error(msg, vec![code_window]);
+        self.diagnostics.push(diagnostic);
+    }
+
+    pub(crate) fn add_cannot_mutate_immutable_lvalue(
+        &mut self,
+        lvalue_span: Span,
+        assign_span: Span,
+    ) {
+        // TODO: Add help for the mut ptr types or bindings
+        let msg = "التعبير غير قابل للتعديل".into();
+        let mut code_window =
+            CodeWindow::new(&self.files_infos[self.current_file_key], assign_span.start);
+        code_window.mark_secondary(lvalue_span, vec![]);
+        code_window.mark_error(assign_span, vec![]);
+        let diagnostic = Diagnostic::error(msg, vec![code_window]);
+        self.diagnostics.push(diagnostic);
+    }
 }
