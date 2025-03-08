@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
-use nazmc_ast::{BinaryOpExpr, ExprKey, LetStmKey, ScopeKey};
+use nazmc_ast::{ASTId, BinaryOpExpr, ExprKey, LetStmKey, ScopeKey};
 use nazmc_data_pool::{typed_index_collections::TiVec, DataPoolBuilder, IdKey};
 use nazmc_nir::{
-    ArgKey, ArrayType, ArrayTypeKey, BasicBlockKey, BinOp, BindingKey, Const, FnKey, FnPtrType,
-    FnPtrTypeKey, LValue, LValueKey, LambdaType, LambdaTypeKey, Operand, OperandKind, RValue,
-    StaticKey, Stm, Struct, StructKey, Temp, TupleType, TupleTypeKey, Type, TypeKey, CFG, NIR,
+    ArgKey, ArrayType, ArrayTypeKey, BasicBlockKey, BinOp, Binding, BindingKey, Const, FnKey,
+    FnPtrType, FnPtrTypeKey, LValue, LValueKey, LambdaType, LambdaTypeKey, Operand, OperandKind,
+    RValue, StaticKey, Stm, Struct, StructKey, Temp, TupleType, TupleTypeKey, Type, TypeKey, CFG,
+    NIR,
 };
 
 use crate::{get_bin_op_span, SemanticsAnalyzer};
@@ -19,6 +20,7 @@ pub(crate) struct NIRBuilder {
     pub(crate) all_lambda_types: DataPoolBuilder<LambdaTypeKey, LambdaType>,
     pub(crate) all_fn_ptr_types: DataPoolBuilder<FnPtrTypeKey, FnPtrType>,
     pub(crate) exprs_types: TiVec<ExprKey, TypeKey>,
+    pub(crate) bindings_types: HashMap<(LetStmKey, IdKey), TypeKey>,
 }
 
 impl NIRBuilder {
@@ -186,11 +188,111 @@ impl<'a> SemanticsAnalyzer<'a> {
         let stms = std::mem::take(&mut self.ast.scopes[scope_key].stms);
         for stm in stms {
             match stm {
-                nazmc_ast::Stm::Let(let_stm_key) => todo!(),
+                nazmc_ast::Stm::Let(let_stm_key) => {
+                    let let_stm = std::mem::take(&mut self.ast.lets[let_stm_key]);
+                    let binding_kind = let_stm.binding.kind;
+
+                    let Some(expr_key) = let_stm.assign else {
+                        self.lower_unassigned_bindings(let_stm_key, &binding_kind);
+                        continue;
+                    };
+
+                    let expr_operand = self.lower_expr(expr_key);
+                    let typ = self.nir_builder.exprs_types[expr_key];
+                    let rvalue = RValue::Use(expr_operand);
+                    self.lower_assigned_bindings(let_stm_key, &binding_kind, typ, rvalue);
+                }
                 nazmc_ast::Stm::While(while_stm) => todo!(),
-                nazmc_ast::Stm::Expr(expr_key) => {}
+                nazmc_ast::Stm::Expr(expr_key) => {
+                    self.lower_expr(expr_key);
+                }
             }
         }
+    }
+
+    fn lower_unassigned_bindings(&mut self, let_stm_key: LetStmKey, kind: &nazmc_ast::BindingKind) {
+        match kind {
+            nazmc_ast::BindingKind::Id(ast_id) => {
+                self.add_new_binding(let_stm_key, ast_id, false);
+            }
+            nazmc_ast::BindingKind::MutId { id, mut_span: _ } => {
+                self.add_new_binding(let_stm_key, id, true);
+            }
+            nazmc_ast::BindingKind::Tuple(bindings, _) => {
+                bindings.iter().for_each(|binding_kind| {
+                    self.lower_unassigned_bindings(let_stm_key, binding_kind);
+                });
+            }
+        }
+    }
+
+    fn lower_assigned_bindings(
+        &mut self,
+        let_stm_key: LetStmKey,
+        kind: &nazmc_ast::BindingKind,
+        typ: TypeKey,
+        rvalue: RValue,
+    ) {
+        match kind {
+            nazmc_ast::BindingKind::Id(ast_id) => {
+                let binding_key = self.add_new_binding(let_stm_key, ast_id, false);
+                let lvalue_key = self.get_lvalue_key(LValue::Binding(binding_key));
+                self.assign_to_lvalue(lvalue_key, rvalue);
+            }
+            nazmc_ast::BindingKind::MutId { id, mut_span: _ } => {
+                let binding_key = self.add_new_binding(let_stm_key, id, true);
+                let lvalue_key = self.get_lvalue_key(LValue::Binding(binding_key));
+                self.assign_to_lvalue(lvalue_key, rvalue);
+            }
+            nazmc_ast::BindingKind::Tuple(bindings, _) => {
+                let (OperandKind::LValue(temp_lvalue_key), Type::Tuple(tuple_type_key)) = (
+                    self.add_new_temp_assign_stm(typ, rvalue),
+                    self.nir_builder.nir.types[typ],
+                ) else {
+                    unreachable!()
+                };
+
+                bindings.iter().enumerate().for_each(|(i, binding_kind)| {
+                    let typ = self.nir_builder.nir.tuple_types[tuple_type_key].types[i];
+                    let tuple_idx_lvalue = LValue::MutTupleIdx {
+                        on: temp_lvalue_key,
+                        idx: i as u32,
+                    };
+                    let tuple_idx_lvalue_key = self.get_lvalue_key(tuple_idx_lvalue);
+                    let tuple_idx_operand = Operand {
+                        typ,
+                        kind: OperandKind::LValue(tuple_idx_lvalue_key),
+                    };
+                    let rvalue = RValue::Use(tuple_idx_operand);
+                    self.lower_assigned_bindings(let_stm_key, binding_kind, typ, rvalue);
+                });
+            }
+        }
+    }
+
+    fn add_new_binding(
+        &mut self,
+        let_stm_key: LetStmKey,
+        ast_id: &ASTId,
+        is_mut: bool,
+    ) -> BindingKey {
+        let key = (let_stm_key, ast_id.id);
+
+        let typ = self.nir_builder.bindings_types[&key];
+
+        let binding_key = self.cfg_builder.cfg.bindings.push_and_get_key(Binding {
+            id_key: key.1,
+            id_span: ast_id.span,
+            typ,
+        });
+
+        self.cfg_builder.locals.insert(key, binding_key);
+
+        if is_mut {
+            self.cfg_builder.cfg.mut_bindings.insert(binding_key, ());
+        }
+
+        binding_key
     }
 
     fn get_lvalue_key(&mut self, lvalue: LValue) -> LValueKey {
@@ -203,7 +305,7 @@ impl<'a> SemanticsAnalyzer<'a> {
         }
     }
 
-    fn add_assign_to_lvalue(&mut self, lvalue_key: LValueKey, rvalue: RValue) {
+    fn assign_to_lvalue(&mut self, lvalue_key: LValueKey, rvalue: RValue) {
         let assign = Stm::Assign {
             lhs: lvalue_key,
             rhs: rvalue,
@@ -230,7 +332,7 @@ impl<'a> SemanticsAnalyzer<'a> {
 
         let lvalue_key = self.get_lvalue_key(LValue::Temp(temp_key));
 
-        self.add_assign_to_lvalue(lvalue_key, rvalue);
+        self.assign_to_lvalue(lvalue_key, rvalue);
 
         OperandKind::LValue(lvalue_key)
     }
@@ -268,7 +370,7 @@ impl<'a> SemanticsAnalyzer<'a> {
     ) -> OperandKind {
         if let OperandKind::LValue(lvalue_key) = lhs.kind {
             if self.is_mut_lvalue(lvalue_key) {
-                self.add_assign_to_lvalue(lvalue_key, rvalue);
+                self.assign_to_lvalue(lvalue_key, rvalue);
             } else {
                 self.add_cannot_mutate_immutable_lvalue(
                     self.get_expr_span(binary_op_expr.left),

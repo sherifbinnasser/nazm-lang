@@ -187,7 +187,7 @@ pub struct ASTId {
     pub id: IdKey,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Default, Clone, Debug)]
 pub struct Binding {
     pub kind: BindingKind,
     pub typ: Option<TypeExprKey>,
@@ -198,6 +198,12 @@ pub enum BindingKind {
     Id(ASTId),
     MutId { id: ASTId, mut_span: Span },
     Tuple(ThinVec<BindingKind>, Span),
+}
+
+impl Default for BindingKind {
+    fn default() -> Self {
+        Self::Tuple(ThinVec::default(), Span::default())
+    }
 }
 
 impl BindingKind {
@@ -285,7 +291,7 @@ pub enum Stm {
     Expr(ExprKey),
 }
 
-#[derive(Clone)]
+#[derive(Default, Clone)]
 pub struct LetStm {
     pub binding: Binding,
     pub assign: Option<ExprKey>,
