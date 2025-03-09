@@ -175,7 +175,23 @@ impl<'a> SemanticsAnalyzer<'a> {
                     }
                     if let Some(expr_key) = self.ast.lets[*let_stm_key].assign {
                         self.check_expr_ty_vars(expr_key);
+                        self.typed_ast.lets.get_mut(&let_stm_key).unwrap().ty =
+                            self.typed_ast.exprs[&expr_key].clone();
                     }
+
+                    let bindings = std::mem::take(
+                        &mut self.typed_ast.lets.get_mut(&let_stm_key).unwrap().bindings,
+                    );
+
+                    bindings.into_iter().for_each(|(id_key, ty)| {
+                        let ty = self.type_inf_ctx.apply(&ty);
+                        self.typed_ast
+                            .lets
+                            .get_mut(&let_stm_key)
+                            .unwrap()
+                            .bindings
+                            .insert(id_key, ty);
+                    });
                 }
                 Stm::While(while_stm) => {
                     self.check_expr_ty_vars(while_stm.cond_expr_key);

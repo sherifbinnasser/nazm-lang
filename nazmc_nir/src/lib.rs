@@ -47,17 +47,19 @@ pub struct Static {
 pub struct Fn {
     pub info: ItemInfo,
     pub args: TiVec<ArgKey, Arg>,
+    pub fn_ptr_type: TypeKey,
+    pub return_type: TypeKey,
     pub cfg: CFG,
 }
 
-pub const START_BASIC_BLOCK: BasicBlockKey = BasicBlockKey(0);
+pub const END_BASIC_BLOCK: BasicBlockKey = BasicBlockKey(0);
 
-pub const END_BASIC_BLOCK: BasicBlockKey = BasicBlockKey(1);
+pub const START_BASIC_BLOCK: BasicBlockKey = BasicBlockKey(1);
 
 #[derive(Default)]
 /// A control flow graph of a function or an execution block
 pub struct CFG {
-    /// The start has a key of 0 and the end block has a key of 1
+    /// The end has a key of 0 and the start block has a key of 1
     pub basic_blocks: TiVec<BasicBlockKey, BasicBlock>,
     /// All branches between basic blocks
     pub branches: TiVec<BranchKey, Branch>,
@@ -89,6 +91,7 @@ pub struct Temp {
     pub assign_stm_idx: u32,
 }
 
+#[derive(Default)]
 pub struct BasicBlock {
     pub incoming: ThinVec<BranchKey>,
     pub conditional_goto: Option<BranchKey>,

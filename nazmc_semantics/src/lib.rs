@@ -7,7 +7,10 @@ mod type_var_check;
 mod typed_ast;
 mod types;
 
-use nazmc_data_pool::{typed_index_collections::TiSlice, FileKey, IdKey, PkgKey};
+use nazmc_data_pool::{
+    typed_index_collections::{TiSlice, TiVec},
+    FileKey, IdKey, PkgKey,
+};
 
 pub(crate) use nazmc_ast::*;
 use nazmc_diagnostics::{
@@ -16,6 +19,7 @@ use nazmc_diagnostics::{
     span::{Span, SpanCursor},
     CodeWindow, Diagnostic,
 };
+use nazmc_nir::{Arg, Struct, CFG, NIR};
 use nir_builder::{CFGBuilder, NIRBuilder};
 use std::{collections::HashMap, process::exit};
 use thin_vec::ThinVec;
@@ -90,6 +94,17 @@ impl<'a> SemanticsAnalyzer<'a> {
                 exprs: HashMap::with_capacity(ast.exprs.len()),
                 lambdas_params: HashMap::new(),
             },
+            nir_builder: NIRBuilder {
+                nir: NIR {
+                    structs: TiVec::with_capacity(ast.fields_structs.len()),
+                    statics: TiVec::with_capacity(ast.statics.len()),
+                    fns: TiVec::with_capacity(ast.fns.len()),
+                    ..Default::default()
+                },
+                exprs_types: TiVec::with_capacity(ast.exprs.len()),
+                bindings_types: HashMap::with_capacity(ast.lets.len()),
+                ..Default::default()
+            },
             ast,
             ..Default::default()
         }
@@ -107,6 +122,132 @@ impl<'a> SemanticsAnalyzer<'a> {
         self.analyze_fn_signatures();
 
         self.analyze_fn_bodies();
+
+        if !self.diagnostics.is_empty() {
+            eprint_diagnostics(self.diagnostics);
+            exit(1);
+        }
+
+        self.ast
+            .exprs
+            .iter_enumerated()
+            .for_each(|(expr_key, _expr)| {
+                let Type::Concrete(con_ty) = &self.typed_ast.exprs[&expr_key] else {
+                    unreachable!()
+                };
+                let type_key = self.nir_builder.get_unique_type(con_ty);
+                self.nir_builder.exprs_types.push(type_key);
+            });
+
+        self.typed_ast
+            .lets
+            .iter()
+            .for_each(|(let_stm_key, let_binding)| {
+                let Type::Concrete(let_ty) = &let_binding.ty else {
+                    unreachable!()
+                };
+                self.nir_builder.get_unique_type(let_ty);
+                let_binding
+                    .bindings
+                    .iter()
+                    .for_each(|(binding_id_key, binding_ty)| {
+                        let Type::Concrete(binding_ty) = &binding_ty else {
+                            unreachable!()
+                        };
+                        let binding_ty_key = self.nir_builder.get_unique_type(binding_ty);
+                        self.nir_builder
+                            .bindings_types
+                            .insert((*let_stm_key, *binding_id_key), binding_ty_key);
+                    });
+            });
+
+        self.ast
+            .fields_structs
+            .iter_enumerated()
+            .for_each(|(struct_key, _struct)| {
+                let fields = self.typed_ast.fields_structs[&struct_key]
+                    .fields
+                    .iter()
+                    .map(|(field_id, field_info)| {
+                        let Type::Concrete(field_typ) = &field_info.typ else {
+                            unreachable!()
+                        };
+                        let field_typ = self.nir_builder.get_unique_type(field_typ);
+                        (*field_id, field_typ)
+                    })
+                    .collect();
+                self.nir_builder.nir.structs.push(Struct {
+                    info: _struct.info,
+                    fields,
+                });
+            });
+
+        let fns_signatures = self
+            .typed_ast
+            .fns_signatures
+            .iter()
+            .map(|(fn_key, ty)| {
+                let Type::Concrete(con_ty) = ty else {
+                    unreachable!()
+                };
+                (*fn_key, self.nir_builder.get_unique_type(con_ty))
+            })
+            .collect::<HashMap<_, _>>();
+
+        let all_types = std::mem::take(&mut self.nir_builder.all_types);
+        let all_tuple_types = std::mem::take(&mut self.nir_builder.all_tuple_types);
+        let all_array_types = std::mem::take(&mut self.nir_builder.all_array_types);
+        let all_lambda_types = std::mem::take(&mut self.nir_builder.all_lambda_types);
+        let all_fn_ptr_types = std::mem::take(&mut self.nir_builder.all_fn_ptr_types);
+
+        let all_types = all_types.build();
+        let all_array_types = all_array_types.build();
+        let all_tuple_types = all_tuple_types.build();
+        let all_lambda_types = all_lambda_types.build();
+        let all_fn_ptr_types = all_fn_ptr_types.build();
+
+        let fns = std::mem::take(&mut self.ast.fns);
+        self.cfg_builder.build(); // To init first cfg start and end blocks
+
+        fns.iter_enumerated().for_each(|(fn_key, _fn)| {
+            let fn_ptr_type = fns_signatures[&fn_key];
+
+            let nazmc_nir::Type::FnPtr(fn_ptr_type_key) = &all_types[fn_ptr_type] else {
+                unreachable!()
+            };
+
+            let nazmc_nir::FnPtrType {
+                params_types,
+                return_type,
+            } = &all_fn_ptr_types[*fn_ptr_type_key];
+
+            let mut args = TiVec::with_capacity(params_types.len());
+
+            for i in 0..params_types.len() {
+                args.push(Arg {
+                    id_key: _fn.params[i].0.id,
+                    id_span: _fn.params[i].0.span,
+                    typ: params_types[i],
+                    is_mut: false,
+                })
+            }
+
+            self.lower_scope(_fn.scope_key);
+
+            self.nir_builder.nir.fns.push(nazmc_nir::Fn {
+                info: _fn.info,
+                args,
+                fn_ptr_type,
+                return_type: *return_type,
+                cfg: self.cfg_builder.build(),
+            });
+        });
+
+        self.nir_builder.nir.types = all_types;
+        self.nir_builder.nir.array_types = all_array_types;
+        self.nir_builder.nir.tuple_types = all_tuple_types;
+        self.nir_builder.nir.lambda_types = all_lambda_types;
+        self.nir_builder.nir.fn_ptr_types = all_fn_ptr_types;
 
         if !self.diagnostics.is_empty() {
             eprint_diagnostics(self.diagnostics);

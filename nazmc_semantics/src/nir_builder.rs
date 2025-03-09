@@ -3,10 +3,10 @@ use std::collections::HashMap;
 use nazmc_ast::{ASTId, BinaryOpExpr, ExprKey, LetStmKey, ScopeKey};
 use nazmc_data_pool::{typed_index_collections::TiVec, DataPoolBuilder, IdKey};
 use nazmc_nir::{
-    ArgKey, ArrayType, ArrayTypeKey, BasicBlockKey, BinOp, Binding, BindingKey, Const, FnKey,
-    FnPtrType, FnPtrTypeKey, LValue, LValueKey, LambdaType, LambdaTypeKey, Operand, OperandKind,
-    RValue, StaticKey, Stm, Struct, StructKey, Temp, TupleType, TupleTypeKey, Type, TypeKey, CFG,
-    NIR,
+    ArgKey, ArrayType, ArrayTypeKey, BasicBlock, BasicBlockKey, BinOp, Binding, BindingKey, Const,
+    FnKey, FnPtrType, FnPtrTypeKey, LValue, LValueKey, LambdaType, LambdaTypeKey, Operand,
+    OperandKind, RValue, StaticKey, Stm, Struct, StructKey, Temp, TupleType, TupleTypeKey, Type,
+    TypeKey, CFG, NIR,
 };
 
 use crate::{get_bin_op_span, SemanticsAnalyzer};
@@ -24,23 +24,23 @@ pub(crate) struct NIRBuilder {
 }
 
 impl NIRBuilder {
-    pub(crate) fn get_unique_type(&mut self, typ: crate::ConcreteType) -> TypeKey {
+    pub(crate) fn get_unique_type(&mut self, typ: &crate::ConcreteType) -> TypeKey {
         let typ = match typ {
             crate::ConcreteType::Composite(composite_type) => match composite_type {
                 crate::CompositeType::Slice(underlying_typ) => {
-                    let crate::Type::Concrete(underlying_typ) = *underlying_typ else {
+                    let crate::Type::Concrete(underlying_typ) = &**underlying_typ else {
                         unreachable!()
                     };
                     Type::Slice(self.get_unique_type(underlying_typ))
                 }
                 crate::CompositeType::Ptr(underlying_typ) => {
-                    let crate::Type::Concrete(underlying_typ) = *underlying_typ else {
+                    let crate::Type::Concrete(underlying_typ) = &**underlying_typ else {
                         unreachable!()
                     };
                     Type::Ptr(self.get_unique_type(underlying_typ))
                 }
                 crate::CompositeType::PtrMut(underlying_typ) => {
-                    let crate::Type::Concrete(underlying_typ) = *underlying_typ else {
+                    let crate::Type::Concrete(underlying_typ) = &**underlying_typ else {
                         unreachable!()
                     };
                     Type::MutPtr(self.get_unique_type(underlying_typ))
@@ -51,7 +51,7 @@ impl NIRBuilder {
                     underlying_typ,
                     size,
                 } => {
-                    let crate::Type::Concrete(underlying_typ) = *underlying_typ else {
+                    let crate::Type::Concrete(underlying_typ) = &**underlying_typ else {
                         unreachable!()
                     };
 
@@ -59,7 +59,7 @@ impl NIRBuilder {
 
                     let array_typ = ArrayType {
                         underlying_typ: underlying_typ_key,
-                        size,
+                        size: *size,
                     };
 
                     let array_type_key = self.all_array_types.get_key(&array_typ);
@@ -99,7 +99,7 @@ impl NIRBuilder {
                         })
                         .collect();
 
-                    let crate::Type::Concrete(return_type) = *return_type else {
+                    let crate::Type::Concrete(return_type) = &**return_type else {
                         unreachable!()
                     };
 
@@ -129,7 +129,7 @@ impl NIRBuilder {
                         })
                         .collect();
 
-                    let crate::Type::Concrete(return_type) = *return_type else {
+                    let crate::Type::Concrete(return_type) = &**return_type else {
                         unreachable!()
                     };
 
@@ -148,7 +148,7 @@ impl NIRBuilder {
             crate::ConcreteType::UnitStruct(unit_struct_key) => todo!(),
             crate::ConcreteType::TupleStruct(tuple_struct_key) => todo!(),
             crate::ConcreteType::FieldsStruct(fields_struct_key) => {
-                Type::Struct(StructKey::from(usize::from(fields_struct_key)))
+                Type::Struct(StructKey::from(usize::from(*fields_struct_key)))
             }
             crate::ConcreteType::Primitive(primitive_type) => match primitive_type {
                 crate::type_infer::PrimitiveType::Unit => Type::Unit,
@@ -181,6 +181,19 @@ pub(crate) struct CFGBuilder {
     pub(crate) cfg: CFG,
     pub(crate) locals: HashMap<(LetStmKey, IdKey), BindingKey>,
     pub(crate) lvalues: HashMap<LValue, LValueKey>,
+}
+
+impl CFGBuilder {
+    pub(crate) fn build(&mut self) -> CFG {
+        self.locals.clear();
+        self.lvalues.clear();
+        let cfg = std::mem::take(&mut self.cfg);
+        // The end block
+        self.cfg.basic_blocks.push(BasicBlock::default());
+        // The start block
+        self.cfg.basic_blocks.push(BasicBlock::default());
+        cfg
+    }
 }
 
 impl<'a> SemanticsAnalyzer<'a> {
