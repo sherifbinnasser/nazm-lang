@@ -223,7 +223,7 @@ fn main() {
 
     let ast = NameResolver::new(&files_infos, &id_pool, &pkgs.map, &pkgs_names, ast).resolve();
 
-    nazmc_semantics::SemanticsAnalyzer::new(
+    let mut nir = nazmc_semantics::SemanticsAnalyzer::new(
         &files_infos,
         &files_to_pkgs,
         &id_pool,
@@ -231,6 +231,16 @@ fn main() {
         ast,
     )
     .analyze();
+
+    nir.files_infos = &files_infos;
+    nir.files_to_pkgs = &files_to_pkgs;
+    nir.pkgs_names = &pkgs_names;
+    nir.id_pool = &id_pool;
+    nir.str_pool = str_pool.build();
+
+    for _fn in &nir.fns {
+        nir.fmt_cfg(&_fn.cfg, "CFG.dot");
+    }
 
     // let (file_path, file_content) = cli::read_file();
 

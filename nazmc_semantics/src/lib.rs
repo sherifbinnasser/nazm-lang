@@ -57,7 +57,7 @@ pub struct SemanticsAnalyzer<'a> {
     current_file_key: FileKey,
     current_fn_key: FnKey,
     type_inf_ctx: TypeInferenceCtx,
-    nir_builder: NIRBuilder,
+    nir_builder: NIRBuilder<'a>,
     cfg_builder: CFGBuilder,
     /// For fns and lambdas only
     current_scope_expected_return_ty: Type,
@@ -110,7 +110,7 @@ impl<'a> SemanticsAnalyzer<'a> {
         }
     }
 
-    pub fn analyze(mut self) {
+    pub fn analyze(mut self) -> NIR<'a> {
         // for type_expr_key in self.ast.types_exprs.all.keys() {
         //     self.analyze_type_expr(type_expr_key);
         // }
@@ -200,26 +200,31 @@ impl<'a> SemanticsAnalyzer<'a> {
         let all_lambda_types = std::mem::take(&mut self.nir_builder.all_lambda_types);
         let all_fn_ptr_types = std::mem::take(&mut self.nir_builder.all_fn_ptr_types);
 
-        let all_types = all_types.build();
-        let all_array_types = all_array_types.build();
-        let all_tuple_types = all_tuple_types.build();
-        let all_lambda_types = all_lambda_types.build();
-        let all_fn_ptr_types = all_fn_ptr_types.build();
+        self.nir_builder.nir.types = all_types.build();
+        self.nir_builder.nir.array_types = all_array_types.build();
+        self.nir_builder.nir.tuple_types = all_tuple_types.build();
+        self.nir_builder.nir.lambda_types = all_lambda_types.build();
+        self.nir_builder.nir.fn_ptr_types = all_fn_ptr_types.build();
 
         let fns = std::mem::take(&mut self.ast.fns);
         self.cfg_builder.build(); // To init first cfg start and end blocks
 
         fns.iter_enumerated().for_each(|(fn_key, _fn)| {
+            self.current_fn_key = fn_key;
+
             let fn_ptr_type = fns_signatures[&fn_key];
 
-            let nazmc_nir::Type::FnPtr(fn_ptr_type_key) = &all_types[fn_ptr_type] else {
+            let nazmc_nir::Type::FnPtr(fn_ptr_type_key) = &self.nir_builder.nir.types[fn_ptr_type]
+            else {
                 unreachable!()
             };
 
             let nazmc_nir::FnPtrType {
                 params_types,
                 return_type,
-            } = &all_fn_ptr_types[*fn_ptr_type_key];
+            } = &self.nir_builder.nir.fn_ptr_types[*fn_ptr_type_key];
+
+            let return_type = *return_type;
 
             let mut args = TiVec::with_capacity(params_types.len());
 
@@ -238,21 +243,20 @@ impl<'a> SemanticsAnalyzer<'a> {
                 info: _fn.info,
                 args,
                 fn_ptr_type,
-                return_type: *return_type,
-                cfg: self.cfg_builder.build(),
+                return_type,
+                cfg: CFG::default(),
             });
-        });
 
-        self.nir_builder.nir.types = all_types;
-        self.nir_builder.nir.array_types = all_array_types;
-        self.nir_builder.nir.tuple_types = all_tuple_types;
-        self.nir_builder.nir.lambda_types = all_lambda_types;
-        self.nir_builder.nir.fn_ptr_types = all_fn_ptr_types;
+            let cfg = self.cfg_builder.build();
+            self.nir_builder.nir.fns.last_mut().unwrap().cfg = cfg;
+        });
 
         if !self.diagnostics.is_empty() {
             eprint_diagnostics(self.diagnostics);
             exit(1);
         }
+
+        self.nir_builder.nir
 
         // TODO
     }

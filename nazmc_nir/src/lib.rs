@@ -1,9 +1,12 @@
-use std::collections::HashMap;
-
 use derive_more::{From, Into};
+use nazmc_data_pool::typed_index_collections::TiSlice;
 use nazmc_data_pool::{new_data_pool_key, typed_index_collections::TiVec, IdKey, ItemInfo, StrKey};
+use nazmc_data_pool::{FileKey, PkgKey};
+use nazmc_diagnostics::file_info::FileInfo;
 use nazmc_diagnostics::span::Span;
+use std::collections::HashMap;
 use thin_vec::ThinVec;
+mod fmt;
 
 new_data_pool_key! { BasicBlockKey }
 new_data_pool_key! { BranchKey }
@@ -22,7 +25,7 @@ new_data_pool_key! { LValueKey }
 
 /// NIR, the Nazm Intermediate Representation
 #[derive(Default)]
-pub struct NIR {
+pub struct NIR<'a> {
     pub types: TiVec<TypeKey, Type>,
     pub array_types: TiVec<ArrayTypeKey, ArrayType>,
     pub tuple_types: TiVec<TupleTypeKey, TupleType>,
@@ -31,6 +34,11 @@ pub struct NIR {
     pub structs: TiVec<StructKey, Struct>,
     pub statics: TiVec<StaticKey, Static>,
     pub fns: TiVec<FnKey, Fn>,
+    pub files_infos: &'a TiSlice<FileKey, FileInfo>,
+    pub files_to_pkgs: &'a TiSlice<FileKey, PkgKey>,
+    pub pkgs_names: &'a TiSlice<PkgKey, &'a ThinVec<IdKey>>,
+    pub id_pool: &'a TiSlice<IdKey, String>,
+    pub str_pool: TiVec<StrKey, String>,
 }
 
 pub struct Struct {
@@ -168,19 +176,19 @@ pub enum Stm {
     Drop(LValueKey),
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Operand {
     pub typ: TypeKey,
     pub kind: OperandKind,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum OperandKind {
     LValue(LValueKey),
     Const(Const),
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LValue {
     #[default]
     ReturnPtr,
@@ -229,6 +237,7 @@ pub enum LValue {
     },
 }
 
+#[derive(Debug)]
 pub enum RValue {
     Use(Operand),
     Ref(LValueKey),
@@ -262,7 +271,7 @@ pub enum RValue {
     },
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Debug, Copy)]
 pub enum Const {
     Unit,
     I(isize),
@@ -312,6 +321,7 @@ impl PartialEq for Const {
 
 impl Eq for Const {}
 
+#[derive(Debug)]
 pub enum BinOp {
     EqualEqual,
     NotEqual,
@@ -331,49 +341,9 @@ pub enum BinOp {
     Mod,
 }
 
+#[derive(Debug)]
 pub enum UnaryOp {
     LNot,
     BNot,
     Minus,
-}
-
-use std::fs::File;
-use std::io::{self, Write};
-
-impl CFG {
-    pub fn write_dot(&self, filename: &str) -> io::Result<()> {
-        let mut file = File::create(filename)?;
-
-        writeln!(file, "digraph CFG {{")?;
-        writeln!(file, "    node [shape=rect];")?;
-
-        // Write basic blocks
-        for (bb_key, _) in self.basic_blocks.iter_enumerated() {
-            let label = if bb_key == START_BASIC_BLOCK {
-                "Start"
-            } else if bb_key == END_BASIC_BLOCK {
-                "End"
-            } else {
-                &format!("BB {:?}", bb_key)
-            };
-            writeln!(file, "    {:?} [label=\"{}\", style=bold];", bb_key, label)?;
-        }
-
-        // Write edges
-        for branch in &self.branches {
-            let label = match branch.kind {
-                BranchKind::Straight => "",
-                BranchKind::JZ => "JZ",
-                BranchKind::JNZ => "JNZ",
-            };
-            writeln!(
-                file,
-                "    {:?} -> {:?} [label=\"{}\"]",
-                branch.from, branch.to, label
-            )?;
-        }
-
-        writeln!(file, "}}")?;
-        Ok(())
-    }
 }

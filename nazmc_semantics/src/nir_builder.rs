@@ -12,8 +12,8 @@ use nazmc_nir::{
 use crate::{get_bin_op_span, SemanticsAnalyzer};
 
 #[derive(Default)]
-pub(crate) struct NIRBuilder {
-    pub(crate) nir: NIR,
+pub(crate) struct NIRBuilder<'a> {
+    pub(crate) nir: NIR<'a>,
     pub(crate) all_types: DataPoolBuilder<TypeKey, Type>,
     pub(crate) all_array_types: DataPoolBuilder<ArrayTypeKey, ArrayType>,
     pub(crate) all_tuple_types: DataPoolBuilder<TupleTypeKey, TupleType>,
@@ -23,7 +23,7 @@ pub(crate) struct NIRBuilder {
     pub(crate) bindings_types: HashMap<(LetStmKey, IdKey), TypeKey>,
 }
 
-impl NIRBuilder {
+impl<'a> NIRBuilder<'a> {
     pub(crate) fn get_unique_type(&mut self, typ: &crate::ConcreteType) -> TypeKey {
         let typ = match typ {
             crate::ConcreteType::Composite(composite_type) => match composite_type {
