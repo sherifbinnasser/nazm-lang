@@ -23,11 +23,12 @@ impl<'a> NIR<'a> {
 
             for stm in &bb.stms {
                 match stm {
-                    Stm::Assign { lhs, rhs } => {
+                    Stm::Assign { lhs, rhs, typ } => {
                         stms.push_str(
                             format!(
-                                "{} = {}\n",
+                                "{}: {} = {}\n",
                                 self.fmt_lvalue(cfg, *lhs),
+                                self.fmt_typ(*typ),
                                 self.fmt_rvalue(cfg, rhs)
                             )
                             .as_str(),

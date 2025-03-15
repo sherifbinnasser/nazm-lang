@@ -172,7 +172,11 @@ pub struct FnPtrType {
 }
 
 pub enum Stm {
-    Assign { lhs: LValueKey, rhs: RValue },
+    Assign {
+        lhs: LValueKey,
+        rhs: RValue,
+        typ: TypeKey,
+    },
     Drop(LValueKey),
 }
 

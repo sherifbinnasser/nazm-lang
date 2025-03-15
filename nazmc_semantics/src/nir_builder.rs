@@ -248,14 +248,18 @@ impl<'a> SemanticsAnalyzer<'a> {
     ) {
         match kind {
             nazmc_ast::BindingKind::Id(ast_id) => {
+                let key = (let_stm_key, ast_id.id);
+                let typ = self.nir_builder.bindings_types[&key];
                 let binding_key = self.add_new_binding(let_stm_key, ast_id, false);
                 let lvalue_key = self.get_lvalue_key(LValue::Binding(binding_key));
-                self.assign_to_lvalue(lvalue_key, rvalue);
+                self.assign_to_lvalue(lvalue_key, rvalue, typ);
             }
             nazmc_ast::BindingKind::MutId { id, mut_span: _ } => {
+                let key = (let_stm_key, id.id);
+                let typ = self.nir_builder.bindings_types[&key];
                 let binding_key = self.add_new_binding(let_stm_key, id, true);
                 let lvalue_key = self.get_lvalue_key(LValue::Binding(binding_key));
-                self.assign_to_lvalue(lvalue_key, rvalue);
+                self.assign_to_lvalue(lvalue_key, rvalue, typ);
             }
             nazmc_ast::BindingKind::Tuple(bindings, _) => {
                 let (OperandKind::LValue(temp_lvalue_key), Type::Tuple(tuple_type_key)) = (
@@ -318,10 +322,11 @@ impl<'a> SemanticsAnalyzer<'a> {
         }
     }
 
-    fn assign_to_lvalue(&mut self, lvalue_key: LValueKey, rvalue: RValue) {
+    fn assign_to_lvalue(&mut self, lvalue_key: LValueKey, rvalue: RValue, typ: TypeKey) {
         let assign = Stm::Assign {
             lhs: lvalue_key,
             rhs: rvalue,
+            typ,
         };
 
         self.cfg_builder
@@ -345,7 +350,7 @@ impl<'a> SemanticsAnalyzer<'a> {
 
         let lvalue_key = self.get_lvalue_key(LValue::Temp(temp_key));
 
-        self.assign_to_lvalue(lvalue_key, rvalue);
+        self.assign_to_lvalue(lvalue_key, rvalue, typ);
 
         OperandKind::LValue(lvalue_key)
     }
@@ -383,7 +388,7 @@ impl<'a> SemanticsAnalyzer<'a> {
     ) -> OperandKind {
         if let OperandKind::LValue(lvalue_key) = lhs.kind {
             if self.is_mut_lvalue(lvalue_key) {
-                self.assign_to_lvalue(lvalue_key, rvalue);
+                self.assign_to_lvalue(lvalue_key, rvalue, lhs.typ);
             } else {
                 self.add_cannot_mutate_immutable_lvalue(
                     self.get_expr_span(binary_op_expr.left),

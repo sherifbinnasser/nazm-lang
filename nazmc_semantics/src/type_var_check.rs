@@ -45,7 +45,8 @@ impl<'a> SemanticsAnalyzer<'a> {
             self.unknown_type_errors.len(),
             is_expr,
         );
-        applied_ty
+
+        self.type_inf_ctx.apply(base_ty)
     }
 
     pub(crate) fn ty_check(
@@ -203,6 +204,10 @@ impl<'a> SemanticsAnalyzer<'a> {
             }
         }
 
+        if let Some(expr_key) = self.ast.scopes[scope_key].return_expr {
+            self.check_expr_ty_vars(expr_key)
+        }
+
         self.ast.scopes[scope_key].stms = stms;
     }
 
@@ -346,6 +351,12 @@ impl<'a> SemanticsAnalyzer<'a> {
                 self.check_expr_ty_vars(binary_op_expr.left);
                 self.check_expr_ty_vars(binary_op_expr.right);
                 ExprKind::BinaryOp(binary_op_expr)
+            }
+            ExprKind::FieldsStruct(fields_struct) => {
+                for (_field_id, field_expr_key) in &fields_struct.fields {
+                    self.check_expr_ty_vars(*field_expr_key)
+                }
+                ExprKind::FieldsStruct(fields_struct)
             }
             ExprKind::Return(return_expr) => {
                 if let Some(expr_key) = return_expr.expr {
