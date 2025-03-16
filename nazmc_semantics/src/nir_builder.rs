@@ -453,7 +453,7 @@ impl<'a> SemanticsAnalyzer<'a> {
         let current_to_then = self.cfg_builder.cfg.branches.push_and_get_key(Branch {
             from: current_basic_block,
             to: then_basic_block_start,
-            kind: nazmc_nir::BranchKind::Test(cond_operand),
+            kind: nazmc_nir::BranchKind::If(cond_operand),
         });
 
         self.get_basic_block_mut(current_basic_block)

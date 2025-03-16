@@ -16,7 +16,7 @@ impl<'a> NIR<'a> {
             } else if bb_key == END_BASIC_BLOCK {
                 "End"
             } else {
-                &format!("BB{:?}", bb_key)
+                &format!("BB{:?}", bb_key.0)
             };
 
             let mut stms = String::new();
@@ -42,16 +42,28 @@ impl<'a> NIR<'a> {
         }
 
         // Write edges
-        for branch in &cfg.branches {
-            let label = match branch.kind {
-                BranchKind::Straight => format!(""),
-                BranchKind::Test(o) => format!("TEST {}", self.fmt_operand(&cfg, &o)),
-            };
-            writeln!(
-                f,
-                "    BB{} -> BB{} [label=\"{}\"]",
-                branch.from.0, branch.to.0, label
-            );
+        for (i, branch) in cfg.branches.iter().enumerate() {
+            match branch.kind {
+                BranchKind::Straight => {
+                    writeln!(f, "    BB{} -> BB{}", branch.from.0, branch.to.0);
+                }
+                BranchKind::If(o) => {
+                    writeln!(
+                        f,
+                        "    Branch_{} [shape = \"diamond\", label=\"IF {}\"];",
+                        i,
+                        self.fmt_operand(&cfg, &o)
+                    );
+                    writeln!(f, "    BB{} -> Branch_{}", branch.from.0, i);
+                    writeln!(f, "    Branch_{} -> BB{} [label=\"true\"]", i, branch.to.0);
+                    writeln!(
+                        f,
+                        "    Branch_{} -> BB{} [label=\"false\"]",
+                        i,
+                        cfg.basic_blocks[branch.to].goto.unwrap().0
+                    );
+                }
+            }
         }
 
         writeln!(f, "}}");
