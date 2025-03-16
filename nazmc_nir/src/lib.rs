@@ -103,7 +103,7 @@ pub struct Temp {
 pub struct BasicBlock {
     pub incoming: ThinVec<BranchKey>,
     pub conditional_goto: Option<BranchKey>,
-    pub goto: BranchKey,
+    pub goto: Option<BranchKey>,
     pub stms: ThinVec<Stm>,
 }
 
@@ -115,8 +115,7 @@ pub struct Branch {
 
 pub enum BranchKind {
     Straight,
-    JZ,
-    JNZ,
+    Test(Operand),
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Hash)]

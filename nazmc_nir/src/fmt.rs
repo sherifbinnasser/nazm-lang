@@ -44,9 +44,8 @@ impl<'a> NIR<'a> {
         // Write edges
         for branch in &cfg.branches {
             let label = match branch.kind {
-                BranchKind::Straight => "",
-                BranchKind::JZ => "JZ",
-                BranchKind::JNZ => "JNZ",
+                BranchKind::Straight => format!(""),
+                BranchKind::Test(o) => format!("TEST {}", self.fmt_operand(&cfg, &o)),
             };
             writeln!(
                 f,

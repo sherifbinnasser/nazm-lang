@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
-use nazmc_ast::{ASTId, BinaryOpExpr, ExprKey, LetStmKey, ScopeKey};
+use nazmc_ast::{ASTId, BinaryOpExpr, ExprKey, IfExpr, LetStmKey, ScopeKey};
 use nazmc_data_pool::{typed_index_collections::TiVec, DataPoolBuilder, IdKey};
 use nazmc_nir::{
-    ArgKey, ArrayType, ArrayTypeKey, BasicBlock, BasicBlockKey, BinOp, Binding, BindingKey, Const,
-    FnKey, FnPtrType, FnPtrTypeKey, LValue, LValueKey, LambdaType, LambdaTypeKey, Operand,
+    ArgKey, ArrayType, ArrayTypeKey, BasicBlock, BasicBlockKey, BinOp, Binding, BindingKey, Branch,
+    Const, FnKey, FnPtrType, FnPtrTypeKey, LValue, LValueKey, LambdaType, LambdaTypeKey, Operand,
     OperandKind, RValue, StaticKey, Stm, Struct, StructKey, Temp, TupleType, TupleTypeKey, Type,
     TypeKey, CFG, NIR,
 };
@@ -402,6 +402,104 @@ impl<'a> SemanticsAnalyzer<'a> {
             );
         }
 
+        OperandKind::Const(Const::Unit)
+    }
+
+    fn get_current_basic_block_key(&self) -> BasicBlockKey {
+        self.cfg_builder.cfg.basic_blocks.last_key().unwrap()
+    }
+
+    fn get_current_basic_block(&self) -> &BasicBlock {
+        self.cfg_builder.cfg.basic_blocks.last().as_ref().unwrap()
+    }
+
+    fn get_basic_block_mut(&mut self, basic_block_key: BasicBlockKey) -> &mut BasicBlock {
+        self.cfg_builder
+            .cfg
+            .basic_blocks
+            .get_mut(basic_block_key)
+            .unwrap()
+    }
+
+    fn new_basic_block(&mut self) -> BasicBlockKey {
+        self.cfg_builder
+            .cfg
+            .basic_blocks
+            .push_and_get_key(BasicBlock::default())
+    }
+
+    fn add_straight_goto(&mut self, from: BasicBlockKey, to: BasicBlockKey) {
+        let branch_key = self.cfg_builder.cfg.branches.push_and_get_key(Branch {
+            from,
+            to,
+            kind: nazmc_nir::BranchKind::Straight,
+        });
+        self.get_basic_block_mut(from).goto = Some(branch_key);
+        self.get_basic_block_mut(to).incoming.push(branch_key);
+    }
+
+    fn add_branch_blocks(
+        &mut self,
+        cond_expr_key: ExprKey,
+        then_scope_key: ScopeKey,
+    ) -> BasicBlockKey {
+        let cond_operand = self.lower_expr(cond_expr_key);
+        let current_basic_block = self.get_current_basic_block_key();
+        let then_basic_block_start = self.new_basic_block();
+        self.lower_scope(then_scope_key);
+        let then_basic_block_end = self.get_current_basic_block_key();
+        let else_basic_block_start = self.new_basic_block();
+
+        let current_to_then = self.cfg_builder.cfg.branches.push_and_get_key(Branch {
+            from: current_basic_block,
+            to: then_basic_block_start,
+            kind: nazmc_nir::BranchKind::Test(cond_operand),
+        });
+
+        self.get_basic_block_mut(current_basic_block)
+            .conditional_goto = Some(current_to_then);
+        self.get_basic_block_mut(then_basic_block_start)
+            .incoming
+            .push(current_to_then);
+
+        self.add_straight_goto(current_basic_block, else_basic_block_start);
+
+        then_basic_block_end
+    }
+
+    fn lower_if_expr(&mut self, if_expr: Box<IfExpr>) -> OperandKind {
+        let IfExpr {
+            if_,
+            else_ifs,
+            else_,
+        } = *if_expr;
+
+        let then_end = self.add_branch_blocks(if_.1, if_.2);
+
+        let mut thens_ends = Vec::with_capacity(else_ifs.len());
+
+        for else_if in else_ifs {
+            let then_end = self.add_branch_blocks(else_if.1, else_if.2);
+            thens_ends.push(then_end);
+        }
+
+        let remaining_block = if let Some((_, else_scope)) = else_ {
+            self.lower_scope(else_scope);
+            let else_end = self.get_current_basic_block_key();
+            let remaining_block = self.new_basic_block();
+            self.add_straight_goto(else_end, remaining_block);
+            remaining_block
+        } else {
+            self.get_current_basic_block_key()
+        };
+
+        self.add_straight_goto(then_end, remaining_block);
+
+        for then_end in thens_ends {
+            self.add_straight_goto(then_end, remaining_block);
+        }
+
+        // TODO: Add a phi stm
         OperandKind::Const(Const::Unit)
     }
 
@@ -899,7 +997,7 @@ impl<'a> SemanticsAnalyzer<'a> {
             }
             nazmc_ast::ExprKind::UnitStruct(unit_struct_path_key) => todo!(),
             nazmc_ast::ExprKind::TupleStruct(tuple_struct_expr) => todo!(),
-            nazmc_ast::ExprKind::If(if_expr) => todo!(),
+            nazmc_ast::ExprKind::If(if_expr) => self.lower_if_expr(if_expr),
             nazmc_ast::ExprKind::Lambda(lambda_expr) => todo!(),
             nazmc_ast::ExprKind::Return(return_expr) => todo!(),
             nazmc_ast::ExprKind::Break(scope_key) => todo!(),

@@ -440,7 +440,7 @@ impl<'a> SemanticsAnalyzer<'a> {
         let if_ty = self.infer_scope(*if_scope_key);
 
         for (else_if_keyword_span, else_if_cond_expr_key, else_if_scope_key) in else_ifs {
-            let else_if_cond_ty = self.infer(*if_cond_expr_key);
+            let else_if_cond_ty = self.infer(*else_if_cond_expr_key);
 
             if let Err(err) = self.type_inf_ctx.unify(&Type::boolean(), &else_if_cond_ty) {
                 self.add_branch_stm_condition_type_mismatch_err(
