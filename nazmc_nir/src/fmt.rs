@@ -44,23 +44,26 @@ impl<'a> NIR<'a> {
         // Write edges
         for (i, branch) in cfg.branches.iter().enumerate() {
             match branch.kind {
+                BranchKind::Else => {}
                 BranchKind::Straight => {
                     writeln!(f, "    BB{} -> BB{}", branch.from.0, branch.to.0);
                 }
                 BranchKind::If(o) => {
                     writeln!(
                         f,
-                        "    Branch_{} [shape = \"diamond\", label=\"IF {}\"];",
+                        "    Branch_{} [shape = \"diamond\", label=\"If {}\"];",
                         i,
-                        self.fmt_operand(&cfg, &o)
+                        self.fmt_operand_kind(&cfg, &o.kind)
                     );
                     writeln!(f, "    BB{} -> Branch_{}", branch.from.0, i);
-                    writeln!(f, "    Branch_{} -> BB{} [label=\"true\"]", i, branch.to.0);
+                    writeln!(f, "    Branch_{} -> BB{} [label=\"Yes\"]", i, branch.to.0);
+
+                    let else_branch_key = cfg.basic_blocks[branch.from].goto.unwrap();
+                    let else_block_key = cfg.branches[else_branch_key].to;
                     writeln!(
                         f,
-                        "    Branch_{} -> BB{} [label=\"false\"]",
-                        i,
-                        cfg.basic_blocks[branch.to].goto.unwrap().0
+                        "    Branch_{} -> BB{} [label=\"No\"]",
+                        i, else_block_key.0
                     );
                 }
             }

@@ -59,7 +59,9 @@ impl<'a> SemanticsAnalyzer<'a> {
     ) {
         match applied_ty {
             Type::TypeVar(key) => match &self.type_inf_ctx.ty_vars[*key] {
-                TypeVarSubstitution::Never => {}
+                TypeVarSubstitution::Never => {
+                    self.type_inf_ctx.ty_vars[*key] = TypeVarSubstitution::Determined(Type::unit());
+                }
                 TypeVarSubstitution::Any
                 | TypeVarSubstitution::Error
                 | TypeVarSubstitution::ConstrainedNumber(
@@ -363,8 +365,8 @@ impl<'a> SemanticsAnalyzer<'a> {
                     self.check_expr_ty_vars(expr_key);
                 }
 
-                let ty = &self.typed_ast.exprs[&expr_key];
-                let ty = self.type_inf_ctx.apply(&ty);
+                let ty = self.typed_ast.exprs[&expr_key].clone();
+                let ty = self.ty_var_check(&ty, self.get_expr_span(expr_key), true);
                 self.typed_ast.exprs.insert(expr_key, ty);
 
                 self.ast.exprs[expr_key].kind = ExprKind::Return(return_expr);
@@ -374,8 +376,8 @@ impl<'a> SemanticsAnalyzer<'a> {
                 return;
             }
             kind @ (ExprKind::Break(_) | ExprKind::Continue(_)) => {
-                let ty = &self.typed_ast.exprs[&expr_key];
-                let ty = self.type_inf_ctx.apply(&ty);
+                let ty = self.typed_ast.exprs[&expr_key].clone();
+                let ty = self.ty_var_check(&ty, self.get_expr_span(expr_key), true);
                 self.typed_ast.exprs.insert(expr_key, ty);
 
                 self.ast.exprs[expr_key].kind = kind;

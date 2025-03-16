@@ -116,6 +116,7 @@ pub struct Branch {
 pub enum BranchKind {
     Straight,
     If(Operand),
+    Else,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Hash)]

@@ -181,17 +181,24 @@ pub(crate) struct CFGBuilder {
     pub(crate) cfg: CFG,
     pub(crate) locals: HashMap<(LetStmKey, IdKey), BindingKey>,
     pub(crate) lvalues: HashMap<LValue, LValueKey>,
+    /// Map a loop scope to the starts of its continue and break blocks
+    pub(crate) loops_basic_blocks: HashMap<ScopeKey, (BasicBlockKey, BasicBlockKey)>,
+    pub(crate) current_basic_block_key: BasicBlockKey,
 }
 
 impl CFGBuilder {
     pub(crate) fn build(&mut self) -> CFG {
         self.locals.clear();
         self.lvalues.clear();
+        self.loops_basic_blocks.clear();
         let cfg = std::mem::take(&mut self.cfg);
         // The end block
         self.cfg.basic_blocks.push(BasicBlock::default());
         // The start block
-        self.cfg.basic_blocks.push(BasicBlock::default());
+        self.current_basic_block_key = self
+            .cfg
+            .basic_blocks
+            .push_and_get_key(BasicBlock::default());
         cfg
     }
 }
@@ -215,7 +222,30 @@ impl<'a> SemanticsAnalyzer<'a> {
                     let rvalue = RValue::Use(expr_operand);
                     self.lower_assigned_bindings(let_stm_key, &binding_kind, typ, rvalue);
                 }
-                nazmc_ast::Stm::While(while_stm) => todo!(),
+                nazmc_ast::Stm::While(while_stm) => {
+                    let current_block = self.get_current_basic_block_key();
+                    let loop_break_start = self.new_basic_block(); // Reserve it for break expressions
+                    let loop_continue_start = self.new_current_basic_block();
+
+                    self.cfg_builder
+                        .loops_basic_blocks
+                        .insert(while_stm.scope_key, (loop_continue_start, loop_break_start));
+
+                    let loop_continue_end = self.add_branch_blocks_with_prepared_else(
+                        while_stm.cond_expr_key,
+                        while_stm.scope_key,
+                        loop_break_start,
+                    );
+
+                    self.cfg_builder.current_basic_block_key = loop_break_start;
+
+                    self.cfg_builder
+                        .loops_basic_blocks
+                        .remove(&while_stm.scope_key);
+
+                    self.add_straight_goto(current_block, loop_continue_start);
+                    self.add_straight_goto(loop_continue_end, loop_continue_start);
+                }
                 nazmc_ast::Stm::Expr(expr_key) => {
                     self.lower_expr(expr_key);
                 }
@@ -329,17 +359,11 @@ impl<'a> SemanticsAnalyzer<'a> {
             typ,
         };
 
-        self.cfg_builder
-            .cfg
-            .basic_blocks
-            .last_mut()
-            .unwrap()
-            .stms
-            .push(assign);
+        self.get_current_basic_block_mut().stms.push(assign);
     }
 
     fn add_new_temp_assign_stm(&mut self, typ: TypeKey, rvalue: RValue) -> OperandKind {
-        let assign_stm_idx = self.cfg_builder.cfg.basic_blocks.last().unwrap().stms.len() as u32;
+        let assign_stm_idx = self.get_current_basic_block().stms.len() as u32;
 
         let temp = Temp {
             typ,
@@ -406,11 +430,23 @@ impl<'a> SemanticsAnalyzer<'a> {
     }
 
     fn get_current_basic_block_key(&self) -> BasicBlockKey {
-        self.cfg_builder.cfg.basic_blocks.last_key().unwrap()
+        self.cfg_builder.current_basic_block_key
     }
 
     fn get_current_basic_block(&self) -> &BasicBlock {
-        self.cfg_builder.cfg.basic_blocks.last().as_ref().unwrap()
+        self.cfg_builder
+            .cfg
+            .basic_blocks
+            .get(self.cfg_builder.current_basic_block_key)
+            .unwrap()
+    }
+
+    fn get_current_basic_block_mut(&mut self) -> &mut BasicBlock {
+        self.cfg_builder
+            .cfg
+            .basic_blocks
+            .get_mut(self.cfg_builder.current_basic_block_key)
+            .unwrap()
     }
 
     fn get_basic_block_mut(&mut self, basic_block_key: BasicBlockKey) -> &mut BasicBlock {
@@ -428,6 +464,12 @@ impl<'a> SemanticsAnalyzer<'a> {
             .push_and_get_key(BasicBlock::default())
     }
 
+    fn new_current_basic_block(&mut self) -> BasicBlockKey {
+        let key = self.new_basic_block();
+        self.cfg_builder.current_basic_block_key = key;
+        key
+    }
+
     fn add_straight_goto(&mut self, from: BasicBlockKey, to: BasicBlockKey) {
         let branch_key = self.cfg_builder.cfg.branches.push_and_get_key(Branch {
             from,
@@ -438,17 +480,27 @@ impl<'a> SemanticsAnalyzer<'a> {
         self.get_basic_block_mut(to).incoming.push(branch_key);
     }
 
-    fn add_branch_blocks(
+    fn add_else_goto(&mut self, from: BasicBlockKey, to: BasicBlockKey) {
+        let branch_key = self.cfg_builder.cfg.branches.push_and_get_key(Branch {
+            from,
+            to,
+            kind: nazmc_nir::BranchKind::Else,
+        });
+        self.get_basic_block_mut(from).goto = Some(branch_key);
+        self.get_basic_block_mut(to).incoming.push(branch_key);
+    }
+
+    fn add_branch_blocks_with_prepared_else(
         &mut self,
         cond_expr_key: ExprKey,
         then_scope_key: ScopeKey,
+        else_basic_block_start: BasicBlockKey,
     ) -> BasicBlockKey {
         let cond_operand = self.lower_expr(cond_expr_key);
         let current_basic_block = self.get_current_basic_block_key();
-        let then_basic_block_start = self.new_basic_block();
+        let then_basic_block_start = self.new_current_basic_block();
         self.lower_scope(then_scope_key);
         let then_basic_block_end = self.get_current_basic_block_key();
-        let else_basic_block_start = self.new_basic_block();
 
         let current_to_then = self.cfg_builder.cfg.branches.push_and_get_key(Branch {
             from: current_basic_block,
@@ -462,8 +514,23 @@ impl<'a> SemanticsAnalyzer<'a> {
             .incoming
             .push(current_to_then);
 
-        self.add_straight_goto(current_basic_block, else_basic_block_start);
+        self.add_else_goto(current_basic_block, else_basic_block_start);
 
+        then_basic_block_end
+    }
+
+    fn add_branch_blocks(
+        &mut self,
+        cond_expr_key: ExprKey,
+        then_scope_key: ScopeKey,
+    ) -> BasicBlockKey {
+        let else_basic_block_start = self.new_basic_block();
+        let then_basic_block_end = self.add_branch_blocks_with_prepared_else(
+            cond_expr_key,
+            then_scope_key,
+            else_basic_block_start,
+        );
+        self.cfg_builder.current_basic_block_key = else_basic_block_start;
         then_basic_block_end
     }
 
@@ -486,7 +553,7 @@ impl<'a> SemanticsAnalyzer<'a> {
         let remaining_block = if let Some((_, else_scope)) = else_ {
             self.lower_scope(else_scope);
             let else_end = self.get_current_basic_block_key();
-            let remaining_block = self.new_basic_block();
+            let remaining_block = self.new_current_basic_block();
             self.add_straight_goto(else_end, remaining_block);
             remaining_block
         } else {
@@ -1000,8 +1067,18 @@ impl<'a> SemanticsAnalyzer<'a> {
             nazmc_ast::ExprKind::If(if_expr) => self.lower_if_expr(if_expr),
             nazmc_ast::ExprKind::Lambda(lambda_expr) => todo!(),
             nazmc_ast::ExprKind::Return(return_expr) => todo!(),
-            nazmc_ast::ExprKind::Break(scope_key) => todo!(),
-            nazmc_ast::ExprKind::Continue(scope_key) => todo!(),
+            nazmc_ast::ExprKind::Break(scope_key) => {
+                let loop_break_start = self.cfg_builder.loops_basic_blocks[&scope_key].1;
+                self.add_straight_goto(self.get_current_basic_block_key(), loop_break_start);
+                self.new_current_basic_block(); // Unreachable code
+                OperandKind::Const(Const::Unit)
+            }
+            nazmc_ast::ExprKind::Continue(scope_key) => {
+                let loop_continue_start = self.cfg_builder.loops_basic_blocks[&scope_key].0;
+                self.add_straight_goto(self.get_current_basic_block_key(), loop_continue_start);
+                self.new_current_basic_block(); // Unreachable code
+                OperandKind::Const(Const::Unit)
+            }
             nazmc_ast::ExprKind::On => todo!(),
         };
 
