@@ -60,9 +60,11 @@ pub struct Fn {
     pub cfg: CFG,
 }
 
-pub const END_BASIC_BLOCK: BasicBlockKey = BasicBlockKey(0);
+impl BasicBlockKey {
+    pub const END_BASIC_BLOCK: BasicBlockKey = BasicBlockKey(0);
 
-pub const START_BASIC_BLOCK: BasicBlockKey = BasicBlockKey(1);
+    pub const START_BASIC_BLOCK: BasicBlockKey = BasicBlockKey(1);
+}
 
 #[derive(Default)]
 /// A control flow graph of a function or an execution block

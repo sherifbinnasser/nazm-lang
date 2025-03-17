@@ -237,7 +237,7 @@ impl<'a> SemanticsAnalyzer<'a> {
                 })
             }
 
-            self.lower_scope(_fn.scope_key);
+            self.lower_fn_scope(_fn.scope_key);
 
             self.nir_builder.nir.fns.push(nazmc_nir::Fn {
                 info: _fn.info,

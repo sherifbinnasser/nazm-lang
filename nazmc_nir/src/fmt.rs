@@ -10,14 +10,25 @@ impl<'a> NIR<'a> {
         writeln!(f, "    node [shape=rect];");
 
         // Write basic blocks
+
+        writeln!(
+            f,
+            "    BB{} [style = \"rounded\", label=\"Start\"];",
+            BasicBlockKey::START_BASIC_BLOCK.0
+        );
+
+        writeln!(
+            f,
+            "    BB{} [style = \"rounded\", label=\"End\"];",
+            BasicBlockKey::END_BASIC_BLOCK.0
+        );
+
         for (bb_key, bb) in cfg.basic_blocks.iter_enumerated() {
-            let label = if bb_key == START_BASIC_BLOCK {
-                "Start"
-            } else if bb_key == END_BASIC_BLOCK {
-                "End"
-            } else {
-                &format!("BB{:?}", bb_key.0)
-            };
+            if bb_key.0 == BasicBlockKey::START_BASIC_BLOCK.0
+                || bb_key.0 == BasicBlockKey::END_BASIC_BLOCK.0
+            {
+                continue;
+            }
 
             let mut stms = String::new();
 
@@ -26,7 +37,7 @@ impl<'a> NIR<'a> {
                     Stm::Assign { lhs, rhs, typ } => {
                         stms.push_str(
                             format!(
-                                "{}: {} = {}\n",
+                                "{}: {} = {}\\n",
                                 self.fmt_lvalue(cfg, *lhs),
                                 self.fmt_typ(*typ),
                                 self.fmt_rvalue(cfg, rhs)
@@ -38,7 +49,11 @@ impl<'a> NIR<'a> {
                 }
             }
 
-            writeln!(f, "    BB{} [label=\"{}\n{}\"];", bb_key.0, label, stms);
+            writeln!(
+                f,
+                "    BB{} [label=\"BB{}\\n{}\"];",
+                bb_key.0, bb_key.0, stms
+            );
         }
 
         // Write edges
