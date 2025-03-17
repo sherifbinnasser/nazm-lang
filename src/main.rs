@@ -238,9 +238,7 @@ fn main() {
     nir.id_pool = &id_pool;
     nir.str_pool = str_pool.build();
 
-    for _fn in &nir.fns {
-        nir.fmt_cfg(&_fn.cfg, "CFG.dot");
-    }
+    nir.fmt_cfg(&nir.fns.raw[0].cfg, "CFG.dot");
 
     // let (file_path, file_content) = cli::read_file();
 

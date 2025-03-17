@@ -5,8 +5,8 @@ use nazmc_data_pool::{typed_index_collections::TiVec, DataPoolBuilder, IdKey};
 use nazmc_nir::{
     ArgKey, ArrayType, ArrayTypeKey, BasicBlock, BasicBlockKey, BinOp, Binding, BindingKey, Branch,
     Const, FnKey, FnPtrType, FnPtrTypeKey, LValue, LValueKey, LambdaType, LambdaTypeKey, Operand,
-    OperandKind, RValue, StaticKey, Stm, Struct, StructKey, Temp, TupleType, TupleTypeKey, Type,
-    TypeKey, CFG, NIR,
+    OperandKind, RValue, StaticKey, Stm, Struct, StructKey, Temp, TempKey, TupleType, TupleTypeKey,
+    Type, TypeKey, CFG, NIR,
 };
 
 use crate::{get_bin_op_span, SemanticsAnalyzer};
@@ -311,7 +311,12 @@ impl<'a> SemanticsAnalyzer<'a> {
                         while_stm.cond_expr_key,
                         while_stm.scope_key,
                         loop_break_start,
+                        None,
                     );
+
+                    if let Some(expr_key) = self.ast.scopes[while_stm.scope_key].return_expr {
+                        self.lower_expr(expr_key);
+                    }
 
                     self.cfg_builder.current_basic_block_key = loop_break_start;
 
@@ -443,21 +448,20 @@ impl<'a> SemanticsAnalyzer<'a> {
             .push(assign);
     }
 
-    fn add_new_temp_assign_stm(&mut self, typ: TypeKey, rvalue: RValue) -> OperandKind {
-        let assign_stm_idx = self.cfg_builder.get_current_basic_block().stms.len() as u32;
-
+    fn new_temp(&mut self, typ: TypeKey, assign_stm_idx: u32) -> LValueKey {
         let temp = Temp {
             typ,
             assign_stm_idx,
         };
-
         let temp_key = self.cfg_builder.cfg.temps.push_and_get_key(temp);
+        self.get_lvalue_key(LValue::Temp(temp_key))
+    }
 
-        let lvalue_key = self.get_lvalue_key(LValue::Temp(temp_key));
-
-        self.assign_to_lvalue(lvalue_key, rvalue, typ);
-
-        OperandKind::LValue(lvalue_key)
+    fn add_new_temp_assign_stm(&mut self, typ: TypeKey, rvalue: RValue) -> OperandKind {
+        let assign_stm_idx = self.cfg_builder.get_current_basic_block().stms.len() as u32;
+        let temp_lvalue_key = self.new_temp(typ, assign_stm_idx);
+        self.assign_to_lvalue(temp_lvalue_key, rvalue, typ);
+        OperandKind::LValue(temp_lvalue_key)
     }
 
     fn is_mut_lvalue(&self, lvalue_key: LValueKey) -> bool {
@@ -515,11 +519,22 @@ impl<'a> SemanticsAnalyzer<'a> {
         cond_expr_key: ExprKey,
         then_scope_key: ScopeKey,
         else_basic_block_start: BasicBlockKey,
+        return_temp_lvalue_key: Option<LValueKey>,
     ) -> BasicBlockKey {
         let cond_operand = self.lower_expr(cond_expr_key);
         let current_basic_block = self.cfg_builder.current_basic_block_key;
         let then_basic_block_start = self.cfg_builder.new_current_basic_block();
+
         self.lower_scope(then_scope_key);
+
+        if let Some(return_temp_lvalue_key) = return_temp_lvalue_key {
+            let expr_key = self.ast.scopes[then_scope_key].return_expr.unwrap();
+            let return_value = self.lower_expr(expr_key);
+            let typ = self.nir_builder.exprs_types[expr_key];
+            let rvalue = RValue::Use(return_value);
+            self.assign_to_lvalue(return_temp_lvalue_key, rvalue, typ);
+        }
+
         let then_basic_block_end = self.cfg_builder.current_basic_block_key;
 
         let current_to_then = self.cfg_builder.cfg.branches.push_and_get_key(Branch {
@@ -546,54 +561,17 @@ impl<'a> SemanticsAnalyzer<'a> {
         &mut self,
         cond_expr_key: ExprKey,
         then_scope_key: ScopeKey,
+        return_temp_lvalue_key: Option<LValueKey>,
     ) -> BasicBlockKey {
         let else_basic_block_start = self.cfg_builder.new_basic_block();
         let then_basic_block_end = self.add_branch_blocks_with_prepared_else(
             cond_expr_key,
             then_scope_key,
             else_basic_block_start,
+            return_temp_lvalue_key,
         );
         self.cfg_builder.current_basic_block_key = else_basic_block_start;
         then_basic_block_end
-    }
-
-    fn lower_if_expr(&mut self, if_expr: Box<IfExpr>) -> OperandKind {
-        let IfExpr {
-            if_,
-            else_ifs,
-            else_,
-        } = *if_expr;
-
-        let then_end = self.add_branch_blocks(if_.1, if_.2);
-
-        let mut thens_ends = Vec::with_capacity(else_ifs.len());
-
-        for else_if in else_ifs {
-            let then_end = self.add_branch_blocks(else_if.1, else_if.2);
-            thens_ends.push(then_end);
-        }
-
-        let remaining_block = if let Some((_, else_scope)) = else_ {
-            self.lower_scope(else_scope);
-            let else_end = self.cfg_builder.current_basic_block_key;
-            let remaining_block = self.cfg_builder.new_current_basic_block();
-            self.cfg_builder
-                .add_straight_goto(else_end, remaining_block);
-            remaining_block
-        } else {
-            self.cfg_builder.current_basic_block_key
-        };
-
-        self.cfg_builder
-            .add_straight_goto(then_end, remaining_block);
-
-        for then_end in thens_ends {
-            self.cfg_builder
-                .add_straight_goto(then_end, remaining_block);
-        }
-
-        // TODO: Add a phi stm
-        OperandKind::Const(Const::Unit)
     }
 
     fn lower_expr(&mut self, expr_key: ExprKey) -> Operand {
@@ -1088,10 +1066,60 @@ impl<'a> SemanticsAnalyzer<'a> {
                     }
                 }
             }
-            nazmc_ast::ExprKind::UnitStruct(unit_struct_path_key) => todo!(),
-            nazmc_ast::ExprKind::TupleStruct(tuple_struct_expr) => todo!(),
-            nazmc_ast::ExprKind::If(if_expr) => self.lower_if_expr(if_expr),
-            nazmc_ast::ExprKind::Lambda(lambda_expr) => todo!(),
+            nazmc_ast::ExprKind::If(if_expr) => {
+                let IfExpr {
+                    if_,
+                    else_ifs,
+                    else_,
+                } = *if_expr;
+
+                let return_temp_lvalue_key = self.ast.scopes[if_.2]
+                    .return_expr
+                    .map(|expr_key| self.new_temp(self.nir_builder.exprs_types[expr_key], 0));
+
+                let then_end = self.add_branch_blocks(if_.1, if_.2, return_temp_lvalue_key);
+
+                let mut thens_ends = Vec::with_capacity(else_ifs.len());
+
+                for else_if in else_ifs {
+                    let then_end =
+                        self.add_branch_blocks(else_if.1, else_if.2, return_temp_lvalue_key);
+                    thens_ends.push(then_end);
+                }
+
+                let remaining_block = if let Some((_, else_scope)) = else_ {
+                    self.lower_scope(else_scope);
+
+                    if let Some(expr_key) = self.ast.scopes[else_scope].return_expr {
+                        let return_value = self.lower_expr(expr_key);
+                        let typ = self.nir_builder.exprs_types[expr_key];
+                        let rvalue = RValue::Use(return_value);
+                        self.assign_to_lvalue(return_temp_lvalue_key.unwrap(), rvalue, typ);
+                    }
+
+                    let else_end = self.cfg_builder.current_basic_block_key;
+                    let remaining_block = self.cfg_builder.new_current_basic_block();
+                    self.cfg_builder
+                        .add_straight_goto(else_end, remaining_block);
+                    remaining_block
+                } else {
+                    self.cfg_builder.current_basic_block_key
+                };
+
+                self.cfg_builder
+                    .add_straight_goto(then_end, remaining_block);
+
+                for then_end in thens_ends {
+                    self.cfg_builder
+                        .add_straight_goto(then_end, remaining_block);
+                }
+
+                if let Some(return_temp_lvalue_key) = return_temp_lvalue_key {
+                    OperandKind::LValue(return_temp_lvalue_key)
+                } else {
+                    OperandKind::Const(Const::Unit)
+                }
+            }
             nazmc_ast::ExprKind::Return(return_expr) => {
                 if let Some(expr_key) = return_expr.expr {
                     let return_value = self.lower_expr(expr_key);
@@ -1123,7 +1151,10 @@ impl<'a> SemanticsAnalyzer<'a> {
                 self.cfg_builder.new_current_basic_block(); // Unreachable code
                 OperandKind::Const(Const::Unit)
             }
+            nazmc_ast::ExprKind::Lambda(lambda_expr) => todo!(),
             nazmc_ast::ExprKind::On => todo!(),
+            nazmc_ast::ExprKind::UnitStruct(unit_struct_path_key) => todo!(),
+            nazmc_ast::ExprKind::TupleStruct(tuple_struct_expr) => todo!(),
         };
 
         Operand { typ, kind }
