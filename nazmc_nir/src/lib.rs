@@ -179,6 +179,15 @@ pub enum Stm {
         rhs: RValue,
         typ: TypeKey,
     },
+    Phi {
+        lhs: LValueKey,
+        cases: ThinVec<(BasicBlockKey, OperandKind)>,
+        typ: TypeKey,
+    },
+    Return {
+        rvalue: RValue,
+        typ: TypeKey,
+    },
     Drop(LValueKey),
 }
 
@@ -194,10 +203,8 @@ pub enum OperandKind {
     Const(Const),
 }
 
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LValue {
-    #[default]
-    ReturnPtr,
     Binding(BindingKey),
     Arg(ArgKey),
     Static(StaticKey),

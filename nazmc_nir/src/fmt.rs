@@ -33,25 +33,45 @@ impl<'a> NIR<'a> {
             let mut stms = String::new();
 
             for stm in &bb.stms {
-                match stm {
+                let stm = match stm {
                     Stm::Assign { lhs, rhs, typ } => {
-                        stms.push_str(
-                            format!(
-                                "{}: {} = {}\\n",
-                                self.fmt_lvalue(cfg, *lhs),
-                                self.fmt_typ(*typ),
-                                self.fmt_rvalue(cfg, rhs)
-                            )
-                            .as_str(),
-                        );
+                        format!(
+                            "{}: {} = {}\\l",
+                            self.fmt_lvalue(cfg, *lhs),
+                            self.fmt_typ(*typ),
+                            self.fmt_rvalue(cfg, rhs)
+                        )
+                    }
+                    Stm::Phi { lhs, cases, typ } => {
+                        format!(
+                            "{}: {} = Φ({})\\l",
+                            self.fmt_lvalue(cfg, *lhs),
+                            self.fmt_typ(*typ),
+                            cases
+                                .iter()
+                                .map(|(bb, operand)| {
+                                    format!("@BB{} {}", bb.0, self.fmt_operand_kind(cfg, operand))
+                                })
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                        )
+                    }
+                    Stm::Return { rvalue, typ } => {
+                        format!(
+                            "return {} {}\\l",
+                            self.fmt_typ(*typ),
+                            self.fmt_rvalue(cfg, rvalue)
+                        )
                     }
                     Stm::Drop(lvalue_key) => todo!(),
-                }
+                };
+
+                stms.push_str(stm.as_str());
             }
 
             writeln!(
                 f,
-                "    BB{} [label=\"BB{}\\n{}\"];",
+                "    BB{} [label=\"@BB{}\\l{}\"];",
                 bb_key.0, bb_key.0, stms
             );
         }
@@ -205,7 +225,6 @@ impl<'a> NIR<'a> {
 
     pub fn fmt_lvalue(&self, cfg: &CFG, lvalue_key: LValueKey) -> String {
         match cfg.lvalues[lvalue_key] {
-            LValue::ReturnPtr => format!("RET"),
             LValue::Binding(binding_key) => format!("VAR_{}", binding_key.0),
             LValue::Arg(arg_key) => format!("ARG_{}", arg_key.0),
             LValue::Static(static_key) => format!("STATIC_{}", static_key.0),
