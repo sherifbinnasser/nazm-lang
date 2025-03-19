@@ -23,7 +23,7 @@ impl<'a> NIR<'a> {
             BasicBlockKey::END_BASIC_BLOCK.0
         );
 
-        for (bb_key, bb) in cfg.basic_blocks.iter_enumerated() {
+        for (bb_key, bb) in cfg.basic_blocks.iter() {
             if bb_key.0 == BasicBlockKey::START_BASIC_BLOCK.0
                 || bb_key.0 == BasicBlockKey::END_BASIC_BLOCK.0
             {
@@ -77,7 +77,7 @@ impl<'a> NIR<'a> {
         }
 
         // Write edges
-        for (i, branch) in cfg.branches.iter().enumerate() {
+        for (i, (_, branch)) in cfg.branches.iter().enumerate() {
             match branch.kind {
                 BranchKind::Else => {}
                 BranchKind::Straight => {
@@ -93,8 +93,8 @@ impl<'a> NIR<'a> {
                     writeln!(f, "    BB{} -> Branch_{}", branch.from.0, i);
                     writeln!(f, "    Branch_{} -> BB{} [label=\"Yes\"]", i, branch.to.0);
 
-                    let else_branch_key = cfg.basic_blocks[branch.from].goto.unwrap();
-                    let else_block_key = cfg.branches[else_branch_key].to;
+                    let else_branch_key = cfg.basic_blocks[&branch.from].goto.unwrap();
+                    let else_block_key = cfg.branches[&else_branch_key].to;
                     writeln!(
                         f,
                         "    Branch_{} -> BB{} [label=\"No\"]",

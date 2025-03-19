@@ -4,9 +4,9 @@ use nazmc_ast::{ASTId, BinaryOpExpr, ExprKey, IfExpr, LetStmKey, ScopeKey};
 use nazmc_data_pool::{typed_index_collections::TiVec, DataPoolBuilder, IdKey};
 use nazmc_nir::{
     ArgKey, ArrayType, ArrayTypeKey, BasicBlock, BasicBlockKey, BinOp, Binding, BindingKey, Branch,
-    Const, FnKey, FnPtrType, FnPtrTypeKey, LValue, LValueKey, LambdaType, LambdaTypeKey, Operand,
-    OperandKind, RValue, StaticKey, Stm, Struct, StructKey, Temp, TempKey, TupleType, TupleTypeKey,
-    Type, TypeKey, CFG, NIR,
+    BranchKey, Const, FnKey, FnPtrType, FnPtrTypeKey, LValue, LValueKey, LambdaType, LambdaTypeKey,
+    Operand, OperandKind, RValue, StaticKey, Stm, StructKey, Temp, TupleType, TupleTypeKey, Type,
+    TypeKey, CFG, NIR,
 };
 use thin_vec::ThinVec;
 
@@ -194,14 +194,11 @@ impl CFGBuilder {
         self.loops_basic_blocks.clear();
         let cfg = std::mem::take(&mut self.cfg);
         // The end block
-        self.cfg.basic_blocks.push(BasicBlock::default());
+        self.new_basic_block();
         // The start block
-        self.cfg.basic_blocks.push(BasicBlock::default());
+        self.new_basic_block();
         // The block after start
-        self.current_basic_block_key = self
-            .cfg
-            .basic_blocks
-            .push_and_get_key(BasicBlock::default());
+        self.new_current_basic_block();
         // TODO: Do we need this only for presentation puproses?
         self.add_straight_goto(
             BasicBlockKey::START_BASIC_BLOCK,
@@ -213,25 +210,25 @@ impl CFGBuilder {
     fn get_current_basic_block(&self) -> &BasicBlock {
         self.cfg
             .basic_blocks
-            .get(self.current_basic_block_key)
+            .get(&self.current_basic_block_key)
             .unwrap()
     }
 
     fn get_current_basic_block_mut(&mut self) -> &mut BasicBlock {
         self.cfg
             .basic_blocks
-            .get_mut(self.current_basic_block_key)
+            .get_mut(&self.current_basic_block_key)
             .unwrap()
     }
 
     fn get_basic_block_mut(&mut self, basic_block_key: BasicBlockKey) -> &mut BasicBlock {
-        self.cfg.basic_blocks.get_mut(basic_block_key).unwrap()
+        self.cfg.basic_blocks.get_mut(&basic_block_key).unwrap()
     }
 
     fn new_basic_block(&mut self) -> BasicBlockKey {
-        self.cfg
-            .basic_blocks
-            .push_and_get_key(BasicBlock::default())
+        let key = BasicBlockKey::from(self.cfg.basic_blocks.len());
+        self.cfg.basic_blocks.insert(key, BasicBlock::default());
+        key
     }
 
     fn new_current_basic_block(&mut self) -> BasicBlockKey {
@@ -240,24 +237,30 @@ impl CFGBuilder {
         key
     }
 
+    fn new_branch(&mut self, branch: Branch) -> BranchKey {
+        let key = BranchKey::from(self.cfg.branches.len());
+        self.cfg.branches.insert(key, branch);
+        key
+    }
+
     fn add_straight_goto(&mut self, from: BasicBlockKey, to: BasicBlockKey) {
-        let branch_key = self.cfg.branches.push_and_get_key(Branch {
+        let branch_key = self.new_branch(Branch {
             from,
             to,
             kind: nazmc_nir::BranchKind::Straight,
         });
         self.get_basic_block_mut(from).goto = Some(branch_key);
-        self.get_basic_block_mut(to).incoming.push(branch_key);
+        self.get_basic_block_mut(to).incoming.insert(branch_key, ());
     }
 
     fn add_else_goto(&mut self, from: BasicBlockKey, to: BasicBlockKey) {
-        let branch_key = self.cfg.branches.push_and_get_key(Branch {
+        let branch_key = self.new_branch(Branch {
             from,
             to,
             kind: nazmc_nir::BranchKind::Else,
         });
         self.get_basic_block_mut(from).goto = Some(branch_key);
-        self.get_basic_block_mut(to).incoming.push(branch_key);
+        self.get_basic_block_mut(to).incoming.insert(branch_key, ());
     }
 }
 
@@ -547,7 +550,7 @@ impl<'a> SemanticsAnalyzer<'a> {
 
         let then_basic_block_end = self.cfg_builder.current_basic_block_key;
 
-        let current_to_then = self.cfg_builder.cfg.branches.push_and_get_key(Branch {
+        let current_to_then = self.cfg_builder.new_branch(Branch {
             from: current_basic_block,
             to: then_basic_block_start,
             kind: nazmc_nir::BranchKind::If(cond_operand),
@@ -559,7 +562,7 @@ impl<'a> SemanticsAnalyzer<'a> {
         self.cfg_builder
             .get_basic_block_mut(then_basic_block_start)
             .incoming
-            .push(current_to_then);
+            .insert(current_to_then, ());
 
         self.cfg_builder
             .add_else_goto(current_basic_block, else_basic_block_start);

@@ -7,6 +7,7 @@ use nazmc_data_pool::PkgKey;
 use nazmc_data_pool::{IdPoolBuilder, StrPoolBuilder};
 use nazmc_diagnostics::file_info::FileInfo;
 use nazmc_lexer::LexerIter;
+use nazmc_nir::nir_analyzer::NIRAnalyzer;
 use nazmc_parser::parse;
 use nazmc_resolve::NameResolver;
 use owo_colors::OwoColorize;
@@ -237,6 +238,12 @@ fn main() {
     nir.pkgs_names = &pkgs_names;
     nir.id_pool = &id_pool;
     nir.str_pool = str_pool.build();
+
+    NIRAnalyzer {
+        nir: &mut nir,
+        errors: Vec::new(),
+    }
+    .analyze();
 
     nir.fmt_cfg(&nir.fns.raw[0].cfg, "CFG.dot");
 

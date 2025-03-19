@@ -7,6 +7,7 @@ use nazmc_diagnostics::span::Span;
 use std::collections::HashMap;
 use thin_vec::ThinVec;
 mod fmt;
+pub mod nir_analyzer;
 
 new_data_pool_key! { BasicBlockKey }
 new_data_pool_key! { BranchKey }
@@ -70,9 +71,9 @@ impl BasicBlockKey {
 /// A control flow graph of a function or an execution block
 pub struct CFG {
     /// The end has a key of 0 and the start block has a key of 1
-    pub basic_blocks: TiVec<BasicBlockKey, BasicBlock>,
+    pub basic_blocks: HashMap<BasicBlockKey, BasicBlock>,
     /// All branches between basic blocks
-    pub branches: TiVec<BranchKey, Branch>,
+    pub branches: HashMap<BranchKey, Branch>,
     /// All lvalues
     pub lvalues: TiVec<LValueKey, LValue>,
     /// All presented bindings
@@ -103,7 +104,7 @@ pub struct Temp {
 
 #[derive(Default)]
 pub struct BasicBlock {
-    pub incoming: ThinVec<BranchKey>,
+    pub incoming: HashMap<BranchKey, ()>,
     pub conditional_goto: Option<BranchKey>,
     pub goto: Option<BranchKey>,
     pub stms: ThinVec<Stm>,
