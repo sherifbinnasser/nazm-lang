@@ -19,3 +19,7 @@ nazmc_nir = { path = "nazmc_nir" }
 serde = { version = "*", features = ["derive"] }
 serde_yaml = "*"
 thin-vec = "*"
+qbe = "*"
+
+[patch.crates-io]
+qbe = { path = "qbe-rs" }
