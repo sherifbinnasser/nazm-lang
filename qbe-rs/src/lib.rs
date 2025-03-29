@@ -513,43 +513,14 @@ impl Type {
             Self::Word | Self::Single => 4,
             Self::Long | Self::Double => 8,
             Self::Void => 0,
-            Self::Aggregate(td) => {
-                let mut offset = 0;
-
-                // calculation taken from: https://en.wikipedia.org/wiki/Data_structure_alignment#Computing%20padding
-                for (item, repeat) in td.items.iter() {
-                    let align = item.align();
-                    let size = *repeat as u64 * item.size();
-                    let padding = (align - (offset % align)) % align;
-                    offset += padding + size;
-                }
-
-                let align = self.align();
-                let padding = (align - (offset % align)) % align;
-
-                // size is the final offset with the padding that is left
-                offset + padding
-            }
+            Self::Aggregate(td) => td.size,
         }
     }
 
     /// Returns byte alignment for values of the type
     pub fn align(&self) -> u64 {
         match self {
-            Self::Aggregate(td) => {
-                if let Some(align) = td.align {
-                    return align;
-                }
-
-                // the alignment of a type is the maximum alignment of its members
-                // when there's no members, the alignment is usuallly defined to be 1.
-                td.items
-                    .iter()
-                    .map(|item| item.0.align())
-                    .max()
-                    .unwrap_or(1)
-            }
-
+            Self::Aggregate(td) => td.align,
             _ => self.size(),
         }
     }
@@ -581,7 +552,7 @@ pub enum Value {
     /// `%`-temporary
     Temporary(String),
     /// `$`-global
-    Global(String),
+    Global(Rc<String>),
     /// Constant
     Const(u64),
 }
@@ -671,17 +642,51 @@ impl fmt::Display for DataItem {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
 pub struct TypeDef {
     pub name: String,
-    pub align: Option<u64>,
     // TODO: Opaque types?
     pub items: Vec<(Type, usize)>,
+    pub align: u64,
+    /// Cached size
+    pub size: u64,
+}
+
+impl TypeDef {
+    pub fn new(name: String, align: Option<u64>, items: Vec<(Type, usize)>) -> Self {
+        let align = if let Some(align) = align {
+            align
+        } else {
+            items.iter().map(|item| item.0.align()).max().unwrap_or(1)
+        };
+
+        let size = {
+            let mut offset = 0;
+
+            // calculation taken from: https://en.wikipedia.org/wiki/Data_structure_alignment#Computing%20padding
+            for (item, repeat) in items.iter() {
+                let align = item.align();
+                let size = *repeat as u64 * item.size();
+                let padding = (align - (offset % align)) % align;
+                offset += padding + size;
+            }
+
+            let padding = (align - (offset % align)) % align;
+
+            // size is the final offset with the padding that is left
+            offset + padding
+        };
+
+        Self {
+            name,
+            items,
+            align,
+            size,
+        }
+    }
 }
 
 impl fmt::Display for TypeDef {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "type :{} = ", self.name)?;
-        if let Some(align) = self.align {
-            write!(f, "align {} ", align)?;
-        }
+        write!(f, "align {} ", self.align)?;
 
         write!(
             f,
@@ -800,6 +805,27 @@ impl Block {
             .push(BlockItem::Statement(Statement::Volatile(instr)));
     }
 
+    pub fn add_jmp(&mut self, label: impl Into<String>) {
+        self.items
+            .push(BlockItem::Statement(Statement::Volatile(Instr::Jmp(
+                label.into(),
+            ))))
+    }
+
+    pub fn add_jnz(
+        &mut self,
+        condition: Value,
+        label1: impl Into<String>,
+        label2: impl Into<String>,
+    ) {
+        self.items
+            .push(BlockItem::Statement(Statement::Volatile(Instr::Jnz(
+                condition,
+                label1.into(),
+                label2.into(),
+            ))))
+    }
+
     /// Adds a new instruction assigned to a temporary
     pub fn assign_instr(&mut self, temp: Value, ty: Type, instr: Instr) {
         self.items.push(BlockItem::Statement(Statement::Assign(
@@ -889,7 +915,7 @@ pub struct Function {
     pub linkage: Linkage,
 
     /// Function name
-    pub name: String,
+    pub name: Rc<String>,
 
     /// Function arguments
     pub arguments: Vec<(Type, Value)>,
@@ -911,7 +937,7 @@ impl Function {
     ) -> Self {
         Function {
             linkage,
-            name: name.into(),
+            name: Rc::new(name.into()),
             arguments,
             return_ty,
             blocks: Vec::new(),
