@@ -224,29 +224,29 @@ impl<'a> NIR<'a> {
     }
 
     pub fn fmt_lvalue(&self, cfg: &CFG, lvalue_key: LValueKey) -> String {
-        match cfg.lvalues[lvalue_key] {
-            LValue::Binding(binding_key) => format!("VAR_{}", binding_key.0),
-            LValue::Arg(arg_key) => format!("ARG_{}", arg_key.0),
-            LValue::Static(static_key) => format!("STATIC_{}", static_key.0),
-            LValue::Temp(temp_key) => format!("TEMP_{}", temp_key.0),
-            LValue::Deref(lvalue_key) | LValue::MutDeref(lvalue_key) => {
+        match cfg.lvalues[lvalue_key].kind {
+            LValueKind::Binding(binding_key) => format!("VAR_{}", binding_key.0),
+            LValueKind::Arg(arg_key) => format!("ARG_{}", arg_key.0),
+            LValueKind::Static(static_key) => format!("STATIC_{}", static_key.0),
+            LValueKind::Temp(temp_key) => format!("TEMP_{}", temp_key.0),
+            LValueKind::Deref(lvalue_key) | LValueKind::MutDeref(lvalue_key) => {
                 format!("*{}", self.fmt_lvalue(cfg, lvalue_key))
             }
-            LValue::Field { on, field_id } | LValue::MutField { on, field_id } => {
+            LValueKind::Field { on, field_id } | LValueKind::MutField { on, field_id } => {
                 let field_id = &self.id_pool[field_id];
                 format!("{}.{}", self.fmt_lvalue(cfg, on), field_id)
             }
-            LValue::TupleIdx { on, idx } | LValue::MutTupleIdx { on, idx } => {
+            LValueKind::TupleIdx { on, idx } | LValueKind::MutTupleIdx { on, idx } => {
                 format!("{}.{}", self.fmt_lvalue(cfg, on), idx)
             }
-            LValue::ArrayIdx { on, idx } | LValue::MutArrayIdx { on, idx } => {
+            LValueKind::ArrayIdx { on, idx } | LValueKind::MutArrayIdx { on, idx } => {
                 format!(
                     "{}[{}]",
                     self.fmt_lvalue(cfg, on),
                     self.fmt_lvalue(cfg, idx)
                 )
             }
-            LValue::ArrayConstIdx { on, idx } | LValue::MutArrayConstIdx { on, idx } => {
+            LValueKind::ArrayConstIdx { on, idx } | LValueKind::MutArrayConstIdx { on, idx } => {
                 format!("{}[{}]", self.fmt_lvalue(cfg, on), idx)
             }
         }

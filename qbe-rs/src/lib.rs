@@ -207,7 +207,7 @@ pub enum Instr {
     /// Unconditionally jumps to a label
     Jmp(Rc<String>),
     /// Calls a function
-    Call(String, Vec<(Type, Value)>, Option<u64>),
+    Call(Value, Vec<(Type, Value)>, Option<u64>),
     /// Allocates a 4-byte aligned area on the stack
     Alloc4(u32),
     /// Allocates a 8-byte aligned area on the stack
@@ -363,7 +363,7 @@ impl fmt::Display for Instr {
                     args_fmt.insert(i as usize, "...".to_string());
                 }
 
-                write!(f, "call ${}({})", name, args_fmt.join(", "),)
+                write!(f, "call {}({})", name, args_fmt.join(", "),)
             }
             Self::Alloc4(size) => write!(f, "alloc4 {}", size),
             Self::Alloc8(size) => write!(f, "alloc8 {}", size),
@@ -907,6 +907,9 @@ impl fmt::Display for Block {
 /// ```
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
 pub struct Function {
+    /// Doc Comments
+    pub comments: Vec<String>,
+
     /// Function's linkage
     pub linkage: Linkage,
 
@@ -932,6 +935,7 @@ impl Function {
         return_ty: Option<Type>,
     ) -> Self {
         Function {
+            comments: Vec::new(),
             linkage,
             name: Rc::new(name.into()),
             arguments,
@@ -979,6 +983,10 @@ impl Function {
 
 impl fmt::Display for Function {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for comment in &self.comments {
+            writeln!(f, "# {}", comment)?;
+        }
+
         write!(f, "{}function", self.linkage)?;
         if let Some(ty) = &self.return_ty {
             write!(f, " {}", ty)?;

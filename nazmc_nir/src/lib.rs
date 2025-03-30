@@ -206,7 +206,13 @@ pub enum OperandKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum LValue {
+pub struct LValue {
+    pub typ: TypeKey,
+    pub kind: LValueKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LValueKind {
     Binding(BindingKey),
     Arg(ArgKey),
     Static(StaticKey),
