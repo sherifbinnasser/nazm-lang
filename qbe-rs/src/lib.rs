@@ -841,6 +841,17 @@ impl Block {
             false
         }
     }
+
+    /// Returns true if the block's last instruction is a return
+    pub fn returns(&self) -> bool {
+        let last = self.items.last();
+
+        if let Some(BlockItem::Statement(Statement::Volatile(instr))) = last {
+            matches!(instr, Instr::Ret(_))
+        } else {
+            false
+        }
+    }
 }
 
 impl fmt::Display for Block {

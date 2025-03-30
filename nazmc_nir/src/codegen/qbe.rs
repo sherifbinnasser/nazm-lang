@@ -483,15 +483,18 @@ impl<'a> QbeCodegen<'a> {
     fn lower_block_jmp(&mut self, cfg: &CFG, bb: &BasicBlock, qbe_bb: &mut qbe::Block) {
         if let Some(branch_key) = bb.conditional_goto {
             let branch = &cfg.branches[&branch_key];
-            if branch.to == BasicBlockKey::END_BASIC_BLOCK {
-                return;
-            }
             let BranchKind::If(operand) = branch.kind else {
                 unreachable!()
             };
-
             let else_branch = &cfg.branches[&bb.goto.unwrap()];
-            if else_branch.to == BasicBlockKey::END_BASIC_BLOCK {
+
+            if branch.to == BasicBlockKey::END_BASIC_BLOCK
+                || else_branch.to == BasicBlockKey::END_BASIC_BLOCK
+            {
+                // it should void return
+                if !qbe_bb.returns() {
+                    qbe_bb.add_instr(qbe::Instr::Ret(None));
+                }
                 return;
             }
 
@@ -504,6 +507,10 @@ impl<'a> QbeCodegen<'a> {
         } else {
             let branch = &cfg.branches[&bb.goto.unwrap()];
             if branch.to == BasicBlockKey::END_BASIC_BLOCK {
+                // it should void return
+                if !qbe_bb.returns() {
+                    qbe_bb.add_instr(qbe::Instr::Ret(None));
+                }
                 return;
             }
             qbe_bb.add_jmp(self.basic_blocks[branch.to].clone());

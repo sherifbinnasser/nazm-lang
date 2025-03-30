@@ -267,10 +267,10 @@ impl CFGBuilder {
 impl<'a> SemanticsAnalyzer<'a> {
     pub(crate) fn lower_fn_scope(&mut self, scope_key: ScopeKey) {
         self.lower_scope(scope_key);
-        self.lower_return_expr(self.ast.scopes[scope_key].return_expr, true);
+        self.lower_return_expr(self.ast.scopes[scope_key].return_expr);
     }
 
-    fn lower_return_expr(&mut self, return_expr: Option<ExprKey>, is_last_return_in_fn: bool) {
+    fn lower_return_expr(&mut self, return_expr: Option<ExprKey>) {
         if let Some(expr_key) = return_expr {
             // Calculate it early as lower_expr will take the ownership of the expression kind
             let is_return_expr = matches!(
@@ -280,7 +280,7 @@ impl<'a> SemanticsAnalyzer<'a> {
 
             let return_value = self.lower_expr(expr_key);
 
-            if !is_return_expr && !is_last_return_in_fn {
+            if !is_return_expr {
                 let typ = self.nir_builder.exprs_types[expr_key];
                 let rvalue = RValue::Use(return_value);
                 self.cfg_builder
@@ -1140,7 +1140,7 @@ impl<'a> SemanticsAnalyzer<'a> {
                 OperandKind::LValue(temp_lvalue_key)
             }
             nazmc_ast::ExprKind::Return(return_expr) => {
-                self.lower_return_expr(return_expr.expr, false);
+                self.lower_return_expr(return_expr.expr);
                 OperandKind::Const(Const::Unit)
             }
             nazmc_ast::ExprKind::Break(scope_key) => {
