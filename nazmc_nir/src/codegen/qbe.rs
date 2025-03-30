@@ -4,7 +4,13 @@ use crate::*;
 
 pub struct QbeCodegen<'a> {
     lowered_types: HashMap<TypeKey, qbe::Type>,
-    locals_offsets: HashMap<BindingKey, u64>,
+    strs: TiVec<StrKey, qbe::Value>,
+    statics: TiVec<StaticKey, qbe::Value>,
+    args: HashMap<ArgKey, qbe::Value>,
+    temps: TiVec<TempKey, qbe::Value>,
+    bindings: TiVec<BindingKey, (qbe::Value, qbe::Value)>,
+    basic_blocks: TiVec<BasicBlockKey, Rc<String>>,
+    base_ptr: qbe::Value,
     module: qbe::Module,
     nir: NIR<'a>,
 }
@@ -13,8 +19,14 @@ impl<'a> QbeCodegen<'a> {
     pub fn new(nir: NIR<'a>) -> Self {
         Self {
             lowered_types: HashMap::with_capacity(nir.types.len()),
-            locals_offsets: HashMap::new(),
+            strs: TiVec::with_capacity(nir.str_pool.len()),
+            statics: TiVec::with_capacity(nir.statics.len()),
+            args: HashMap::new(),
+            temps: TiVec::new(),
+            bindings: TiVec::new(),
+            basic_blocks: TiVec::new(),
             module: qbe::Module::new(),
+            base_ptr: qbe::Value::Temporary(Rc::new("base_ptr".into())),
             nir,
         }
     }
@@ -50,9 +62,31 @@ impl<'a> QbeCodegen<'a> {
     }
 
     pub fn lower(mut self) -> qbe::Module {
+        self.lower_strs();
+        // self.lower_statics();
         self.lower_types();
         self.lower_fns();
         self.module
+    }
+
+    fn lower_strs(&mut self) {
+        let str_pool = std::mem::take(&mut self.nir.str_pool);
+
+        for (str_key, string) in str_pool.into_iter_enumerated() {
+            let name = Rc::new(format!("str{}", str_key.0));
+            let qbe_value = qbe::Value::Global(name.clone());
+            self.strs.push(qbe_value);
+            let data_def = qbe::DataDef {
+                linkage: qbe::Linkage::private(),
+                name,
+                align: None,
+                items: vec![
+                    (qbe::Type::Byte, qbe::DataItem::Str(string)),
+                    (qbe::Type::Byte, qbe::DataItem::Const(0)),
+                ],
+            };
+            self.module.add_data(data_def);
+        }
     }
 
     fn lower_types(&mut self) {
@@ -112,6 +146,11 @@ impl<'a> QbeCodegen<'a> {
     }
 
     fn lower_fns(&mut self) {
+        let mut args = std::mem::take(&mut self.args);
+        let mut max_temps_count = 0;
+        let mut max_bindings_count = 0;
+        let mut max_basic_blocks_count = 0;
+
         // Lower fns signatures
         for _fn in &self.nir.fns {
             let name = if _fn.info.id_key == IdKey::MAIN
@@ -132,30 +171,82 @@ impl<'a> QbeCodegen<'a> {
                     .map(|(arg_key, arg)| {
                         (
                             self.get_type(arg.typ),
-                            qbe::Value::Temporary(fmt_arg_label(arg_key)),
+                            args.entry(arg_key)
+                                .or_insert_with(|| {
+                                    qbe::Value::Temporary(Rc::new(format!("arg{}", arg_key.0)))
+                                })
+                                .clone(),
                         )
                     })
                     .collect(),
                 blocks: Vec::with_capacity(0), // This will be alocated later
             };
             self.module.add_function(qbe_fn);
+
+            if _fn.cfg.temps.len() > max_temps_count {
+                max_temps_count = _fn.cfg.temps.len();
+            }
+
+            if _fn.cfg.bindings.len() > max_bindings_count {
+                max_bindings_count = _fn.cfg.bindings.len();
+            }
+
+            if _fn.cfg.basic_blocks.len() > max_basic_blocks_count {
+                max_basic_blocks_count = _fn.cfg.basic_blocks.len();
+            }
+        }
+
+        self.args = args;
+
+        self.temps = TiVec::with_capacity(max_temps_count);
+        self.bindings = TiVec::with_capacity(max_bindings_count);
+        self.basic_blocks = TiVec::with_capacity(max_basic_blocks_count);
+
+        for i in 0..max_bindings_count {
+            self.bindings.push((
+                qbe::Value::Temporary(Rc::new(format!("loc_ptr{}", i))),
+                qbe::Value::Temporary(Rc::new(format!("loc{}", i))),
+            ));
+        }
+
+        for i in 0..max_temps_count {
+            self.temps
+                .push(qbe::Value::Temporary(Rc::new(format!("tmp{}", i))));
+        }
+
+        for i in 0..max_basic_blocks_count {
+            let label = if i as u32 == BasicBlockKey::START_BASIC_BLOCK.0 {
+                "start".into()
+            } else if i as u32 == BasicBlockKey::END_BASIC_BLOCK.0 {
+                "end".into()
+            } else {
+                format!("bb{}", i)
+            };
+
+            self.basic_blocks.push(Rc::new(label));
         }
 
         let fns = std::mem::take(&mut self.nir.fns);
 
         // Lower fns bodys
         for (fn_key, _fn) in fns.into_iter_enumerated() {
-            let total_stack_size = self.get_fn_locals_size(&_fn.cfg.bindings);
-
             let mut blocks = Vec::with_capacity(_fn.cfg.basic_blocks.len());
 
             for (bb_key, bb) in &_fn.cfg.basic_blocks {
                 if bb_key.0 == BasicBlockKey::START_BASIC_BLOCK.0 {
                     let mut start_bb = qbe::Block {
-                        label: "start".into(),
+                        label: self.basic_blocks[BasicBlockKey::START_BASIC_BLOCK].clone(),
                         items: Vec::with_capacity(bb.stms.len()),
                     };
-                    start_bb.add_instr(qbe::Instr::Alloc16(total_stack_size));
+                    // Reserve for base ptr allocation
+                    start_bb.add_instr(qbe::Instr::Ret(None));
+                    let total_stack_size =
+                        self.get_fn_locals_size(&_fn.cfg.bindings, &mut start_bb);
+                    start_bb.items[0] = qbe::BlockItem::Statement(qbe::Statement::Assign(
+                        self.base_ptr.clone(),
+                        qbe::Type::Long,
+                        qbe::Instr::Alloc16(total_stack_size),
+                    ));
                     self.lower_block_jmp(&_fn.cfg, bb, &mut start_bb);
                     blocks.push(start_bb);
                     continue;
@@ -166,7 +257,7 @@ impl<'a> QbeCodegen<'a> {
                 }
 
                 let mut qbe_bb = qbe::Block {
-                    label: fmt_bb_label(*bb_key),
+                    label: self.basic_blocks[*bb_key].clone(),
                     items: Vec::with_capacity(bb.stms.len()),
                 };
 
@@ -178,6 +269,10 @@ impl<'a> QbeCodegen<'a> {
                         Stm::Drop(lvalue_key) => todo!(),
                     }
                 }
+
+                self.lower_block_jmp(&_fn.cfg, bb, &mut qbe_bb);
+
+                blocks.push(qbe_bb);
             }
 
             let qbe_fn = &mut self.module.functions[fn_key.0 as usize];
@@ -186,7 +281,11 @@ impl<'a> QbeCodegen<'a> {
         }
     }
 
-    fn get_fn_locals_size(&mut self, bindings: &TiSlice<BindingKey, Binding>) -> u128 {
+    fn get_fn_locals_size(
+        &mut self,
+        bindings: &TiSlice<BindingKey, Binding>,
+        qbe_bb: &mut qbe::Block,
+    ) -> u128 {
         let mut locals = Vec::with_capacity(bindings.len());
 
         for (key, binding) in bindings.iter_enumerated() {
@@ -201,13 +300,17 @@ impl<'a> QbeCodegen<'a> {
 
         let mut offset = 0;
 
-        self.locals_offsets.clear();
         for (key, size, align) in locals {
             // Align the offset to the required alignment
             offset = (offset + (align - 1)) & !(align - 1);
 
-            // Store the offset for this local
-            self.locals_offsets.insert(key, offset);
+            let local_ptr = self.bindings[key].0.clone();
+
+            qbe_bb.add_assign(
+                local_ptr,
+                qbe::Type::Long,
+                qbe::Instr::Add(self.base_ptr.clone(), qbe::Value::Const(offset)),
+            );
 
             // Move offset forward by the size of the variable
             offset += size;
@@ -215,6 +318,39 @@ impl<'a> QbeCodegen<'a> {
 
         // Round up to the nearest multiple of 16 for stack alignment
         ((offset + 15) & !15) as u128
+    }
+
+    fn lower_lvalue(
+        &self,
+        cfg: &CFG,
+        lvalue_key: LValueKey,
+        qbe_bb: &mut qbe::Block,
+    ) -> qbe::Value {
+        match cfg.lvalues[lvalue_key] {
+            LValue::Binding(binding_key) => {
+                let qbe_ty = self.get_type(cfg.bindings[binding_key].typ);
+                let qbe_loaded_val = self.bindings[binding_key].1.clone();
+                qbe_bb.add_assign(
+                    qbe_loaded_val.clone(),
+                    qbe_ty.clone(),
+                    qbe::Instr::Load(qbe_ty, self.bindings[binding_key].0.clone()),
+                );
+                qbe_loaded_val
+            }
+            LValue::Static(static_key) => self.statics[static_key].clone(),
+            LValue::Arg(arg_key) => self.args[&arg_key].clone(),
+            LValue::Temp(temp_key) => self.temps[temp_key].clone(),
+            LValue::Deref(lvalue_key) => todo!(),
+            LValue::Field { on, field_id } => todo!(),
+            LValue::TupleIdx { on, idx } => todo!(),
+            LValue::ArrayIdx { on, idx } => todo!(),
+            LValue::ArrayConstIdx { on, idx } => todo!(),
+            LValue::MutDeref(lvalue_key) => todo!(),
+            LValue::MutField { on, field_id } => todo!(),
+            LValue::MutTupleIdx { on, idx } => todo!(),
+            LValue::MutArrayIdx { on, idx } => todo!(),
+            LValue::MutArrayConstIdx { on, idx } => todo!(),
+        }
     }
 
     fn lower_operand(&self, opernad: &Operand) -> qbe::Value {
@@ -236,7 +372,7 @@ impl<'a> QbeCodegen<'a> {
                 Const::F8(n) => qbe::Value::Const(n as u64),
                 Const::Bool(n) => qbe::Value::Const(n as u64),
                 Const::Char(n) => qbe::Value::Const(n as u64),
-                Const::Str(str_key) => qbe::Value::Global(Rc::new(fmt_str_label(str_key))),
+                Const::Str(str_key) => self.strs[str_key].clone(),
                 Const::Fn(fn_key) => qbe::Value::Global(self.get_fn_name(fn_key)),
             },
         }
@@ -251,28 +387,12 @@ impl<'a> QbeCodegen<'a> {
             let else_branch = &cfg.branches[&bb.goto.unwrap()];
             qbe_bb.add_jnz(
                 self.lower_operand(&operand),
-                fmt_bb_label(branch.to),
-                fmt_bb_label(else_branch.to),
+                self.basic_blocks[branch.to].clone(),
+                self.basic_blocks[else_branch.to].clone(),
             );
         } else {
             let branch = &cfg.branches[&bb.goto.unwrap()];
-            qbe_bb.add_jmp(fmt_bb_label(branch.to));
+            qbe_bb.add_jmp(self.basic_blocks[branch.to].clone());
         }
     }
-}
-
-fn fmt_str_label(str_key: StrKey) -> String {
-    format!("str{}", str_key.0)
-}
-
-fn fmt_arg_label(arg_key: ArgKey) -> String {
-    format!("arg{}", arg_key.0)
-}
-
-fn fmt_tmp_label(temp_key: TempKey) -> String {
-    format!("tmp{}", temp_key.0)
-}
-
-fn fmt_bb_label(bb_key: BasicBlockKey) -> String {
-    format!("bb{}", bb_key.0)
 }

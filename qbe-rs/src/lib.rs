@@ -203,9 +203,9 @@ pub enum Instr {
     /// Return from a function, optionally with a value
     Ret(Option<Value>),
     /// Jumps to first label if a value is nonzero or to the second one otherwise
-    Jnz(Value, String, String),
+    Jnz(Value, Rc<String>, Rc<String>),
     /// Unconditionally jumps to a label
-    Jmp(String),
+    Jmp(Rc<String>),
     /// Calls a function
     Call(String, Vec<(Type, Value)>, Option<u64>),
     /// Allocates a 4-byte aligned area on the stack
@@ -550,7 +550,7 @@ impl fmt::Display for Type {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum Value {
     /// `%`-temporary
-    Temporary(String),
+    Temporary(Rc<String>),
     /// `$`-global
     Global(Rc<String>),
     /// Constant
@@ -571,7 +571,7 @@ impl fmt::Display for Value {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
 pub struct DataDef {
     pub linkage: Linkage,
-    pub name: String,
+    pub name: Rc<String>,
     pub align: Option<u64>,
     pub items: Vec<(Type, DataItem)>,
 }
@@ -585,7 +585,7 @@ impl DataDef {
     ) -> Self {
         Self {
             linkage,
-            name: name.into(),
+            name: Rc::new(name.into()),
             align,
             items,
         }
@@ -772,7 +772,7 @@ impl fmt::Display for Statement {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
 pub struct Block {
     /// Label before the block
-    pub label: String,
+    pub label: Rc<String>,
 
     /// A list of statements in the block
     pub items: Vec<BlockItem>,
@@ -799,30 +799,26 @@ impl Block {
         self.items.push(BlockItem::Comment(contents.into()));
     }
 
+    pub fn add_assign(&mut self, value: Value, typ: Type, instr: Instr) {
+        self.items
+            .push(BlockItem::Statement(Statement::Assign(value, typ, instr)))
+    }
+
     /// Adds a new instruction to the block
     pub fn add_instr(&mut self, instr: Instr) {
         self.items
             .push(BlockItem::Statement(Statement::Volatile(instr)));
     }
 
-    pub fn add_jmp(&mut self, label: impl Into<String>) {
+    pub fn add_jmp(&mut self, label: Rc<String>) {
         self.items
-            .push(BlockItem::Statement(Statement::Volatile(Instr::Jmp(
-                label.into(),
-            ))))
+            .push(BlockItem::Statement(Statement::Volatile(Instr::Jmp(label))))
     }
 
-    pub fn add_jnz(
-        &mut self,
-        condition: Value,
-        label1: impl Into<String>,
-        label2: impl Into<String>,
-    ) {
+    pub fn add_jnz(&mut self, condition: Value, label1: Rc<String>, label2: Rc<String>) {
         self.items
             .push(BlockItem::Statement(Statement::Volatile(Instr::Jnz(
-                condition,
-                label1.into(),
-                label2.into(),
+                condition, label1, label2,
             ))))
     }
 
@@ -947,7 +943,7 @@ impl Function {
     /// Adds a new empty block with a specified label and returns a reference to it
     pub fn add_block(&mut self, label: impl Into<String>) -> &mut Block {
         self.blocks.push(Block {
-            label: label.into(),
+            label: Rc::new(label.into()),
             items: Vec::new(),
         });
         self.blocks.last_mut().unwrap()
