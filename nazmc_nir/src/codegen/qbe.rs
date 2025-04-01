@@ -320,7 +320,31 @@ impl<'a> QbeCodegen<'a> {
                                 _ => unreachable!(),
                             }
                         }
-                        Stm::Phi { lhs, cases, typ } => todo!(),
+                        Stm::Phi { lhs, cases, typ } => {
+                            let qbe_typ = self.get_type(*typ);
+
+                            let LValueKind::Temp(temp_key) = _fn.cfg.lvalues[*lhs].kind else {
+                                unreachable!("Phi stms are only assigned to temps")
+                            };
+
+                            let qbe_lvalue = self.temps[temp_key].clone();
+
+                            let values = cases
+                                .iter()
+                                .map(|(bb_key, operand_kind)| {
+                                    (
+                                        self.basic_blocks[*bb_key].clone(),
+                                        self.lower_operand_kind(
+                                            *operand_kind,
+                                            &_fn.cfg,
+                                            &mut qbe_bb,
+                                        ),
+                                    )
+                                })
+                                .collect();
+
+                            qbe_bb.add_phi(qbe_lvalue, qbe_typ, values);
+                        }
                         Stm::Return { rvalue, typ } => {
                             let qbe_typ = self.get_type(*typ);
                             let qbe_rvalue = self.lower_rvalue(rvalue, &_fn.cfg, &mut qbe_bb);
@@ -401,14 +425,28 @@ impl<'a> QbeCodegen<'a> {
             RValue::BinOp { op, lhs, rhs } => {
                 let qbe_lhs = self.lower_operand(lhs, cfg, qbe_bb);
                 let qbe_rhs = self.lower_operand(rhs, cfg, qbe_bb);
+                let is_unsigned = matches!(
+                    self.nir.types[lhs.typ],
+                    Type::U | Type::U1 | Type::U2 | Type::U4 | Type::U8
+                );
+
+                macro_rules! cmp {
+                    ($cmp_op: ident) => {
+                        qbe::Instr::Cmp(self.get_type(lhs.typ), qbe::Cmp::$cmp_op, qbe_lhs, qbe_rhs)
+                    };
+                }
 
                 match op {
-                    BinOp::EqualEqual => todo!(),
-                    BinOp::NotEqual => todo!(),
-                    BinOp::GE => todo!(),
-                    BinOp::GT => todo!(),
-                    BinOp::LE => todo!(),
-                    BinOp::LT => todo!(),
+                    BinOp::GE if is_unsigned => cmp!(Uge),
+                    BinOp::GT if is_unsigned => cmp!(Ugt),
+                    BinOp::LE if is_unsigned => cmp!(Ule),
+                    BinOp::LT if is_unsigned => cmp!(Ult),
+                    BinOp::GE => cmp!(Sge),
+                    BinOp::GT => cmp!(Sgt),
+                    BinOp::LE => cmp!(Sle),
+                    BinOp::LT => cmp!(Slt),
+                    BinOp::EqualEqual => cmp!(Eq),
+                    BinOp::NotEqual => cmp!(Ne),
                     BinOp::BOr => qbe::Instr::Or(qbe_lhs, qbe_rhs),
                     BinOp::BAnd => qbe::Instr::And(qbe_lhs, qbe_rhs),
                     BinOp::Xor => qbe::Instr::Xor(qbe_lhs, qbe_rhs),
@@ -417,22 +455,8 @@ impl<'a> QbeCodegen<'a> {
                     BinOp::Plus => qbe::Instr::Add(qbe_lhs, qbe_rhs),
                     BinOp::Minus => qbe::Instr::Sub(qbe_lhs, qbe_rhs),
                     BinOp::Times => qbe::Instr::Mul(qbe_lhs, qbe_rhs),
-                    BinOp::Div
-                        if matches!(
-                            self.nir.types[lhs.typ],
-                            Type::U | Type::U1 | Type::U2 | Type::U4 | Type::U8
-                        ) =>
-                    {
-                        qbe::Instr::Udiv(qbe_lhs, qbe_rhs)
-                    }
-                    BinOp::Mod
-                        if matches!(
-                            self.nir.types[lhs.typ],
-                            Type::U | Type::U1 | Type::U2 | Type::U4 | Type::U8
-                        ) =>
-                    {
-                        qbe::Instr::Urem(qbe_lhs, qbe_rhs)
-                    }
+                    BinOp::Div if is_unsigned => qbe::Instr::Udiv(qbe_lhs, qbe_rhs),
+                    BinOp::Mod if is_unsigned => qbe::Instr::Urem(qbe_lhs, qbe_rhs),
                     BinOp::Div => qbe::Instr::Div(qbe_lhs, qbe_rhs),
                     BinOp::Mod => qbe::Instr::Rem(qbe_lhs, qbe_rhs),
                 }
@@ -523,13 +547,23 @@ impl<'a> QbeCodegen<'a> {
         }
     }
 
+    #[inline]
     fn lower_operand(
         &mut self,
         opernad: &Operand,
         cfg: &CFG,
         qbe_bb: &mut qbe::Block,
     ) -> qbe::Value {
-        match opernad.kind {
+        self.lower_operand_kind(opernad.kind, cfg, qbe_bb)
+    }
+
+    fn lower_operand_kind(
+        &mut self,
+        opernad_kind: OperandKind,
+        cfg: &CFG,
+        qbe_bb: &mut qbe::Block,
+    ) -> qbe::Value {
+        match opernad_kind {
             OperandKind::LValue(lvalue_key) => self.lower_lvalue(lvalue_key, cfg, qbe_bb),
             OperandKind::Const(c) => match c {
                 Const::Unit => qbe::Value::UConst(0),

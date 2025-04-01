@@ -714,6 +714,7 @@ impl fmt::Display for TypeDef {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum Statement {
     Assign(Value, Type, Instr),
+    Phi(Value, Type, Vec<(Rc<String>, Value)>),
     Volatile(Instr),
 }
 
@@ -723,6 +724,15 @@ impl fmt::Display for Statement {
             Self::Assign(temp, ty, instr) => {
                 assert!(matches!(temp, Value::Temporary(_)));
                 write!(f, "{} ={} {}", temp, ty, instr)
+            }
+            Self::Phi(temp, ty, values) => {
+                assert!(matches!(temp, Value::Temporary(_)));
+                let values = values
+                    .iter()
+                    .map(|(label, val)| format!("@{} {}", label, val))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "{} ={} phi {}", temp, ty, values)
             }
             Self::Volatile(instr) => write!(f, "{}", instr),
         }
@@ -806,8 +816,16 @@ impl Block {
     }
 
     pub fn add_assign(&mut self, value: Value, typ: Type, instr: Instr) {
+        self.items.push(BlockItem::Statement(Statement::Assign(
+            value,
+            typ.into_base(),
+            instr,
+        )))
+    }
+
+    pub fn add_phi(&mut self, value: Value, typ: Type, values: Vec<(Rc<String>, Value)>) {
         self.items
-            .push(BlockItem::Statement(Statement::Assign(value, typ, instr)))
+            .push(BlockItem::Statement(Statement::Phi(value, typ, values)))
     }
 
     /// Adds a new instruction to the block
