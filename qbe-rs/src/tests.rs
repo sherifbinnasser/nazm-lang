@@ -17,7 +17,7 @@ fn qbe_value() {
     let val = Value::Global("main".into());
     assert_eq!(format!("{}", val), "$main");
 
-    let val = Value::Const(1337);
+    let val = Value::UConst(1337);
     assert_eq!(format!("{}", val), "1337");
 }
 
@@ -40,7 +40,7 @@ fn block() {
             BlockItem::Statement(Statement::Assign(
                 Value::Temporary("foo".into()),
                 Type::Word,
-                Instr::Add(Value::Const(2), Value::Const(2)),
+                Instr::Add(Value::UConst(2), Value::UConst(2)),
             )),
             BlockItem::Statement(Statement::Volatile(Instr::Ret(Some(Value::Temporary(
                 "foo".into(),
@@ -277,7 +277,7 @@ fn variadic_call() {
         "printf".into(),
         vec![
             (Type::Long, Value::Global("fmt".into())),
-            (Type::Word, Value::Const(0)),
+            (Type::Word, Value::UConst(0)),
         ],
         Some(1),
     );

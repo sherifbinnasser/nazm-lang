@@ -244,6 +244,7 @@ impl<'a> QbeCodegen<'a> {
 
         // Lower fns bodys
         for (fn_key, _fn) in fns.into_iter_enumerated() {
+            self.qbe_temps_counter = 0;
             let mut blocks = Vec::with_capacity(_fn.cfg.basic_blocks.len());
             let start_bb = &_fn.cfg.basic_blocks[&BasicBlockKey::START_BASIC_BLOCK];
             let mut start_qbe_bb = qbe::Block {
@@ -375,7 +376,7 @@ impl<'a> QbeCodegen<'a> {
             qbe_bb.add_assign(
                 local_ptr,
                 qbe::Type::Long,
-                qbe::Instr::Add(self.base_ptr.clone(), qbe::Value::Const(offset)),
+                qbe::Instr::Add(self.base_ptr.clone(), qbe::Value::UConst(offset)),
             );
 
             // Move offset forward by the size of the variable
@@ -389,15 +390,61 @@ impl<'a> QbeCodegen<'a> {
     fn lower_rvalue(&mut self, rvalue: &RValue, cfg: &CFG, qbe_bb: &mut qbe::Block) -> qbe::Instr {
         match rvalue {
             RValue::Use(operand) => qbe::Instr::Copy(self.lower_operand(operand, cfg, qbe_bb)),
-            RValue::Ref(lvalue_key) => todo!(),
-            RValue::RefMut(lvalue_key) => todo!(),
+            RValue::Ref(lvalue_key) | RValue::RefMut(lvalue_key) => {
+                qbe::Instr::Copy(self.lower_lvalue_to_ptr(*lvalue_key, cfg, qbe_bb))
+            }
             RValue::Tuple(thin_vec) => todo!(),
             RValue::ArrayElements(thin_vec) => todo!(),
             RValue::ArrayRepeated { repeated, size } => todo!(),
             RValue::Struct { struct_key, fields } => todo!(),
             RValue::Cast { val, to } => todo!(),
-            RValue::BinOp { op, lhs, rhs } => todo!(),
-            RValue::UnaryOp { op, operand } => todo!(),
+            RValue::BinOp { op, lhs, rhs } => {
+                let qbe_lhs = self.lower_operand(lhs, cfg, qbe_bb);
+                let qbe_rhs = self.lower_operand(rhs, cfg, qbe_bb);
+
+                match op {
+                    BinOp::EqualEqual => todo!(),
+                    BinOp::NotEqual => todo!(),
+                    BinOp::GE => todo!(),
+                    BinOp::GT => todo!(),
+                    BinOp::LE => todo!(),
+                    BinOp::LT => todo!(),
+                    BinOp::BOr => qbe::Instr::Or(qbe_lhs, qbe_rhs),
+                    BinOp::BAnd => qbe::Instr::And(qbe_lhs, qbe_rhs),
+                    BinOp::Xor => qbe::Instr::Xor(qbe_lhs, qbe_rhs),
+                    BinOp::Shr => qbe::Instr::Shr(qbe_lhs, qbe_rhs),
+                    BinOp::Shl => qbe::Instr::Shl(qbe_lhs, qbe_rhs),
+                    BinOp::Plus => qbe::Instr::Add(qbe_lhs, qbe_rhs),
+                    BinOp::Minus => qbe::Instr::Sub(qbe_lhs, qbe_rhs),
+                    BinOp::Times => qbe::Instr::Mul(qbe_lhs, qbe_rhs),
+                    BinOp::Div
+                        if matches!(
+                            self.nir.types[lhs.typ],
+                            Type::U | Type::U1 | Type::U2 | Type::U4 | Type::U8
+                        ) =>
+                    {
+                        qbe::Instr::Udiv(qbe_lhs, qbe_rhs)
+                    }
+                    BinOp::Mod
+                        if matches!(
+                            self.nir.types[lhs.typ],
+                            Type::U | Type::U1 | Type::U2 | Type::U4 | Type::U8
+                        ) =>
+                    {
+                        qbe::Instr::Urem(qbe_lhs, qbe_rhs)
+                    }
+                    BinOp::Div => qbe::Instr::Div(qbe_lhs, qbe_rhs),
+                    BinOp::Mod => qbe::Instr::Rem(qbe_lhs, qbe_rhs),
+                }
+            }
+            RValue::UnaryOp { op, operand } => {
+                let qbe_operand = self.lower_operand(operand, cfg, qbe_bb);
+                match op {
+                    UnaryOp::LNot => qbe::Instr::Xor(qbe_operand, qbe::Value::UConst(1)),
+                    UnaryOp::BNot => qbe::Instr::Xor(qbe_operand, qbe::Value::Const(-1)),
+                    UnaryOp::Minus => qbe::Instr::Sub(qbe::Value::UConst(0), qbe_operand),
+                }
+            }
             RValue::Call { on, args } => qbe::Instr::Call(
                 self.lower_operand(on, cfg, qbe_bb),
                 args.iter()
@@ -405,6 +452,32 @@ impl<'a> QbeCodegen<'a> {
                     .collect(),
                 None,
             ),
+        }
+    }
+
+    fn lower_lvalue_to_ptr(
+        &mut self,
+        lvalue_key: LValueKey,
+        cfg: &CFG,
+        qbe_bb: &mut qbe::Block,
+    ) -> qbe::Value {
+        match cfg.lvalues[lvalue_key].kind {
+            LValueKind::Binding(binding_key) => self.bindings[binding_key].clone(),
+            LValueKind::Static(static_key) => self.statics[static_key].clone(),
+            LValueKind::Arg(arg_key) => self.args[&arg_key].clone(),
+            LValueKind::Temp(temp_key) => self.temps[temp_key].clone(),
+            LValueKind::Deref(lvalue_key) | LValueKind::MutDeref(lvalue_key) => {
+                // For dereference, we already have a pointer, just use it
+                self.lower_lvalue(lvalue_key, cfg, qbe_bb)
+            }
+            LValueKind::Field { on, field_id } => todo!(),
+            LValueKind::TupleIdx { on, idx } => todo!(),
+            LValueKind::ArrayIdx { on, idx } => todo!(),
+            LValueKind::ArrayConstIdx { on, idx } => todo!(),
+            LValueKind::MutField { on, field_id } => todo!(),
+            LValueKind::MutTupleIdx { on, idx } => todo!(),
+            LValueKind::MutArrayIdx { on, idx } => todo!(),
+            LValueKind::MutArrayConstIdx { on, idx } => todo!(),
         }
     }
 
@@ -459,21 +532,21 @@ impl<'a> QbeCodegen<'a> {
         match opernad.kind {
             OperandKind::LValue(lvalue_key) => self.lower_lvalue(lvalue_key, cfg, qbe_bb),
             OperandKind::Const(c) => match c {
-                Const::Unit => qbe::Value::Const(0),
-                Const::I(n) => qbe::Value::Const(n as u64),
-                Const::I1(n) => qbe::Value::Const(n as u64),
-                Const::I2(n) => qbe::Value::Const(n as u64),
-                Const::I4(n) => qbe::Value::Const(n as u64),
-                Const::I8(n) => qbe::Value::Const(n as u64),
-                Const::U(n) => qbe::Value::Const(n as u64),
-                Const::U1(n) => qbe::Value::Const(n as u64),
-                Const::U2(n) => qbe::Value::Const(n as u64),
-                Const::U4(n) => qbe::Value::Const(n as u64),
-                Const::U8(n) => qbe::Value::Const(n as u64),
-                Const::F4(n) => qbe::Value::Const(n as u64),
-                Const::F8(n) => qbe::Value::Const(n as u64),
-                Const::Bool(n) => qbe::Value::Const(n as u64),
-                Const::Char(n) => qbe::Value::Const(n as u64),
+                Const::Unit => qbe::Value::UConst(0),
+                Const::I(n) => qbe::Value::Const(n as i64),
+                Const::I1(n) => qbe::Value::Const(n as i64),
+                Const::I2(n) => qbe::Value::Const(n as i64),
+                Const::I4(n) => qbe::Value::Const(n as i64),
+                Const::I8(n) => qbe::Value::Const(n as i64),
+                Const::U(n) => qbe::Value::UConst(n as u64),
+                Const::U1(n) => qbe::Value::UConst(n as u64),
+                Const::U2(n) => qbe::Value::UConst(n as u64),
+                Const::U4(n) => qbe::Value::UConst(n as u64),
+                Const::U8(n) => qbe::Value::UConst(n as u64),
+                Const::F4(n) => qbe::Value::UConst(n as u64),
+                Const::F8(n) => qbe::Value::UConst(n as u64),
+                Const::Bool(n) => qbe::Value::UConst(n as u64),
+                Const::Char(n) => qbe::Value::UConst(n as u64),
                 Const::Str(str_key) => self.strs[str_key].clone(),
                 Const::Fn(fn_key) => qbe::Value::Global(self.get_fn_name(fn_key)),
             },
