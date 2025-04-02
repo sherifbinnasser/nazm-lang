@@ -43,9 +43,11 @@ pub struct NIR<'a> {
     pub str_pool: TiVec<StrKey, String>,
 }
 
+#[derive(Default)]
 pub struct Struct {
     pub info: ItemInfo,
-    pub fields: HashMap<IdKey, TypeKey>,
+    pub fields_types: HashMap<IdKey, TypeKey>,
+    pub fields_order: ThinVec<IdKey>,
 }
 
 pub struct Static {

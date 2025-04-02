@@ -48,20 +48,15 @@ pub struct Static {
 #[derive(Default)]
 pub struct TupleStruct {
     pub types: ThinVec<FieldInfo>,
-    pub size: u32,
-    pub align: u8,
 }
 
 #[derive(Default)]
 pub struct FieldsStruct {
     pub fields: HashMap<IdKey, FieldInfo>,
-    pub size: u32,
-    pub align: u8,
 }
 
 #[derive(Clone, Default, Debug, PartialEq)]
 pub struct FieldInfo {
-    pub offset: u32,
     pub idx: u32,
     pub typ: Type,
 }

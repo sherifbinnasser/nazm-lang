@@ -348,11 +348,8 @@ impl<'a> SemanticsAnalyzer<'a> {
                     *used_span,
                     field_id_expr.span,
                 );
-            } else if let Some(FieldInfo {
-                offset: _,
-                typ: field_ty,
-                idx,
-            }) = struct_fields.get(&field_id_expr.id)
+            } else if let Some(FieldInfo { typ: field_ty, idx }) =
+                struct_fields.get(&field_id_expr.id)
             {
                 if let Err(err) = self.type_inf_ctx.unify(&field_ty, &field_expr_ty) {
                     self.add_field_type_mismatch_err(
@@ -495,12 +492,7 @@ impl<'a> SemanticsAnalyzer<'a> {
         match on_expr_ty {
             Type::Concrete(ConcreteType::FieldsStruct(struct_key)) => {
                 let struct_fields = &self.typed_ast.fields_structs[&struct_key].fields;
-                if let Some(FieldInfo {
-                    offset: _,
-                    typ,
-                    idx,
-                }) = struct_fields.get(&name.id)
-                {
+                if let Some(FieldInfo { typ, idx }) = struct_fields.get(&name.id) {
                     let ty = typ.clone();
                     self.check_field_is_accessible_in_current_file(struct_key, *idx, name.span);
                     ty
@@ -578,7 +570,7 @@ impl<'a> SemanticsAnalyzer<'a> {
 
         for Binding { kind, typ } in params {
             let binding_ty = if let Some(type_expr_key) = typ {
-                self.analyze_type_expr(*type_expr_key).0
+                self.analyze_type_expr(*type_expr_key)
             } else {
                 self.type_inf_ctx.new_ty_var()
             };

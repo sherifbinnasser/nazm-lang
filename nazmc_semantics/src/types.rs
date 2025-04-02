@@ -3,14 +3,12 @@ use typed_ast::{FieldsStruct, TupleStruct};
 use crate::*;
 
 impl<'a> SemanticsAnalyzer<'a> {
-    const PTR_SIZE: i32 = usize::BITS as i32 / 8;
-
     fn analyze_type_expr_checked(
         &mut self,
         type_expr_key: TypeExprKey,
         at: FileKey,
         called_from: CycleDetected,
-    ) -> (Type, i32, u8) {
+    ) -> Type {
         let result = self.analyze_type_expr(type_expr_key);
 
         if self.semantics_stack.is_cycle_detected == CycleDetected::None {
@@ -123,7 +121,7 @@ impl<'a> SemanticsAnalyzer<'a> {
         result
     }
 
-    pub(crate) fn analyze_type_expr(&mut self, type_expr_key: TypeExprKey) -> (Type, i32, u8) {
+    pub(crate) fn analyze_type_expr(&mut self, type_expr_key: TypeExprKey) -> Type {
         let type_expr = &self.ast.types_exprs.all[type_expr_key];
         match type_expr {
             TypeExpr::Path(path_type_expr_key) => self.analyze_path_type_expr(*path_type_expr_key),
@@ -138,56 +136,36 @@ impl<'a> SemanticsAnalyzer<'a> {
             TypeExpr::Slice(slice_type_expr_key) => {
                 let underlying_typ =
                     self.ast.types_exprs.slices[*slice_type_expr_key].underlying_typ;
-                let (type_key, _size, _align) = self.analyze_type_expr(underlying_typ);
-                (Type::slice(type_key), -1, 0)
+                let type_key = self.analyze_type_expr(underlying_typ);
+                Type::slice(type_key)
             }
             TypeExpr::Ptr(ptr_type_expr_key) => {
                 let underlying_typ = self.ast.types_exprs.ptrs[*ptr_type_expr_key].underlying_typ;
-                let (underlying_type_key, _size, _align) = self.analyze_type_expr(underlying_typ);
-                (
-                    Type::ptr(underlying_type_key),
-                    Self::PTR_SIZE,
-                    Self::PTR_SIZE as u8,
-                )
+                let underlying_type_key = self.analyze_type_expr(underlying_typ);
+                Type::ptr(underlying_type_key)
             }
             TypeExpr::Ref(ref_type_expr_key) => {
                 let underlying_typ = self.ast.types_exprs.refs[*ref_type_expr_key].underlying_typ;
-                let (underlying_type_key, _size, _align) = self.analyze_type_expr(underlying_typ);
-                let underlying_typ_expr = self.ast.types_exprs.all[underlying_typ];
-                let (size, align) = if let TypeExpr::Slice(_) = underlying_typ_expr {
-                    (2 * Self::PTR_SIZE, 2 * Self::PTR_SIZE as u8)
-                } else {
-                    (Self::PTR_SIZE, Self::PTR_SIZE as u8)
-                };
-                (Type::reference(underlying_type_key), size, align)
+                let underlying_type_key = self.analyze_type_expr(underlying_typ);
+                Type::reference(underlying_type_key)
             }
             TypeExpr::PtrMut(ptr_mut_type_expr_key) => {
                 let underlying_typ =
                     self.ast.types_exprs.ptrs_mut[*ptr_mut_type_expr_key].underlying_typ;
-                let (underlying_type_key, _size, _align) = self.analyze_type_expr(underlying_typ);
-                (
-                    Type::ptr_mut(underlying_type_key),
-                    Self::PTR_SIZE,
-                    Self::PTR_SIZE as u8,
-                )
+                let underlying_type_key = self.analyze_type_expr(underlying_typ);
+                Type::ptr_mut(underlying_type_key)
             }
             TypeExpr::RefMut(ref_mut_type_expr_key) => {
                 let underlying_typ =
                     self.ast.types_exprs.refs_mut[*ref_mut_type_expr_key].underlying_typ;
-                let (underlying_type_key, _size, _align) = self.analyze_type_expr(underlying_typ);
-                let underlying_typ_expr = self.ast.types_exprs.all[underlying_typ];
-                let (size, align) = if let TypeExpr::Slice(_) = underlying_typ_expr {
-                    (2 * Self::PTR_SIZE, 2 * Self::PTR_SIZE as u8)
-                } else {
-                    (Self::PTR_SIZE, Self::PTR_SIZE as u8)
-                };
-                (Type::ref_mut(underlying_type_key), size, align)
+                let underlying_type_key = self.analyze_type_expr(underlying_typ);
+                Type::ref_mut(underlying_type_key)
             }
         }
     }
 
     #[inline]
-    fn analyze_path_type_expr(&mut self, key: PathTypeExprKey) -> (Type, i32, u8) {
+    fn analyze_path_type_expr(&mut self, key: PathTypeExprKey) -> Type {
         let (path_type, _span) = &self.ast.state.types_paths[key];
         match path_type {
             Item::UnitStruct { vis: _, key } => self.analyze_unit_struct(*key),
@@ -195,51 +173,42 @@ impl<'a> SemanticsAnalyzer<'a> {
                 let key = *key;
                 self.analyze_tuple_struct(key);
                 let s = self.typed_ast.tuple_structs.get(&key).unwrap();
-                (
-                    Type::Concrete(ConcreteType::TupleStruct(key)),
-                    s.size as i32,
-                    s.align,
-                )
+                Type::Concrete(ConcreteType::TupleStruct(key))
             }
             Item::FieldsStruct { vis: _, key } => {
                 let key = *key;
                 self.analyze_fields_struct(key);
                 let s = self.typed_ast.fields_structs.get(&key).unwrap();
-
-                (
-                    Type::Concrete(ConcreteType::FieldsStruct(key)),
-                    s.size as i32,
-                    s.align,
-                )
+                Type::Concrete(ConcreteType::FieldsStruct(key))
             }
             _ => unreachable!(),
         }
     }
 
     #[inline]
-    fn analyze_unit_struct(&mut self, key: UnitStructKey) -> (Type, i32, u8) {
+    fn analyze_unit_struct(&mut self, key: UnitStructKey) -> Type {
         let info = &self.ast.unit_structs[key].info;
         let file_path = &self.files_infos[info.file_key].path;
         if file_path != "أساسي.نظم" {
-            return (Type::unit_struct(key), 0, 0);
+            return Type::unit_struct(key);
         }
 
         match info.id_key {
-            IdKey::I_TYPE => (Type::i(), Self::PTR_SIZE, Self::PTR_SIZE as u8),
-            IdKey::I1_TYPE => (Type::i1(), 1, 1),
-            IdKey::I2_TYPE => (Type::i2(), 2, 2),
-            IdKey::I4_TYPE => (Type::i4(), 4, 4),
-            IdKey::I8_TYPE => (Type::i8(), 8, 8),
-            IdKey::U_TYPE => (Type::u(), Self::PTR_SIZE, Self::PTR_SIZE as u8),
-            IdKey::U1_TYPE => (Type::u1(), 1, 1),
-            IdKey::U2_TYPE => (Type::u2(), 2, 2),
-            IdKey::U4_TYPE => (Type::u4(), 4, 4),
-            IdKey::U8_TYPE => (Type::u8(), 8, 8),
-            IdKey::F4_TYPE => (Type::f4(), 4, 4),
-            IdKey::F8_TYPE => (Type::f8(), 8, 8),
-            IdKey::BOOL_TYPE => (Type::boolean(), 1, 1),
-            IdKey::CHAR_TYPE => (Type::character(), 4, 4),
-            IdKey::STR_TYPE => (Type::string(), -1, 0),
+            IdKey::I_TYPE => Type::i(),
+            IdKey::I1_TYPE => Type::i1(),
+            IdKey::I2_TYPE => Type::i2(),
+            IdKey::I4_TYPE => Type::i4(),
+            IdKey::I8_TYPE => Type::i8(),
+            IdKey::U_TYPE => Type::u(),
+            IdKey::U1_TYPE => Type::u1(),
+            IdKey::U2_TYPE => Type::u2(),
+            IdKey::U4_TYPE => Type::u4(),
+            IdKey::U8_TYPE => Type::u8(),
+            IdKey::F4_TYPE => Type::f4(),
+            IdKey::F8_TYPE => Type::f8(),
+            IdKey::BOOL_TYPE => Type::boolean(),
+            IdKey::CHAR_TYPE => Type::character(),
+            IdKey::STR_TYPE => Type::string(),
             _ => unreachable!(),
         }
     }
@@ -265,49 +234,18 @@ impl<'a> SemanticsAnalyzer<'a> {
         let called_from = CycleDetected::TupleStruct(key);
         let types_len = self.ast.tuple_structs[key].types.len();
         let mut types = ThinVec::with_capacity(types_len);
-        let mut max_align = 0;
-        let mut offset: u32 = 0;
-
-        // FIXME: This is not tested
 
         for i in 0..types_len {
             let type_expr_key = self.ast.tuple_structs[key].types[i].1;
-            let (typ, size, align) = self.analyze_type_expr_checked(type_expr_key, at, called_from);
-
-            if size < 0 {
-                // TODO: Unsized type
-                panic!("Unsized type")
-            }
-
-            if align > max_align {
-                max_align = align;
-            }
-
-            let aligned_offset = (i * align as usize) as u32;
-            if aligned_offset > offset {
-                offset = aligned_offset;
-            }
-
-            types.push(typed_ast::FieldInfo {
-                offset,
-                typ,
-                idx: i as u32,
-            });
-            offset += size as u32;
+            let typ = self.analyze_type_expr_checked(type_expr_key, at, called_from);
+            types.push(typed_ast::FieldInfo { typ, idx: i as u32 });
         }
 
         self.semantics_stack.tuple_structs.remove(&key);
 
-        // TODO: Reorder types
-
-        self.typed_ast.tuple_structs.insert(
-            key,
-            TupleStruct {
-                types,
-                size: offset,
-                align: max_align,
-            },
-        );
+        self.typed_ast
+            .tuple_structs
+            .insert(key, TupleStruct { types });
     }
 
     #[inline]
@@ -333,126 +271,65 @@ impl<'a> SemanticsAnalyzer<'a> {
         let called_from = CycleDetected::FieldsStruct(key);
         let fields_len = self.ast.fields_structs[key].fields.len();
         let mut fields = HashMap::with_capacity(fields_len);
-        let mut max_align = 0;
-        let mut offset: u32 = 0;
 
-        // FIXME: This is not tested
         for i in 0..fields_len {
             let FieldInfo {
                 vis: _,
                 id: ASTId { span: _, id },
                 typ,
             } = self.ast.fields_structs[key].fields[i];
-
-            let (typ, size, align) = self.analyze_type_expr_checked(typ, at, called_from);
-
-            if size < 0 {
-                // TODO: Unsized fields
-            }
-
-            if align > max_align {
-                max_align = align;
-            }
-
-            let aligned_offset = (i * align as usize) as u32;
-            if aligned_offset > offset {
-                offset = aligned_offset;
-            }
-
-            fields.insert(
-                id,
-                typed_ast::FieldInfo {
-                    offset,
-                    typ,
-                    idx: i as u32,
-                },
-            );
-            offset += size as u32;
+            let typ = self.analyze_type_expr_checked(typ, at, called_from);
+            fields.insert(id, typed_ast::FieldInfo { typ, idx: i as u32 });
         }
 
         self.semantics_stack.fields_structs.remove(&key);
 
-        // TODO: Reorder fields
-
-        self.typed_ast.fields_structs.insert(
-            key,
-            FieldsStruct {
-                fields,
-                size: offset,
-                align: max_align,
-            },
-        );
+        self.typed_ast
+            .fields_structs
+            .insert(key, FieldsStruct { fields });
     }
 
     #[inline]
-    fn analyze_tuple(&mut self, key: TupleTypeExprKey) -> (Type, i32, u8) {
+    fn analyze_tuple(&mut self, key: TupleTypeExprKey) -> Type {
         let types_len = self.ast.types_exprs.tuples[key].types.len();
 
         if types_len == 0 {
-            return (Type::unit(), 0, 0);
+            return Type::unit();
         }
 
         let mut types = ThinVec::with_capacity(types_len);
         let mut max_align = 0;
         let mut offset: u32 = 0;
 
-        // FIXME: This is not tested
-
         for i in 0..types_len {
             let type_expr_key = self.ast.types_exprs.tuples[key].types[i];
-            let (typ, size, align) = self.analyze_type_expr(type_expr_key);
-
-            if size < 0 {
-                // TODO: Unsized type
-            }
-
-            if align > max_align {
-                max_align = align;
-            }
-
-            let aligned_offset = (i * align as usize) as u32;
-            if aligned_offset > offset {
-                offset = aligned_offset;
-            }
-
+            let typ = self.analyze_type_expr(type_expr_key);
             types.push(typ);
-            offset += size as u32;
         }
 
-        // TODO: Reorder types
-
-        (Type::tuple(types), offset as i32, max_align)
+        Type::tuple(types)
     }
 
     #[inline]
-    fn analyze_array(&mut self, key: ArrayTypeExprKey) -> (Type, i32, u8) {
+    fn analyze_array(&mut self, key: ArrayTypeExprKey) -> Type {
         let underlying_typ = self.ast.types_exprs.arrays[key].underlying_typ;
-
-        let (underlying_typ, underlying_typ_size, underlying_typ_align) =
-            self.analyze_type_expr(underlying_typ);
-
+        let underlying_typ = self.analyze_type_expr(underlying_typ);
         let size_expr_scope_key = self.ast.types_exprs.arrays[key].size_expr_scope_key;
         todo!()
     }
 
     #[inline]
-    fn analyze_lambda(&mut self, key: LambdaTypeExprKey) -> (Type, i32, u8) {
+    fn analyze_lambda(&mut self, key: LambdaTypeExprKey) -> Type {
         let params_types_len = self.ast.types_exprs.lambdas[key].params_types.len();
         let mut params_types = ThinVec::with_capacity(params_types_len);
 
         for i in 0..params_types_len {
             let type_expr_key = self.ast.types_exprs.lambdas[key].params_types[i];
-            params_types.push(self.analyze_type_expr(type_expr_key).0);
+            params_types.push(self.analyze_type_expr(type_expr_key));
         }
 
-        let return_type = self
-            .analyze_type_expr(self.ast.types_exprs.lambdas[key].return_type)
-            .0;
+        let return_type = self.analyze_type_expr(self.ast.types_exprs.lambdas[key].return_type);
 
-        (
-            Type::lambda(params_types, return_type),
-            Self::PTR_SIZE,
-            Self::PTR_SIZE as u8,
-        )
+        Type::lambda(params_types, return_type)
     }
 }
