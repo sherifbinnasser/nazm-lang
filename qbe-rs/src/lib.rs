@@ -96,7 +96,7 @@ mod tests;
 ///     Value::Const(0),
 /// );
 /// ```
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Copy)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Copy)]
 pub enum Cmp {
     /// Returns 1 if first value is less than second, respecting signedness
     Slt,
@@ -180,7 +180,7 @@ pub enum Cmp {
 /// // Return a value from a function
 /// let ret = Instr::Ret(Some(Value::Temporary("result".to_string())));
 /// ```
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Instr {
     /// Adds values of two temporaries together
     Add(Value, Value),
@@ -219,9 +219,15 @@ pub enum Instr {
     /// Stores a value into memory pointed to by destination.
     /// `(type, destination, value)`
     Store(Type, Value, Value),
-    /// Loads a value from memory pointed to by source
+    /// Loads a base-type value from memory pointed to by source
     /// `(type, source)`
     Load(Type, Value),
+    /// Loads a signed value from memory pointed to by source
+    /// `(type, source)`
+    LoadSigned(Type, Value),
+    /// Loads an unsigned value from memory pointed to by source
+    /// `(type, source)`
+    LoadUnsigned(Type, Value),
     /// `(source, destination, n)`
     ///
     /// Copy `n` bytes from the source address to the destination address.
@@ -258,18 +264,14 @@ pub enum Instr {
     Cast(Value),
 
     // Extension operations
-    /// Sign-extends a word to a long
-    Extsw(Value),
-    /// Zero-extends a word to a long
-    Extuw(Value),
-    /// Sign-extends a halfword to a word or long
-    Extsh(Value),
-    /// Zero-extends a halfword to a word or long
-    Extuh(Value),
-    /// Sign-extends a byte to a word or long
-    Extsb(Value),
-    /// Zero-extends a byte to a word or long
-    Extub(Value),
+    /// Sign-extends a value
+    /// It extends a byte or a halfword to a word or long
+    /// and extends a word to a long
+    ExtSigned(Type, Value),
+    /// Zero-extends a value
+    /// It extends a byte or a halfword to a word or long
+    /// and extends a word to a long
+    ExtUnsigned(Type, Value),
     /// Extends a single-precision float to double-precision
     Exts(Value),
     /// Truncates a double-precision float to single-precision
@@ -318,10 +320,16 @@ impl fmt::Display for Instr {
                     "Cannot compare aggregate types"
                 );
 
+                let is_floating_num = matches!(ty, Type::Single | Type::Double);
+
                 write!(
                     f,
                     "c{}{} {}, {}",
                     match cmp {
+                        Cmp::Slt | Cmp::Ult if is_floating_num => "lt",
+                        Cmp::Sle | Cmp::Ule if is_floating_num => "le",
+                        Cmp::Sgt | Cmp::Ugt if is_floating_num => "gt",
+                        Cmp::Sge | Cmp::Uge if is_floating_num => "ge",
                         Cmp::Slt => "slt",
                         Cmp::Sle => "sle",
                         Cmp::Sgt => "sgt",
@@ -385,6 +393,20 @@ impl fmt::Display for Instr {
 
                 write!(f, "load{} {}", ty, src)
             }
+            Self::LoadSigned(ty, src) => {
+                if matches!(ty, Type::Aggregate(_)) {
+                    unimplemented!("Load aggregate type");
+                }
+
+                write!(f, "loads{} {}", ty, src)
+            }
+            Self::LoadUnsigned(ty, src) => {
+                if matches!(ty, Type::Aggregate(_)) {
+                    unimplemented!("Load aggregate type");
+                }
+
+                write!(f, "loadu{} {}", ty, src)
+            }
             Self::Blit(src, dst, n) => write!(f, "blit {}, {}, {}", src, dst, n),
             Self::Udiv(lhs, rhs) => write!(f, "udiv {}, {}", lhs, rhs),
             Self::Urem(lhs, rhs) => write!(f, "urem {}, {}", lhs, rhs),
@@ -392,12 +414,8 @@ impl fmt::Display for Instr {
             Self::Shr(lhs, rhs) => write!(f, "shr {}, {}", lhs, rhs),
             Self::Shl(lhs, rhs) => write!(f, "shl {}, {}", lhs, rhs),
             Self::Cast(val) => write!(f, "cast {}", val),
-            Self::Extsw(val) => write!(f, "extsw {}", val),
-            Self::Extuw(val) => write!(f, "extuw {}", val),
-            Self::Extsh(val) => write!(f, "extsh {}", val),
-            Self::Extuh(val) => write!(f, "extuh {}", val),
-            Self::Extsb(val) => write!(f, "extsb {}", val),
-            Self::Extub(val) => write!(f, "extub {}", val),
+            Self::ExtSigned(ty, val) => write!(f, "exts{} {}", ty, val),
+            Self::ExtUnsigned(ty, val) => write!(f, "extu{} {}", ty, val),
             Self::Exts(val) => write!(f, "exts {}", val),
             Self::Truncd(val) => write!(f, "truncd {}", val),
             Self::Stosi(val) => write!(f, "stosi {}", val),
@@ -454,7 +472,7 @@ impl fmt::Display for Instr {
 /// let abi = Type::SignedByte.into_abi();
 /// assert_eq!(abi, Type::Word);
 /// ```
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum Type {
     // Base types
     Word,
@@ -550,7 +568,7 @@ impl fmt::Display for Type {
 }
 
 /// QBE value that is accepted by instructions
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Value {
     /// `%`-temporary
     Temporary(Rc<String>),
@@ -560,6 +578,10 @@ pub enum Value {
     UConst(u64),
     /// Signed Constant
     Const(i64),
+    /// Signle-precision floating-point number const
+    Single(f32),
+    /// Double-precision floating-point number const
+    Double(f64),
 }
 
 impl fmt::Display for Value {
@@ -569,12 +591,14 @@ impl fmt::Display for Value {
             Self::Global(name) => write!(f, "${}", name),
             Self::UConst(value) => write!(f, "{}", value),
             Self::Const(value) => write!(f, "{}", value),
+            Value::Single(value) => write!(f, "s_{}", value),
+            Value::Double(value) => write!(f, "d_{}", value),
         }
     }
 }
 
 /// QBE data definition
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Default)]
 pub struct DataDef {
     pub linkage: Linkage,
     pub name: Rc<String>,
@@ -618,7 +642,7 @@ impl fmt::Display for DataDef {
 }
 
 /// Data definition item
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum DataItem {
     /// Symbol and offset
     Symbol(String, Option<u64>),
@@ -645,7 +669,7 @@ impl fmt::Display for DataItem {
 }
 
 /// QBE aggregate type definition
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Default)]
 pub struct TypeDef {
     pub name: String,
     // TODO: Opaque types?
@@ -711,7 +735,7 @@ impl fmt::Display for TypeDef {
 }
 
 /// An IR statement
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Statement {
     Assign(Value, Type, Instr),
     Phi(Value, Type, Vec<(Rc<String>, Value)>),
@@ -785,7 +809,7 @@ impl fmt::Display for Statement {
 /// // Check if block ends with a jump (it does)
 /// assert!(block.jumps());
 /// ```
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
+#[derive(Debug, Clone, PartialEq, PartialOrd, Default)]
 pub struct Block {
     /// Label before the block
     pub label: Rc<String>,
@@ -795,7 +819,7 @@ pub struct Block {
 }
 
 /// See [`Block::items`];
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum BlockItem {
     Statement(Statement),
     Comment(String),
@@ -824,8 +848,11 @@ impl Block {
     }
 
     pub fn add_phi(&mut self, value: Value, typ: Type, values: Vec<(Rc<String>, Value)>) {
-        self.items
-            .push(BlockItem::Statement(Statement::Phi(value, typ, values)))
+        self.items.push(BlockItem::Statement(Statement::Phi(
+            value,
+            typ.into_base(),
+            values,
+        )))
     }
 
     /// Adds a new instruction to the block
@@ -940,7 +967,7 @@ impl fmt::Display for Block {
 /// // Return the result
 /// start.add_instr(Instr::Ret(Some(Value::Temporary("is_zero".to_string()))));
 /// ```
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
+#[derive(Debug, Clone, PartialEq, PartialOrd, Default)]
 pub struct Function {
     /// Doc Comments
     pub comments: Vec<String>,
@@ -1049,7 +1076,7 @@ impl fmt::Display for Function {
 
 /// Linkage of a function or data defintion (e.g. section and
 /// private/public status)
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Default)]
 pub struct Linkage {
     /// Specifies whether the target is going to be accessible publicly
     pub exported: bool,
@@ -1207,7 +1234,7 @@ impl fmt::Display for Linkage {
 /// // Add the function to the module
 /// module.add_function(main);
 /// ```
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
+#[derive(Debug, Clone, PartialEq, PartialOrd, Default)]
 pub struct Module {
     pub functions: Vec<Function>,
     pub types: Vec<Rc<TypeDef>>,

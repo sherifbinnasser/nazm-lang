@@ -411,6 +411,36 @@ impl<'a> QbeCodegen<'a> {
         ((offset + 15) & !15) as u128
     }
 
+    fn signed_extend(
+        &mut self,
+        qbe_val: qbe::Value,
+        qbe_typ: qbe::Type,
+        qbe_bb: &mut qbe::Block,
+    ) -> qbe::Value {
+        let qbe_temp = self.new_qbe_temp();
+        qbe_bb.add_assign(
+            qbe_temp.clone(),
+            qbe::Type::Word,
+            qbe::Instr::ExtSigned(qbe_typ, qbe_val),
+        );
+        qbe_temp
+    }
+
+    fn unsigned_extend(
+        &mut self,
+        qbe_val: qbe::Value,
+        qbe_typ: qbe::Type,
+        qbe_bb: &mut qbe::Block,
+    ) -> qbe::Value {
+        let qbe_temp = self.new_qbe_temp();
+        qbe_bb.add_assign(
+            qbe_temp.clone(),
+            qbe::Type::Word,
+            qbe::Instr::ExtUnsigned(qbe_typ, qbe_val),
+        );
+        qbe_temp
+    }
+
     fn lower_rvalue(&mut self, rvalue: &RValue, cfg: &CFG, qbe_bb: &mut qbe::Block) -> qbe::Instr {
         match rvalue {
             RValue::Use(operand) => qbe::Instr::Copy(self.lower_operand(operand, cfg, qbe_bb)),
@@ -430,17 +460,56 @@ impl<'a> QbeCodegen<'a> {
                     Type::U | Type::U1 | Type::U2 | Type::U4 | Type::U8
                 );
 
+                let is_byte_or_short = matches!(
+                    self.nir.types[lhs.typ],
+                    Type::U1 | Type::U2 | Type::I1 | Type::I2 | Type::Bool
+                );
+
+                let qbe_typ = self.get_type(lhs.typ);
+
                 macro_rules! cmp {
                     ($cmp_op: ident) => {
-                        qbe::Instr::Cmp(self.get_type(lhs.typ), qbe::Cmp::$cmp_op, qbe_lhs, qbe_rhs)
+                        qbe::Instr::Cmp(qbe_typ, qbe::Cmp::$cmp_op, qbe_lhs, qbe_rhs)
+                    };
+                }
+
+                macro_rules! extu_cmp {
+                    ($cmp_op: ident) => {
+                        qbe::Instr::Cmp(
+                            qbe::Type::Word,
+                            qbe::Cmp::$cmp_op,
+                            self.unsigned_extend(qbe_lhs, qbe_typ.clone(), qbe_bb),
+                            self.unsigned_extend(qbe_rhs, qbe_typ, qbe_bb),
+                        )
+                    };
+                }
+
+                macro_rules! exts_cmp {
+                    ($cmp_op: ident) => {
+                        qbe::Instr::Cmp(
+                            qbe::Type::Word,
+                            qbe::Cmp::$cmp_op,
+                            self.signed_extend(qbe_lhs, qbe_typ.clone(), qbe_bb),
+                            self.signed_extend(qbe_rhs, qbe_typ, qbe_bb),
+                        )
                     };
                 }
 
                 match op {
+                    BinOp::GE if is_unsigned && is_byte_or_short => extu_cmp!(Uge),
+                    BinOp::GT if is_unsigned && is_byte_or_short => extu_cmp!(Ugt),
+                    BinOp::LE if is_unsigned && is_byte_or_short => extu_cmp!(Ule),
+                    BinOp::LT if is_unsigned && is_byte_or_short => extu_cmp!(Ult),
                     BinOp::GE if is_unsigned => cmp!(Uge),
                     BinOp::GT if is_unsigned => cmp!(Ugt),
                     BinOp::LE if is_unsigned => cmp!(Ule),
                     BinOp::LT if is_unsigned => cmp!(Ult),
+                    BinOp::GE if is_byte_or_short => exts_cmp!(Sge),
+                    BinOp::GT if is_byte_or_short => exts_cmp!(Sgt),
+                    BinOp::LE if is_byte_or_short => exts_cmp!(Sle),
+                    BinOp::LT if is_byte_or_short => exts_cmp!(Slt),
+                    BinOp::EqualEqual if is_byte_or_short => exts_cmp!(Eq),
+                    BinOp::NotEqual if is_byte_or_short => exts_cmp!(Ne),
                     BinOp::GE => cmp!(Sge),
                     BinOp::GT => cmp!(Sgt),
                     BinOp::LE => cmp!(Sle),
@@ -505,36 +574,60 @@ impl<'a> QbeCodegen<'a> {
         }
     }
 
+    fn add_load_instr(
+        &mut self,
+        type_key: TypeKey,
+        qbe_ptr: qbe::Value,
+        qbe_bb: &mut qbe::Block,
+    ) -> qbe::Value {
+        let qbe_ty = self.get_type(type_key);
+        let qbe_ty_cloned = qbe_ty.clone();
+        let load_instr = match &self.nir.types[type_key] {
+            Type::FnPtr(_)
+            | Type::Ptr(_)
+            | Type::MutPtr(_)
+            | Type::I
+            | Type::I8
+            | Type::U
+            | Type::U8
+            | Type::F4
+            | Type::F8 => qbe::Instr::Load(qbe_ty_cloned, qbe_ptr),
+            Type::I1 | Type::I2 | Type::I4 => qbe::Instr::LoadSigned(qbe_ty_cloned, qbe_ptr),
+            Type::Bool | Type::Char | Type::U1 | Type::U2 | Type::U4 => {
+                qbe::Instr::LoadUnsigned(qbe_ty_cloned, qbe_ptr)
+            }
+            Type::Unit => todo!(),
+            Type::Struct(struct_key) => todo!(),
+            Type::Slice(type_key) => todo!(),
+            Type::MutSlice(type_key) => todo!(),
+            Type::Array(array_type_key) => todo!(),
+            Type::Tuple(tuple_type_key) => todo!(),
+            Type::Lambda(lambda_type_key) => todo!(),
+        };
+        let qbe_loaded_val = self.new_qbe_temp();
+        qbe_bb.add_assign(qbe_loaded_val.clone(), qbe_ty.clone(), load_instr);
+        qbe_loaded_val
+    }
+
     fn lower_lvalue(
         &mut self,
         lvalue_key: LValueKey,
         cfg: &CFG,
         qbe_bb: &mut qbe::Block,
     ) -> qbe::Value {
-        let qbe_ty = self.get_type(cfg.lvalues[lvalue_key].typ);
-
         match cfg.lvalues[lvalue_key].kind {
-            LValueKind::Binding(binding_key) => {
-                let qbe_loaded_val = self.new_qbe_temp();
-                qbe_bb.add_assign(
-                    qbe_loaded_val.clone(),
-                    qbe_ty.clone(),
-                    qbe::Instr::Load(qbe_ty, self.bindings[binding_key].clone()),
-                );
-                qbe_loaded_val
-            }
             LValueKind::Static(static_key) => self.statics[static_key].clone(),
             LValueKind::Arg(arg_key) => self.args[&arg_key].clone(),
             LValueKind::Temp(temp_key) => self.temps[temp_key].clone(),
+            LValueKind::Binding(binding_key) => {
+                let type_key = cfg.lvalues[lvalue_key].typ;
+                let qbe_ptr = self.bindings[binding_key].clone();
+                self.add_load_instr(type_key, qbe_ptr, qbe_bb)
+            }
             LValueKind::Deref(lvalue_key) | LValueKind::MutDeref(lvalue_key) => {
+                let type_key = cfg.lvalues[lvalue_key].typ;
                 let qbe_ptr = self.lower_lvalue(lvalue_key, cfg, qbe_bb);
-                let qbe_loaded_val = self.new_qbe_temp();
-                qbe_bb.add_assign(
-                    qbe_loaded_val.clone(),
-                    qbe_ty.clone(),
-                    qbe::Instr::Load(qbe_ty, qbe_ptr),
-                );
-                qbe_loaded_val
+                self.add_load_instr(type_key, qbe_ptr, qbe_bb)
             }
             LValueKind::Field { on, field_id } => todo!(),
             LValueKind::TupleIdx { on, idx } => todo!(),
@@ -577,8 +670,8 @@ impl<'a> QbeCodegen<'a> {
                 Const::U2(n) => qbe::Value::UConst(n as u64),
                 Const::U4(n) => qbe::Value::UConst(n as u64),
                 Const::U8(n) => qbe::Value::UConst(n as u64),
-                Const::F4(n) => qbe::Value::UConst(n as u64),
-                Const::F8(n) => qbe::Value::UConst(n as u64),
+                Const::F4(n) => qbe::Value::Single(n),
+                Const::F8(n) => qbe::Value::Double(n),
                 Const::Bool(n) => qbe::Value::UConst(n as u64),
                 Const::Char(n) => qbe::Value::UConst(n as u64),
                 Const::Str(str_key) => self.strs[str_key].clone(),
