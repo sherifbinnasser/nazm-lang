@@ -6,6 +6,7 @@ use nazmc_diagnostics::file_info::FileInfo;
 use nazmc_diagnostics::span::Span;
 use std::collections::HashMap;
 use thin_vec::ThinVec;
+pub mod codegen;
 mod fmt;
 pub mod nir_analyzer;
 
@@ -42,9 +43,11 @@ pub struct NIR<'a> {
     pub str_pool: TiVec<StrKey, String>,
 }
 
+#[derive(Default)]
 pub struct Struct {
     pub info: ItemInfo,
-    pub fields: HashMap<IdKey, TypeKey>,
+    pub fields_types: HashMap<IdKey, TypeKey>,
+    pub fields_order: ThinVec<IdKey>,
 }
 
 pub struct Static {
@@ -205,7 +208,13 @@ pub enum OperandKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum LValue {
+pub struct LValue {
+    pub typ: TypeKey,
+    pub kind: LValueKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LValueKind {
     Binding(BindingKey),
     Arg(ArgKey),
     Static(StaticKey),

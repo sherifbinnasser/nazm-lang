@@ -165,7 +165,7 @@ impl<'a> SemanticsAnalyzer<'a> {
             .fields_structs
             .iter_enumerated()
             .for_each(|(struct_key, _struct)| {
-                let fields = self.typed_ast.fields_structs[&struct_key]
+                let fields_types = self.typed_ast.fields_structs[&struct_key]
                     .fields
                     .iter()
                     .map(|(field_id, field_info)| {
@@ -176,9 +176,15 @@ impl<'a> SemanticsAnalyzer<'a> {
                         (*field_id, field_typ)
                     })
                     .collect();
+                let fields_order = _struct
+                    .fields
+                    .iter()
+                    .map(|field_info| field_info.id.id)
+                    .collect();
                 self.nir_builder.nir.structs.push(Struct {
                     info: _struct.info,
-                    fields,
+                    fields_types,
+                    fields_order,
                 });
             });
 
@@ -268,12 +274,12 @@ impl<'a> SemanticsAnalyzer<'a> {
             let params = _fn
                 .params
                 .iter()
-                .map(|(_, type_expr_key)| self.analyze_type_expr(*type_expr_key).0)
+                .map(|(_, type_expr_key)| self.analyze_type_expr(*type_expr_key))
                 .collect::<ThinVec<_>>();
 
             let return_type = _fn.return_type.map_or_else(
                 || Type::unit(),
-                |type_expr_key| self.analyze_type_expr(type_expr_key).0,
+                |type_expr_key| self.analyze_type_expr(type_expr_key),
             );
 
             self.typed_ast
@@ -373,7 +379,7 @@ impl<'a> SemanticsAnalyzer<'a> {
                 Stm::Let(let_stm_key) => {
                     let let_stm_type =
                         if let Some(type_expr_key) = self.ast.lets[*let_stm_key].binding.typ {
-                            self.analyze_type_expr(type_expr_key).0
+                            self.analyze_type_expr(type_expr_key)
                         } else {
                             self.type_inf_ctx.new_ty_var()
                         };

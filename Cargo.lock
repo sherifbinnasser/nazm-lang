@@ -163,6 +163,7 @@ dependencies = [
  "nazmc_resolve",
  "nazmc_semantics",
  "owo-colors",
+ "qbe",
  "serde",
  "serde_yaml",
  "thin-vec",
@@ -213,6 +214,7 @@ dependencies = [
  "derive_more",
  "nazmc_data_pool",
  "nazmc_diagnostics",
+ "qbe",
  "thin-vec",
 ]
 
@@ -359,6 +361,10 @@ checksum = "5e719e8df665df0d1c8fbfd238015744736151d4445ec0836b8e628aae103b77"
 dependencies = [
  "unicode-ident",
 ]
+
+[[package]]
+name = "qbe"
+version = "2.4.0"
 
 [[package]]
 name = "quote"

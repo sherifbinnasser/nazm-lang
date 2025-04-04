@@ -8,3 +8,4 @@ nazmc_data_pool = { path = "../nazmc_data_pool" }
 nazmc_diagnostics = { path = "../nazmc_diagnostics" }
 derive_more = { version = "*", features = ["from", "into"] }
 thin-vec = "*"
+qbe = "*"

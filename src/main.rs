@@ -7,6 +7,7 @@ use nazmc_data_pool::PkgKey;
 use nazmc_data_pool::{IdPoolBuilder, StrPoolBuilder};
 use nazmc_diagnostics::file_info::FileInfo;
 use nazmc_lexer::LexerIter;
+use nazmc_nir::codegen::qbe::QbeCodegen;
 use nazmc_nir::nir_analyzer::NIRAnalyzer;
 use nazmc_parser::parse;
 use nazmc_resolve::NameResolver;
@@ -58,7 +59,13 @@ struct NazmYaml {
     المسارات: Vec<Value>,
 }
 
-fn get_file_paths() -> Vec<String> {
+struct NazmProject {
+    الاسم: Option<String>,
+    الإصدار: Option<String>,
+    المسارات: Vec<String>,
+}
+
+fn get_nazm_project() -> NazmProject {
     let nazm_yaml = match fs::read_to_string("nazm.yaml") {
         Ok(content) => content,
         Err(_) => {
@@ -103,7 +110,11 @@ fn get_file_paths() -> Vec<String> {
     //     println!("\t{}", path);
     // }
 
-    collected_paths
+    NazmProject {
+        الاسم,
+        الإصدار,
+        المسارات: collected_paths,
+    }
 }
 
 fn main() {
@@ -113,15 +124,20 @@ fn main() {
     io::stdout().write_all(output).unwrap();
     io::stderr().write_all(output).unwrap();
 
-    let files_paths = get_file_paths();
-    let files_len = files_paths.len();
+    let NazmProject {
+        الاسم,
+        الإصدار,
+        المسارات,
+    } = get_nazm_project();
+
+    let files_len = المسارات.len();
     let mut id_pool = IdPoolBuilder::new();
     let mut str_pool = StrPoolBuilder::new();
     let mut pkgs = PkgPoolBuilder::new();
     let top_pkg_key = pkgs.get_key(&ThinVec::new());
     id_pool.register_defined_ids();
 
-    let iter = files_paths
+    let iter = المسارات
         .into_iter()
         .enumerate()
         .map(|(file_idx, file_path)| {
@@ -246,6 +262,12 @@ fn main() {
     .analyze();
 
     nir.fmt_cfg(&nir.fns.raw[0].cfg, "CFG.dot");
+
+    let qbe = QbeCodegen::new(nir).lower();
+    let _ = std::fs::write(
+        format!("{}.ssa", الاسم.unwrap_or("out".into())),
+        qbe.to_string(),
+    );
 
     // let (file_path, file_content) = cli::read_file();
 

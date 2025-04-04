@@ -127,6 +127,10 @@ pub type IdPool = TiVec<IdKey, String>;
 
 pub type StrPool = TiVec<StrKey, String>;
 
+impl PkgKey {
+    pub const TOP: Self = Self(0);
+}
+
 impl IdKey {
     pub const EMPTY: Self = Self(0);
     pub const UNIT: Self = Self(1); // "()"
