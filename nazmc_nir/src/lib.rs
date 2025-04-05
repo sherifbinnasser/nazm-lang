@@ -6,8 +6,9 @@ use nazmc_diagnostics::file_info::FileInfo;
 use nazmc_diagnostics::span::Span;
 use std::collections::HashMap;
 use thin_vec::ThinVec;
+pub mod abi;
 pub mod codegen;
-mod fmt;
+pub mod fmt;
 pub mod nir_analyzer;
 
 new_data_pool_key! { BasicBlockKey }
