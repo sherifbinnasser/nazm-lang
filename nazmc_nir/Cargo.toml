@@ -9,3 +9,4 @@ nazmc_diagnostics = { path = "../nazmc_diagnostics" }
 derive_more = { version = "*", features = ["from", "into"] }
 thin-vec = "*"
 qbe = "*"
+inkwell =  { version = "*", features = ["llvm17-0"] }

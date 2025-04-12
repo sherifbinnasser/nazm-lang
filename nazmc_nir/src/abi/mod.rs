@@ -13,12 +13,12 @@ struct TypeLayout {
 }
 
 struct FieldLayout {
-    size: u32,
     offset: u32,
 }
 
 impl<'a> NIRAbiTransformer<'a> {
     const PTR_SIZE: u32 = usize::BITS / 8;
+    const ABI_AGG_TYPE_MAX_SIZE: u32 = 16;
 
     fn calculate_type_size(&mut self, type_key: TypeKey) -> u32 {
         match self.nir.types[type_key] {
@@ -79,10 +79,7 @@ impl<'a> NIRAbiTransformer<'a> {
             max_align = max_align.max(field_align);
 
             offset = (offset + field_align - 1) & !(field_align - 1);
-            fields.push(FieldLayout {
-                size: field_size,
-                offset,
-            });
+            fields.push(FieldLayout { offset });
             offset += field_size;
         }
 
@@ -150,11 +147,39 @@ impl<'a> NIRAbiTransformer<'a> {
         self.calculate_type_align(self.nir.array_types[array_type_key].underlying_typ)
     }
 
+    fn is_agg_type(&self, type_key: TypeKey) -> bool {
+        match self.nir.types[type_key] {
+            Type::Struct(_)
+            | Type::Slice(_)
+            | Type::MutSlice(_)
+            | Type::Array(_)
+            | Type::Tuple(_) => true,
+            Type::Lambda(lambda_type_key) => todo!(),
+            _ => false,
+        }
+    }
+
     pub fn transform(&mut self) {
-        for _fn in &mut self.nir.fns {
-            // let mut new_args = Vec::with_capacity(_fn.args.len());
+        let mut fns = std::mem::take(&mut self.nir.fns);
+        for _fn in &mut fns {
+            let mut new_args = TiVec::with_capacity(_fn.args.len());
+            let mut args_map: TiVec<ArgKey, ArgKey> = TiVec::with_capacity(_fn.args.len());
             let args = std::mem::take(&mut _fn.args);
-            for arg in args {}
+            for arg in args {
+                if self.is_agg_type(arg.typ) {
+                    let arg_type_size = self.calculate_type_size(arg.typ);
+                    if arg_type_size > Self::ABI_AGG_TYPE_MAX_SIZE {
+                        // Treat it as a pointer
+                        let arg_key = new_args.push_and_get_key(arg);
+                        args_map.push(arg_key);
+                    } else {
+                    }
+                } else {
+                    // Scalar types
+                    let arg_key = new_args.push_and_get_key(arg);
+                    args_map.push(arg_key);
+                }
+            }
         }
     }
 }
