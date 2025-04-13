@@ -5,7 +5,7 @@ use inkwell::{
     context::Context,
     module::Module,
     targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetMachine, TargetTriple},
-    types::{AnyTypeEnum, BasicMetadataTypeEnum, BasicTypeEnum, FunctionType},
+    types::{AnyTypeEnum, BasicMetadataTypeEnum, BasicTypeEnum, FunctionType, StructType},
     AddressSpace,
 };
 
@@ -19,11 +19,13 @@ pub struct LLVMCodeGen<'ctx, 'nir> {
     builder: Builder<'ctx>,
     machine: TargetMachine,
     nir: NIR<'nir>,
-    structs_layouts: RefCell<HashMap<StructKey, TypeLayout>>,
+    fn_ptr_types: RefCell<HashMap<FnPtrTypeKey, FunctionType<'ctx>>>,
+    structs_layouts: RefCell<HashMap<StructKey, TypeLayout<'ctx>>>,
+    tuples_layouts: RefCell<HashMap<TupleTypeKey, TypeLayout<'ctx>>>,
 }
 
-struct TypeLayout {
-    name: String,
+struct TypeLayout<'ctx> {
+    struct_ty: StructType<'ctx>,
     size: u32,
     align: u32,
     fields: Vec<FieldLayout>,
@@ -58,6 +60,36 @@ fn any_type_enum_to_basic_type_enum(ty: AnyTypeEnum) -> BasicTypeEnum {
         AnyTypeEnum::FunctionType(_) | AnyTypeEnum::VoidType(_) => {
             unreachable!()
         }
+    }
+}
+
+fn fn_type_from_any_type_enum<'a>(
+    ty: AnyTypeEnum<'a>,
+    param_types: &[BasicMetadataTypeEnum<'a>],
+    is_var_args: bool,
+) -> FunctionType<'a> {
+    match ty {
+        AnyTypeEnum::FloatType(float_type) => float_type.fn_type(param_types, is_var_args),
+        AnyTypeEnum::IntType(int_type) => int_type.fn_type(param_types, is_var_args),
+        AnyTypeEnum::VoidType(void_type) => void_type.fn_type(param_types, is_var_args),
+        AnyTypeEnum::ArrayType(array_type) => array_type.fn_type(param_types, is_var_args),
+        AnyTypeEnum::PointerType(ptr_type) => ptr_type.fn_type(param_types, is_var_args),
+        AnyTypeEnum::FunctionType(function_type) => todo!(),
+        AnyTypeEnum::StructType(struct_type) => todo!(),
+        AnyTypeEnum::VectorType(vector_type) => todo!(),
+    }
+}
+
+fn array_type_from_any_type_enum(ty: AnyTypeEnum, size: u32) -> inkwell::types::ArrayType {
+    match ty {
+        AnyTypeEnum::ArrayType(array_type) => array_type.array_type(size),
+        AnyTypeEnum::FloatType(float_type) => float_type.array_type(size),
+        AnyTypeEnum::IntType(int_type) => int_type.array_type(size),
+        AnyTypeEnum::StructType(struct_type) => struct_type.array_type(size),
+        AnyTypeEnum::PointerType(ptr_type) => ptr_type.array_type(size),
+        AnyTypeEnum::FunctionType(function_type) => todo!(),
+        AnyTypeEnum::VectorType(vector_type) => todo!(),
+        AnyTypeEnum::VoidType(void_type) => todo!(),
     }
 }
 
@@ -109,7 +141,9 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             module,
             builder,
             machine,
+            fn_ptr_types: RefCell::new(HashMap::with_capacity(nir.fn_ptr_types.len())),
             structs_layouts: RefCell::new(HashMap::with_capacity(nir.structs.len())),
+            tuples_layouts: RefCell::new(HashMap::with_capacity(nir.tuple_types.len())),
             nir,
         }
     }
@@ -118,24 +152,6 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         self.lower_fns();
         self.module
             .print_to_file(&format!("{}.ll", self.module.get_name().to_str().unwrap()));
-    }
-
-    fn fn_type_from_any_type_enum<'a>(
-        &self,
-        ty: AnyTypeEnum<'a>,
-        param_types: &[BasicMetadataTypeEnum<'a>],
-        is_var_args: bool,
-    ) -> FunctionType<'a> {
-        match ty {
-            AnyTypeEnum::FloatType(float_type) => float_type.fn_type(param_types, is_var_args),
-            AnyTypeEnum::IntType(int_type) => int_type.fn_type(param_types, is_var_args),
-            AnyTypeEnum::VoidType(void_type) => void_type.fn_type(param_types, is_var_args),
-            AnyTypeEnum::ArrayType(array_type) => array_type.fn_type(param_types, is_var_args),
-            AnyTypeEnum::PointerType(ptr_type) => ptr_type.fn_type(param_types, is_var_args),
-            AnyTypeEnum::FunctionType(function_type) => todo!(),
-            AnyTypeEnum::StructType(struct_type) => todo!(),
-            AnyTypeEnum::VectorType(vector_type) => todo!(),
-        }
     }
 
     fn get_id(&self, id: IdKey) -> &str {
@@ -163,27 +179,49 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
     fn lower_type(&self, type_key: TypeKey) -> AnyTypeEnum<'ctx> {
         match self.nir.types[type_key] {
             Type::Unit => AnyTypeEnum::VoidType(self.context.void_type()),
-            Type::I | Type::U => AnyTypeEnum::IntType(self.context.i64_type()), // TODO
+            Type::I | Type::U => AnyTypeEnum::IntType(
+                self.context
+                    .ptr_sized_int_type(&self.machine.get_target_data(), None),
+            ),
             Type::Bool | Type::I1 | Type::U1 => AnyTypeEnum::IntType(self.context.i8_type()),
             Type::I2 | Type::U2 => AnyTypeEnum::IntType(self.context.i16_type()),
             Type::Char | Type::I4 | Type::U4 => AnyTypeEnum::IntType(self.context.i32_type()),
             Type::I8 | Type::U8 => AnyTypeEnum::IntType(self.context.i64_type()),
             Type::F4 => AnyTypeEnum::FloatType(self.context.f32_type()),
             Type::F8 => AnyTypeEnum::FloatType(self.context.f64_type()),
+            Type::Struct(struct_key) => AnyTypeEnum::StructType(self.lower_struct_type(struct_key)),
             Type::Ptr(_) | Type::MutPtr(_) => {
                 AnyTypeEnum::PointerType(self.context.ptr_type(AddressSpace::default()))
             }
-            Type::FnPtr(fn_ptr_ty_key) => self.lower_fn_ptr_type(fn_ptr_ty_key),
-            Type::Struct(struct_key) => self.lower_struct_type(struct_key),
-            Type::Tuple(tuple_type_key) => todo!(),
-            Type::Slice(type_key) => todo!(),
-            Type::MutSlice(type_key) => todo!(),
-            Type::Array(array_type_key) => todo!(),
+            Type::FnPtr(fn_ptr_ty_key) => {
+                AnyTypeEnum::FunctionType(self.lower_fn_ptr_type(fn_ptr_ty_key))
+            }
+            Type::Tuple(tuple_type_key) => {
+                AnyTypeEnum::StructType(self.lower_tuple_type(tuple_type_key))
+            }
+            Type::Array(array_type_key) => {
+                AnyTypeEnum::ArrayType(self.lower_array_type(array_type_key))
+            }
+            Type::Slice(_) | Type::MutSlice(_) => AnyTypeEnum::StructType(
+                self.context.struct_type(
+                    &[
+                        self.context.ptr_type(AddressSpace::default()).into(),
+                        self.context
+                            .ptr_sized_int_type(&self.machine.get_target_data(), None)
+                            .into(),
+                    ],
+                    false,
+                ),
+            ),
             Type::Lambda(lambda_type_key) => todo!(),
         }
     }
 
-    fn lower_fn_ptr_type(&self, fn_ptr_ty_key: FnPtrTypeKey) -> AnyTypeEnum<'ctx> {
+    fn lower_fn_ptr_type(&self, fn_ptr_ty_key: FnPtrTypeKey) -> FunctionType<'ctx> {
+        if let Some(fn_ty) = self.fn_ptr_types.borrow().get(&fn_ptr_ty_key) {
+            return fn_ty.clone();
+        }
+
         let params_len = self.nir.fn_ptr_types[fn_ptr_ty_key].params_types.len();
         let return_type = self.nir.fn_ptr_types[fn_ptr_ty_key].return_type;
         let mut llvm_return_ty = self.lower_type(return_type);
@@ -192,12 +230,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
 
         match self.nir.types[return_type] {
             Type::Struct(struct_key) => {
-                let TypeLayout {
-                    name,
-                    size,
-                    align,
-                    fields,
-                } = &self.structs_layouts.borrow()[&struct_key];
+                let TypeLayout { size, .. } = &self.structs_layouts.borrow()[&struct_key];
 
                 if *size > 16 {
                     params_types = Vec::with_capacity(params_len + 1);
@@ -223,20 +256,17 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             params_types.push(ty);
         }
 
-        let fn_ty = self.fn_type_from_any_type_enum(llvm_return_ty, &params_types, false);
-        AnyTypeEnum::FunctionType(fn_ty)
+        fn_type_from_any_type_enum(llvm_return_ty, &params_types, false)
     }
 
-    fn lower_struct_type(&self, struct_key: StructKey) -> AnyTypeEnum<'ctx> {
-        if let Some(TypeLayout { name, .. }) = self.structs_layouts.borrow().get(&struct_key) {
-            let struct_type = self.context.get_struct_type(&name).unwrap();
-            return AnyTypeEnum::StructType(struct_type);
+    fn lower_struct_type(&self, struct_key: StructKey) -> StructType<'ctx> {
+        if let Some(TypeLayout { struct_ty, .. }) = self.structs_layouts.borrow().get(&struct_key) {
+            return struct_ty.clone();
         }
 
         let _struct = &self.nir.structs[struct_key];
         let field_types = _struct
             .fields_order
-            .clone()
             .iter()
             .map(|field_id| {
                 let any_ty_enum = self.lower_type(_struct.fields_types[field_id]);
@@ -244,27 +274,25 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             })
             .collect::<Vec<_>>();
         let name = self.fmt_item_name(_struct.info);
-        let struct_type = self.context.opaque_struct_type(&name);
-        struct_type.set_body(&field_types, false);
+        let struct_ty = self.context.opaque_struct_type(&name);
+        struct_ty.set_body(&field_types, false);
 
         let mut fields = Vec::with_capacity(field_types.len());
         for i in 0..field_types.len() as u32 {
             let offset = self
                 .machine
                 .get_target_data()
-                .offset_of_element(&struct_type, i)
+                .offset_of_element(&struct_ty, i)
                 .unwrap() as u32;
             fields.push(FieldLayout { offset });
         }
 
-        let size = self.machine.get_target_data().get_store_size(&struct_type) as u32;
-        let align = self
-            .machine
-            .get_target_data()
-            .get_abi_alignment(&struct_type);
+        let size = self.machine.get_target_data().get_store_size(&struct_ty) as u32;
+
+        let align = self.machine.get_target_data().get_abi_alignment(&struct_ty);
 
         let struct_layout = TypeLayout {
-            name,
+            struct_ty: struct_ty.clone(),
             size,
             align,
             fields,
@@ -274,7 +302,64 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             .borrow_mut()
             .insert(struct_key, struct_layout);
 
-        AnyTypeEnum::StructType(struct_type)
+        struct_ty
+    }
+
+    fn lower_tuple_type(&self, tuple_type_key: TupleTypeKey) -> StructType<'ctx> {
+        if let Some(TypeLayout { struct_ty, .. }) =
+            self.tuples_layouts.borrow().get(&tuple_type_key)
+        {
+            return struct_ty.clone();
+        }
+
+        let tuple_type = &self.nir.tuple_types[tuple_type_key];
+
+        let field_types = tuple_type
+            .types
+            .iter()
+            .map(|&field_ty| {
+                let any_ty_enum = self.lower_type(field_ty);
+                any_type_enum_to_basic_type_enum(any_ty_enum)
+            })
+            .collect::<Vec<_>>();
+
+        let struct_ty = self.context.struct_type(&field_types, false);
+
+        let mut fields = Vec::with_capacity(field_types.len());
+        for i in 0..field_types.len() as u32 {
+            let offset = self
+                .machine
+                .get_target_data()
+                .offset_of_element(&struct_ty, i)
+                .unwrap() as u32;
+            fields.push(FieldLayout { offset });
+        }
+
+        let size = self.machine.get_target_data().get_store_size(&struct_ty) as u32;
+
+        let align = self.machine.get_target_data().get_abi_alignment(&struct_ty);
+
+        let struct_layout = TypeLayout {
+            struct_ty: struct_ty.clone(),
+            size,
+            align,
+            fields,
+        };
+
+        self.tuples_layouts
+            .borrow_mut()
+            .insert(tuple_type_key, struct_layout);
+
+        struct_ty
+    }
+
+    fn lower_array_type(&self, array_type_key: ArrayTypeKey) -> inkwell::types::ArrayType<'ctx> {
+        let ArrayType {
+            underlying_typ,
+            size,
+        } = self.nir.array_types[array_type_key];
+        let underlying_ty = self.lower_type(underlying_typ);
+        array_type_from_any_type_enum(underlying_ty, size)
     }
 
     fn lower_fns(&self) {
