@@ -1,11 +1,15 @@
-use std::cell::RefCell;
+use std::{cell::RefCell, cmp::max};
 
 use inkwell::{
     builder::Builder,
     context::Context,
     module::Module,
-    targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetMachine, TargetTriple},
-    types::{AnyTypeEnum, BasicMetadataTypeEnum, BasicTypeEnum, FunctionType, StructType},
+    targets::{
+        CodeModel, InitializationConfig, RelocMode, Target, TargetData, TargetMachine, TargetTriple,
+    },
+    types::{
+        AnyTypeEnum, BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, StructType,
+    },
     AddressSpace,
 };
 
@@ -33,6 +37,110 @@ struct TypeLayout<'ctx> {
 
 struct FieldLayout {
     offset: u32,
+}
+
+enum FlatFieldClass {
+    Int(u32),
+    Float(u32),
+}
+
+impl FlatFieldClass {
+    pub(crate) fn to_llvm_type(self, context: &Context) -> BasicTypeEnum {
+        match self {
+            Self::Int(bytes) => context
+                .custom_width_int_type((bytes as u32) * 8)
+                .as_basic_type_enum(),
+            Self::Float(4) => context.f32_type().as_basic_type_enum(),
+            Self::Float(_) => context.f64_type().as_basic_type_enum(),
+        }
+    }
+
+    pub(crate) fn is_float(self) -> bool {
+        matches!(self, Self::Float(_))
+    }
+}
+
+pub(crate) fn flatten_type(
+    target_data: &TargetData,
+    typ: BasicTypeEnum,
+    align: u32,
+) -> (FlatFieldClass, FlatFieldClass) {
+    let mut a = 0;
+    let mut a_float = true;
+    let mut b = 0;
+    let mut b_float = true;
+
+    fn flatten_inner(
+        target_data: &TargetData,
+        typ: BasicTypeEnum,
+        a: &mut u32,
+        a_float: &mut bool,
+        b: &mut u32,
+        b_float: &mut bool,
+    ) {
+        match typ {
+            BasicTypeEnum::StructType(t) => {
+                for field in t.get_field_types() {
+                    flatten_inner(target_data, field, a, a_float, b, b_float);
+                }
+            }
+            BasicTypeEnum::ArrayType(t) => {
+                let elem_type = t.get_element_type();
+                let len = t.size_of().unwrap().get_zero_extended_constant().unwrap();
+                for _ in 0..len {
+                    flatten_inner(target_data, elem_type, a, a_float, b, b_float);
+                }
+            }
+            BasicTypeEnum::FloatType(t) => {
+                let size = target_data.get_abi_size(&t) as u32;
+                if *a + size <= 8 {
+                    *a += size;
+                } else {
+                    *b += size;
+                }
+            }
+            BasicTypeEnum::IntType(t) => {
+                let size = target_data.get_abi_size(&t) as u32;
+                if *a + size <= 8 {
+                    *a += size;
+                    *a_float = false;
+                } else {
+                    *b += size;
+                    *b_float = false;
+                }
+            }
+            BasicTypeEnum::PointerType(t) => {
+                let size = target_data.get_abi_size(&t) as u32;
+                if *a + size <= 8 {
+                    *a += size;
+                    *a_float = false;
+                } else {
+                    *b += size;
+                    *b_float = false;
+                }
+            }
+            BasicTypeEnum::VectorType(_) => todo!(),
+        }
+    }
+
+    flatten_inner(target_data, typ, &mut a, &mut a_float, &mut b, &mut b_float);
+
+    // Apply alignment
+    a = max(a, align);
+    b = max(b, align);
+
+    (
+        if a_float && a > 0 {
+            FlatFieldClass::Float(a)
+        } else {
+            FlatFieldClass::Int(a)
+        },
+        if b_float && b > 0 {
+            FlatFieldClass::Float(b)
+        } else {
+            FlatFieldClass::Int(b)
+        },
+    )
 }
 
 fn any_type_enum_to_basic_metadata_type_enum(ty: AnyTypeEnum) -> BasicMetadataTypeEnum {
@@ -230,16 +338,31 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
 
         match self.nir.types[return_type] {
             Type::Struct(struct_key) => {
-                let TypeLayout { size, .. } = &self.structs_layouts.borrow()[&struct_key];
+                let size = self.structs_layouts.borrow()[&struct_key].size;
 
-                if *size > 16 {
+                llvm_return_ty = if size <= 8 {
+                    AnyTypeEnum::IntType(self.context.custom_width_int_type(size * 8))
+                } else if size <= 16 {
+                    let align = self.structs_layouts.borrow()[&struct_key].align;
+                    let (class1, class2) = flatten_type(
+                        &self.machine.get_target_data(),
+                        any_type_enum_to_basic_type_enum(llvm_return_ty),
+                        align,
+                    );
+                    let (class1, class2) = (
+                        class1.to_llvm_type(&self.context),
+                        class2.to_llvm_type(&self.context),
+                    );
+                    let struct_type = self
+                        .context
+                        .struct_type(&[class1.into(), class2.into()], false);
+                    AnyTypeEnum::StructType(struct_type)
+                } else {
                     params_types = Vec::with_capacity(params_len + 1);
                     let ptr_ty = self.context.ptr_type(AddressSpace::default());
                     params_types.push(BasicMetadataTypeEnum::PointerType(ptr_ty));
-                    llvm_return_ty = AnyTypeEnum::VoidType(self.context.void_type());
-                } else if *size > 8 {
-                } else {
-                }
+                    AnyTypeEnum::VoidType(self.context.void_type())
+                };
             }
             Type::Slice(type_key) => todo!(),
             Type::MutSlice(type_key) => todo!(),
