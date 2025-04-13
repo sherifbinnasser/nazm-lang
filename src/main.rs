@@ -7,6 +7,8 @@ use nazmc_data_pool::PkgKey;
 use nazmc_data_pool::{IdPoolBuilder, StrPoolBuilder};
 use nazmc_diagnostics::file_info::FileInfo;
 use nazmc_lexer::LexerIter;
+use nazmc_nir::codegen::llvm::LLVMCodeGen;
+use nazmc_nir::codegen::llvm::OptimizationLevel;
 use nazmc_nir::codegen::qbe::QbeCodegen;
 use nazmc_nir::nir_analyzer::NIRAnalyzer;
 use nazmc_parser::parse;
@@ -263,11 +265,17 @@ fn main() {
 
     nir.fmt_cfg(&nir.fns.raw[0].cfg, "CFG.dot");
 
-    let qbe = QbeCodegen::new(nir).lower();
-    let _ = std::fs::write(
-        format!("{}.ssa", الاسم.unwrap_or("out".into())),
-        qbe.to_string(),
-    );
+    let name = الاسم.unwrap_or("out".into());
+
+    // let qbe = QbeCodegen::new(nir).lower();
+    // let _ = std::fs::write(
+    //     format!("{}.ssa", الاسم.unwrap_or("out".into())),
+    //     qbe.to_string(),
+    // );
+
+    let llvm_ctx = LLVMCodeGen::new_ctx();
+    let llvm_codegen = LLVMCodeGen::new(&llvm_ctx, nir, &name, None, OptimizationLevel::Default);
+    llvm_codegen.lower();
 
     // let (file_path, file_content) = cli::read_file();
 
