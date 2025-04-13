@@ -274,7 +274,8 @@ fn main() {
     // );
 
     let llvm_ctx = LLVMCodeGen::new_ctx();
-    let llvm_codegen = LLVMCodeGen::new(&llvm_ctx, nir, &name, None, OptimizationLevel::Default);
+    let mut llvm_codegen =
+        LLVMCodeGen::new(&llvm_ctx, nir, &name, None, OptimizationLevel::Default);
     llvm_codegen.lower();
 
     // let (file_path, file_content) = cli::read_file();

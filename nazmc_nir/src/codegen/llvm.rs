@@ -1,6 +1,7 @@
 use std::{cell::RefCell, cmp::max};
 
 use inkwell::{
+    basic_block::BasicBlock,
     builder::Builder,
     context::Context,
     module::Module,
@@ -8,8 +9,10 @@ use inkwell::{
         CodeModel, InitializationConfig, RelocMode, Target, TargetData, TargetMachine, TargetTriple,
     },
     types::{
-        AnyTypeEnum, BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, StructType,
+        AnyTypeEnum, BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, IntType,
+        StructType,
     },
+    values::{AnyValueEnum, FunctionValue, InstructionOpcode, PointerValue},
     AddressSpace,
 };
 
@@ -23,9 +26,13 @@ pub struct LLVMCodeGen<'ctx, 'nir> {
     builder: Builder<'ctx>,
     machine: TargetMachine,
     nir: NIR<'nir>,
+    llvm_fns: TiVec<FnKey, FunctionValue<'ctx>>,
+    llvm_str_pool: TiVec<StrKey, PointerValue<'ctx>>,
     fn_ptr_types: RefCell<HashMap<FnPtrTypeKey, FunctionType<'ctx>>>,
     structs_layouts: RefCell<HashMap<StructKey, TypeLayout<'ctx>>>,
     tuples_layouts: RefCell<HashMap<TupleTypeKey, TypeLayout<'ctx>>>,
+    basic_blocks: RefCell<HashMap<BasicBlockKey, BasicBlock<'ctx>>>,
+    locals: RefCell<HashMap<BindingKey, PointerValue<'ctx>>>,
 }
 
 struct TypeLayout<'ctx> {
@@ -249,17 +256,35 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             module,
             builder,
             machine,
+            llvm_str_pool: TiVec::with_capacity(nir.str_pool.len()),
+            llvm_fns: TiVec::with_capacity(nir.fns.len()),
             fn_ptr_types: RefCell::new(HashMap::with_capacity(nir.fn_ptr_types.len())),
             structs_layouts: RefCell::new(HashMap::with_capacity(nir.structs.len())),
             tuples_layouts: RefCell::new(HashMap::with_capacity(nir.tuple_types.len())),
+            basic_blocks: Default::default(),
+            locals: Default::default(),
             nir,
         }
     }
 
-    pub fn lower(&self) {
-        self.lower_fns();
-        self.module
+    pub fn lower(&mut self) {
+        self.lower_string_consts();
+        self.lower_fns_signatures();
+        self.lower_fns_bodies();
+        let _ = self
+            .module
             .print_to_file(&format!("{}.ll", self.module.get_name().to_str().unwrap()));
+    }
+
+    fn lower_string_consts(&mut self) {
+        let strs = std::mem::take(&mut self.nir.str_pool);
+        for (str_key, _str) in strs.into_iter_enumerated() {
+            let const_str = self.context.const_string(&_str.into_bytes(), true);
+            let global =
+                self.module
+                    .add_global(const_str.get_type(), None, &format!(".str{}", str_key.0));
+            self.llvm_str_pool.push(global.as_pointer_value());
+        }
     }
 
     fn get_id(&self, id: IdKey) -> &str {
@@ -284,13 +309,67 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         }
     }
 
+    fn isize_type(&self) -> IntType<'ctx> {
+        self.context
+            .ptr_sized_int_type(&self.machine.get_target_data(), None)
+    }
+
+    fn get_type_size(&self, type_key: TypeKey) -> u32 {
+        match self.nir.types[type_key] {
+            Type::Unit => 0,
+            Type::I | Type::U | Type::MutPtr(_) | Type::Ptr(_) | Type::FnPtr(_) => {
+                self.machine.get_target_data().get_pointer_byte_size(None)
+            }
+            Type::I1 | Type::U1 | Type::Bool => 1,
+            Type::I2 | Type::U2 => 2,
+            Type::I4 | Type::U4 | Type::F4 | Type::Char => 4,
+            Type::I8 | Type::U8 | Type::F8 => 8,
+            Type::Slice(_) | Type::MutSlice(_) => {
+                2 * self.machine.get_target_data().get_pointer_byte_size(None)
+            }
+            Type::Struct(struct_key) => self.structs_layouts.borrow()[&struct_key].size,
+            Type::Tuple(tuple_type_key) => self.tuples_layouts.borrow()[&tuple_type_key].size,
+            Type::Array(array_type_key) => {
+                let ArrayType {
+                    underlying_typ,
+                    size,
+                } = self.nir.array_types[array_type_key];
+                self.get_type_size(underlying_typ) * size
+            }
+            Type::Lambda(lambda_type_key) => todo!(),
+        }
+    }
+
+    fn get_type_align(&self, type_key: TypeKey) -> u32 {
+        match self.nir.types[type_key] {
+            Type::I1 | Type::U1 | Type::Unit | Type::Bool => 1,
+            Type::I2 | Type::U2 => 2,
+            Type::I4 | Type::U4 | Type::F4 | Type::Char => 4,
+            Type::I8 | Type::U8 | Type::F8 => 8,
+            Type::I
+            | Type::U
+            | Type::MutPtr(_)
+            | Type::Ptr(_)
+            | Type::FnPtr(_)
+            | Type::Slice(_)
+            | Type::MutSlice(_) => self.machine.get_target_data().get_pointer_byte_size(None),
+            Type::Struct(struct_key) => self.structs_layouts.borrow()[&struct_key].align,
+            Type::Tuple(tuple_type_key) => self.tuples_layouts.borrow()[&tuple_type_key].align,
+            Type::Array(array_type_key) => {
+                let ArrayType {
+                    underlying_typ,
+                    size: _,
+                } = self.nir.array_types[array_type_key];
+                self.get_type_align(underlying_typ)
+            }
+            Type::Lambda(lambda_type_key) => todo!(),
+        }
+    }
+
     fn lower_type(&self, type_key: TypeKey) -> AnyTypeEnum<'ctx> {
         match self.nir.types[type_key] {
             Type::Unit => AnyTypeEnum::VoidType(self.context.void_type()),
-            Type::I | Type::U => AnyTypeEnum::IntType(
-                self.context
-                    .ptr_sized_int_type(&self.machine.get_target_data(), None),
-            ),
+            Type::I | Type::U => AnyTypeEnum::IntType(self.isize_type()),
             Type::Bool | Type::I1 | Type::U1 => AnyTypeEnum::IntType(self.context.i8_type()),
             Type::I2 | Type::U2 => AnyTypeEnum::IntType(self.context.i16_type()),
             Type::Char | Type::I4 | Type::U4 => AnyTypeEnum::IntType(self.context.i32_type()),
@@ -485,9 +564,8 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         array_type_from_any_type_enum(underlying_ty, size)
     }
 
-    fn lower_fns(&self) {
-        // Lower fns signatures
-        for (fn_key, _fn) in self.nir.fns.iter_enumerated() {
+    fn lower_fns_signatures(&mut self) {
+        for _fn in self.nir.fns.iter() {
             let name = if _fn.info.id_key == IdKey::MAIN
                 && self.nir.files_to_pkgs[_fn.info.file_key] == PkgKey::TOP
             {
@@ -495,12 +573,188 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             } else {
                 self.fmt_item_name(_fn.info)
             };
-
             let AnyTypeEnum::FunctionType(fn_type) = self.lower_type(_fn.fn_ptr_type) else {
                 unreachable!()
             };
+            let llvm_fn = self.module.add_function(&name, fn_type, None);
+            self.llvm_fns.push(llvm_fn);
+        }
+    }
 
-            self.module.add_function(&name, fn_type, None);
+    fn lower_fns_bodies(&self) {
+        for (fn_key, _fn) in self.nir.fns.iter_enumerated() {
+            let cfg = &_fn.cfg;
+            let llvm_fn = self.llvm_fns[fn_key].clone();
+
+            let entry_bb = self.context.append_basic_block(llvm_fn, "entry");
+
+            // Append all basic blocks
+            self.basic_blocks.borrow_mut().clear();
+            for &bb_key in cfg.basic_blocks.keys() {
+                if bb_key == BasicBlockKey::START_BASIC_BLOCK {
+                    self.basic_blocks
+                        .borrow_mut()
+                        .insert(bb_key, entry_bb.clone());
+                } else if bb_key != BasicBlockKey::END_BASIC_BLOCK {
+                    let llvm_bb = self
+                        .context
+                        .append_basic_block(llvm_fn, &format!("bb{}", bb_key.0));
+                    self.basic_blocks.borrow_mut().insert(bb_key, llvm_bb);
+                }
+            }
+
+            // Lower basic blocks
+            for (&bb_key, bb) in &cfg.basic_blocks {
+                if bb_key == BasicBlockKey::START_BASIC_BLOCK {
+                    self.builder.position_at_end(entry_bb);
+                    self.lower_locals(&cfg.bindings);
+                    self.lower_block_jmp(bb, cfg);
+                    continue;
+                } else if bb_key == BasicBlockKey::END_BASIC_BLOCK {
+                    continue;
+                }
+                self.builder
+                    .position_at_end(self.basic_blocks.borrow()[&bb_key].clone());
+            }
+        }
+    }
+
+    fn lower_locals(&self, bindings: &TiSlice<BindingKey, Binding>) {
+        self.locals.borrow_mut().clear();
+        for (key, binding) in bindings.iter_enumerated() {
+            let llvm_ty = self.lower_type(binding.typ);
+            let name = format!("loc{}", key.0);
+            let ptr_value = match llvm_ty {
+                AnyTypeEnum::ArrayType(array_type) => self.builder.build_array_alloca(
+                    array_type.clone().get_element_type(),
+                    self.context
+                        .i64_type()
+                        .const_int(array_type.len() as u64, false),
+                    &name,
+                ),
+                AnyTypeEnum::FloatType(float_type) => self.builder.build_alloca(float_type, &name),
+                AnyTypeEnum::IntType(int_type) => self.builder.build_alloca(int_type, &name),
+                AnyTypeEnum::PointerType(ptr_type) => self.builder.build_alloca(ptr_type, &name),
+                AnyTypeEnum::StructType(struct_ty) => self.builder.build_alloca(struct_ty, &name),
+                AnyTypeEnum::FunctionType(function_type) => todo!(),
+                AnyTypeEnum::VectorType(vector_type) => todo!(),
+                AnyTypeEnum::VoidType(void_type) => todo!(),
+            }
+            .unwrap();
+            self.locals.borrow_mut().insert(key, ptr_value);
+        }
+    }
+
+    fn lower_block_jmp(&self, bb: &crate::BasicBlock, cfg: &CFG) {
+        if let Some(branch_key) = bb.conditional_goto {
+            let branch = &cfg.branches[&branch_key];
+            let BranchKind::If(operand) = branch.kind else {
+                unreachable!()
+            };
+            let else_branch = &cfg.branches[&bb.goto.unwrap()];
+
+            if branch.to == BasicBlockKey::END_BASIC_BLOCK
+                || else_branch.to == BasicBlockKey::END_BASIC_BLOCK
+            {
+                self.check_or_add_void_return();
+                return;
+            }
+
+            let AnyValueEnum::IntValue(condition) = self.lower_operand(&operand, &cfg) else {
+                unreachable!("Bools are should be lowered to i8 values")
+            };
+
+            let then_bb = self.basic_blocks.borrow()[&branch.to].clone();
+            let else_bb = self.basic_blocks.borrow()[&else_branch.to].clone();
+
+            let _ = self
+                .builder
+                .build_conditional_branch(condition, then_bb, else_bb);
+        } else {
+            let branch = &cfg.branches[&bb.goto.unwrap()];
+            if branch.to == BasicBlockKey::END_BASIC_BLOCK {
+                self.check_or_add_void_return();
+                return;
+            }
+            let _ = self
+                .builder
+                .build_unconditional_branch(self.basic_blocks.borrow()[&branch.to].clone());
+        }
+    }
+
+    fn check_or_add_void_return(&self) {
+        // If there is no return, it should return void
+        let last_instr = self
+            .builder
+            .get_insert_block()
+            .and_then(|block| block.get_last_instruction());
+
+        let is_return = last_instr
+            .map(|instr| instr.get_opcode() == InstructionOpcode::Return)
+            .unwrap_or(false);
+
+        if !is_return {
+            let _ = self.builder.build_return(None);
+        }
+    }
+
+    #[inline]
+    fn lower_operand(&self, operand: &Operand, cfg: &CFG) -> AnyValueEnum {
+        self.lower_operand_kind(operand.kind, cfg)
+    }
+
+    fn lower_operand_kind(&self, kind: OperandKind, cfg: &CFG) -> AnyValueEnum {
+        match kind {
+            OperandKind::LValue(lvalue_key) => todo!(),
+            OperandKind::Const(Const::Unit) => todo!(),
+            OperandKind::Const(Const::I(n)) => {
+                AnyValueEnum::IntValue(self.isize_type().const_int(n as u64, true))
+            }
+            OperandKind::Const(Const::I1(n)) => {
+                AnyValueEnum::IntValue(self.context.i8_type().const_int(n as u64, true))
+            }
+            OperandKind::Const(Const::I2(n)) => {
+                AnyValueEnum::IntValue(self.context.i16_type().const_int(n as u64, true))
+            }
+            OperandKind::Const(Const::I4(n)) => {
+                AnyValueEnum::IntValue(self.context.i32_type().const_int(n as u64, true))
+            }
+            OperandKind::Const(Const::I8(n)) => {
+                AnyValueEnum::IntValue(self.context.i64_type().const_int(n as u64, true))
+            }
+            OperandKind::Const(Const::U(n)) => {
+                AnyValueEnum::IntValue(self.isize_type().const_int(n as u64, false))
+            }
+            OperandKind::Const(Const::U1(n)) => {
+                AnyValueEnum::IntValue(self.context.i8_type().const_int(n as u64, false))
+            }
+            OperandKind::Const(Const::U2(n)) => {
+                AnyValueEnum::IntValue(self.context.i16_type().const_int(n as u64, false))
+            }
+            OperandKind::Const(Const::U4(n)) => {
+                AnyValueEnum::IntValue(self.context.i32_type().const_int(n as u64, false))
+            }
+            OperandKind::Const(Const::U8(n)) => {
+                AnyValueEnum::IntValue(self.context.i64_type().const_int(n as u64, false))
+            }
+            OperandKind::Const(Const::Bool(n)) => {
+                AnyValueEnum::IntValue(self.context.i8_type().const_int(n as u64, false))
+            }
+            OperandKind::Const(Const::Char(n)) => {
+                AnyValueEnum::IntValue(self.context.i32_type().const_int(n as u64, false))
+            }
+            OperandKind::Const(Const::F4(n)) => {
+                AnyValueEnum::FloatValue(self.context.f32_type().const_float(n as f64))
+            }
+            OperandKind::Const(Const::F8(n)) => {
+                AnyValueEnum::FloatValue(self.context.f64_type().const_float(n as f64))
+            }
+            OperandKind::Const(Const::Str(str_key)) => {
+                AnyValueEnum::PointerValue(self.llvm_str_pool[str_key])
+            }
+            OperandKind::Const(Const::Fn(fn_key)) => {
+                AnyValueEnum::FunctionValue(self.llvm_fns[fn_key].clone())
+            }
         }
     }
 }
