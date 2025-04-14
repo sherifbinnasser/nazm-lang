@@ -581,7 +581,7 @@ impl<'a> QbeCodegen<'a> {
             LValueKind::Arg(arg_key) => self.args[&arg_key].clone(),
             LValueKind::Temp(temp_key) => self.temps[temp_key].clone(),
             LValueKind::Deref(lvalue_key) | LValueKind::MutDeref(lvalue_key) => {
-                // For dereference, we already have a pointer, just use it
+                // For dereference, we already have the pointer, just use it
                 self.lower_lvalue(lvalue_key, cfg, qbe_bb)
             }
             LValueKind::Field { on, field_id } => todo!(),

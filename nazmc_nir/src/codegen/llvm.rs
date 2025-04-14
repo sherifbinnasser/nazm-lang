@@ -1,4 +1,7 @@
-use std::{cell::RefCell, cmp::max};
+use std::{
+    cell::{Cell, Ref, RefCell},
+    cmp::max,
+};
 
 use inkwell::{
     basic_block::BasicBlock,
@@ -12,7 +15,7 @@ use inkwell::{
         AnyTypeEnum, BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, IntType,
         StructType,
     },
-    values::{AnyValueEnum, FunctionValue, InstructionOpcode, PointerValue},
+    values::{AnyValue, AnyValueEnum, FunctionValue, InstructionOpcode, PointerValue},
     AddressSpace,
 };
 
@@ -28,11 +31,15 @@ pub struct LLVMCodeGen<'ctx, 'nir> {
     nir: NIR<'nir>,
     llvm_fns: TiVec<FnKey, FunctionValue<'ctx>>,
     llvm_str_pool: TiVec<StrKey, PointerValue<'ctx>>,
+    llvm_statics: TiVec<StaticKey, PointerValue<'ctx>>,
+    llvm_temps_counter: Cell<usize>,
+    llvm_temps: RefCell<Vec<String>>,
     fn_ptr_types: RefCell<HashMap<FnPtrTypeKey, FunctionType<'ctx>>>,
     structs_layouts: RefCell<HashMap<StructKey, TypeLayout<'ctx>>>,
     tuples_layouts: RefCell<HashMap<TupleTypeKey, TypeLayout<'ctx>>>,
     basic_blocks: RefCell<HashMap<BasicBlockKey, BasicBlock<'ctx>>>,
     locals: RefCell<HashMap<BindingKey, PointerValue<'ctx>>>,
+    temps: RefCell<HashMap<TempKey, AnyValueEnum<'ctx>>>,
 }
 
 struct TypeLayout<'ctx> {
@@ -256,13 +263,17 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             module,
             builder,
             machine,
-            llvm_str_pool: TiVec::with_capacity(nir.str_pool.len()),
             llvm_fns: TiVec::with_capacity(nir.fns.len()),
+            llvm_str_pool: TiVec::with_capacity(nir.str_pool.len()),
+            llvm_statics: TiVec::with_capacity(nir.statics.len()),
+            llvm_temps_counter: Cell::new(0),
+            llvm_temps: RefCell::new(Vec::new()),
             fn_ptr_types: RefCell::new(HashMap::with_capacity(nir.fn_ptr_types.len())),
             structs_layouts: RefCell::new(HashMap::with_capacity(nir.structs.len())),
             tuples_layouts: RefCell::new(HashMap::with_capacity(nir.tuple_types.len())),
             basic_blocks: Default::default(),
             locals: Default::default(),
+            temps: Default::default(),
             nir,
         }
     }
@@ -307,6 +318,18 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         } else {
             format!("{}::{}", pkg, name)
         }
+    }
+
+    fn new_llvm_temp(&self) -> Ref<String> {
+        let llvm_temps_counter = self.llvm_temps_counter.get();
+        if llvm_temps_counter == self.llvm_temps.borrow().len() {
+            self.llvm_temps
+                .borrow_mut()
+                .push(format!("llvm_tmp{}", llvm_temps_counter));
+        }
+        self.llvm_temps_counter.set(llvm_temps_counter + 1);
+        let temps = self.llvm_temps.borrow();
+        Ref::map(temps, |temps| &temps[llvm_temps_counter])
     }
 
     fn isize_type(&self) -> IntType<'ctx> {
@@ -406,7 +429,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
 
     fn lower_fn_ptr_type(&self, fn_ptr_ty_key: FnPtrTypeKey) -> FunctionType<'ctx> {
         if let Some(fn_ty) = self.fn_ptr_types.borrow().get(&fn_ptr_ty_key) {
-            return fn_ty.clone();
+            return *fn_ty;
         }
 
         let params_len = self.nir.fn_ptr_types[fn_ptr_ty_key].params_types.len();
@@ -463,7 +486,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
 
     fn lower_struct_type(&self, struct_key: StructKey) -> StructType<'ctx> {
         if let Some(TypeLayout { struct_ty, .. }) = self.structs_layouts.borrow().get(&struct_key) {
-            return struct_ty.clone();
+            return *struct_ty;
         }
 
         let _struct = &self.nir.structs[struct_key];
@@ -494,7 +517,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         let align = self.machine.get_target_data().get_abi_alignment(&struct_ty);
 
         let struct_layout = TypeLayout {
-            struct_ty: struct_ty.clone(),
+            struct_ty,
             size,
             align,
             fields,
@@ -511,7 +534,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         if let Some(TypeLayout { struct_ty, .. }) =
             self.tuples_layouts.borrow().get(&tuple_type_key)
         {
-            return struct_ty.clone();
+            return *struct_ty;
         }
 
         let tuple_type = &self.nir.tuple_types[tuple_type_key];
@@ -542,7 +565,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         let align = self.machine.get_target_data().get_abi_alignment(&struct_ty);
 
         let struct_layout = TypeLayout {
-            struct_ty: struct_ty.clone(),
+            struct_ty,
             size,
             align,
             fields,
@@ -584,17 +607,17 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
     fn lower_fns_bodies(&self) {
         for (fn_key, _fn) in self.nir.fns.iter_enumerated() {
             let cfg = &_fn.cfg;
-            let llvm_fn = self.llvm_fns[fn_key].clone();
-
+            let llvm_fn = self.llvm_fns[fn_key];
+            self.llvm_temps_counter.set(0);
             let entry_bb = self.context.append_basic_block(llvm_fn, "entry");
+
+            self.lower_temps(&cfg.temps);
 
             // Append all basic blocks
             self.basic_blocks.borrow_mut().clear();
             for &bb_key in cfg.basic_blocks.keys() {
                 if bb_key == BasicBlockKey::START_BASIC_BLOCK {
-                    self.basic_blocks
-                        .borrow_mut()
-                        .insert(bb_key, entry_bb.clone());
+                    self.basic_blocks.borrow_mut().insert(bb_key, entry_bb);
                 } else if bb_key != BasicBlockKey::END_BASIC_BLOCK {
                     let llvm_bb = self
                         .context
@@ -614,8 +637,15 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                     continue;
                 }
                 self.builder
-                    .position_at_end(self.basic_blocks.borrow()[&bb_key].clone());
+                    .position_at_end(self.basic_blocks.borrow()[&bb_key]);
             }
+        }
+    }
+
+    fn lower_temps(&self, temps: &TiSlice<TempKey, Temp>) {
+        self.temps.borrow_mut().clear();
+        for (key, temp) in temps.iter_enumerated() {
+            let typ = self.lower_type(temp.typ);
         }
     }
 
@@ -626,7 +656,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             let name = format!("loc{}", key.0);
             let ptr_value = match llvm_ty {
                 AnyTypeEnum::ArrayType(array_type) => self.builder.build_array_alloca(
-                    array_type.clone().get_element_type(),
+                    array_type.get_element_type(),
                     self.context
                         .i64_type()
                         .const_int(array_type.len() as u64, false),
@@ -661,11 +691,11 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             }
 
             let AnyValueEnum::IntValue(condition) = self.lower_operand(&operand, &cfg) else {
-                unreachable!("Bools are should be lowered to i8 values")
+                unreachable!("Bools should be lowered to i8 values")
             };
 
-            let then_bb = self.basic_blocks.borrow()[&branch.to].clone();
-            let else_bb = self.basic_blocks.borrow()[&else_branch.to].clone();
+            let then_bb = self.basic_blocks.borrow()[&branch.to];
+            let else_bb = self.basic_blocks.borrow()[&else_branch.to];
 
             let _ = self
                 .builder
@@ -678,7 +708,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             }
             let _ = self
                 .builder
-                .build_unconditional_branch(self.basic_blocks.borrow()[&branch.to].clone());
+                .build_unconditional_branch(self.basic_blocks.borrow()[&branch.to]);
         }
     }
 
@@ -705,8 +735,8 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
 
     fn lower_operand_kind(&self, kind: OperandKind, cfg: &CFG) -> AnyValueEnum {
         match kind {
-            OperandKind::LValue(lvalue_key) => todo!(),
-            OperandKind::Const(Const::Unit) => todo!(),
+            OperandKind::LValue(lvalue_key) => self.lower_lvalue(lvalue_key, cfg),
+            OperandKind::Const(Const::Unit) => unreachable!(),
             OperandKind::Const(Const::I(n)) => {
                 AnyValueEnum::IntValue(self.isize_type().const_int(n as u64, true))
             }
@@ -753,8 +783,73 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                 AnyValueEnum::PointerValue(self.llvm_str_pool[str_key])
             }
             OperandKind::Const(Const::Fn(fn_key)) => {
-                AnyValueEnum::FunctionValue(self.llvm_fns[fn_key].clone())
+                AnyValueEnum::FunctionValue(self.llvm_fns[fn_key])
             }
         }
+    }
+
+    fn lower_lvalue(&self, lvalue_key: LValueKey, cfg: &CFG) -> AnyValueEnum<'ctx> {
+        let type_key = cfg.lvalues[lvalue_key].typ;
+        if let LValueKind::Arg(arg_key) = cfg.lvalues[lvalue_key].kind {
+            todo!()
+        } else if let LValueKind::Temp(temp_key) = cfg.lvalues[lvalue_key].kind {
+            self.temps.borrow()[&temp_key]
+        } else {
+            let llvm_ptr = self.lower_lvalue_to_ptr(lvalue_key, cfg);
+            self.add_load_instr(type_key, llvm_ptr)
+        }
+    }
+
+    fn lower_lvalue_to_ptr(&self, lvalue_key: LValueKey, cfg: &CFG) -> PointerValue<'ctx> {
+        match cfg.lvalues[lvalue_key].kind {
+            LValueKind::Binding(binding_key) => self.locals.borrow()[&binding_key],
+            LValueKind::Static(static_key) => self.llvm_statics[static_key],
+            LValueKind::Arg(arg_key) => todo!(),
+            LValueKind::Deref(lvalue_key) | LValueKind::MutDeref(lvalue_key) => {
+                // For dereference, we already have the pointer, just use it
+                let AnyValueEnum::PointerValue(llvm_ptr) = self.lower_lvalue(lvalue_key, cfg)
+                else {
+                    unreachable!()
+                };
+                llvm_ptr
+            }
+            LValueKind::Field { on, field_id } | LValueKind::MutField { on, field_id } => {
+                todo!()
+            }
+            LValueKind::TupleIdx { on, idx } | LValueKind::MutTupleIdx { on, idx } => {
+                let type_key = cfg.lvalues[lvalue_key].typ;
+                let AnyTypeEnum::StructType(pointee_ty) = self.lower_type(type_key) else {
+                    unreachable!()
+                };
+                let pointee_name = self.new_llvm_temp();
+                let llvm_on_ptr = self.lower_lvalue_to_ptr(on, cfg);
+                let llvm_ptr = self
+                    .builder
+                    .build_struct_gep(pointee_ty, llvm_on_ptr, idx, &pointee_name)
+                    .unwrap();
+                llvm_ptr
+            }
+            LValueKind::ArrayIdx { on, idx } | LValueKind::MutArrayIdx { on, idx } => todo!(),
+            LValueKind::ArrayConstIdx { on, idx } | LValueKind::MutArrayConstIdx { on, idx } => {
+                todo!()
+            }
+            LValueKind::Temp(temp_key) => {
+                unreachable!("Temps don't have pointers to them, use lower_lvalue() instead")
+            }
+        }
+    }
+
+    fn add_load_instr(
+        &self,
+        type_key: TypeKey,
+        llvm_ptr: PointerValue<'ctx>,
+    ) -> AnyValueEnum<'ctx> {
+        let llvm_type = any_type_enum_to_basic_type_enum(self.lower_type(type_key));
+        let pointee_name = self.new_llvm_temp();
+        let pointee = self
+            .builder
+            .build_load(llvm_type, llvm_ptr, &pointee_name)
+            .unwrap();
+        pointee.as_any_value_enum()
     }
 }
