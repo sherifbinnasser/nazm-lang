@@ -12,11 +12,13 @@ use inkwell::{
         CodeModel, InitializationConfig, RelocMode, Target, TargetData, TargetMachine, TargetTriple,
     },
     types::{
-        AnyTypeEnum, BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, IntType,
-        StructType,
+        AnyType, AnyTypeEnum, BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType,
+        IntType, PointerType, StructType,
     },
-    values::{AnyValue, AnyValueEnum, FunctionValue, InstructionOpcode, PointerValue},
-    AddressSpace,
+    values::{
+        AnyValue, AnyValueEnum, BasicValueEnum, FunctionValue, InstructionOpcode, PointerValue,
+    },
+    AddressSpace, FloatPredicate, IntPredicate,
 };
 
 use crate::*;
@@ -157,6 +159,25 @@ pub(crate) fn flatten_type(
     )
 }
 
+fn ptr_type_from_fn_type(fn_type: FunctionType) -> PointerType {
+    fn_type.get_context().ptr_type(AddressSpace::default())
+}
+
+fn any_value_as_basic_value(any_value: AnyValueEnum) -> Option<BasicValueEnum> {
+    match any_value {
+        AnyValueEnum::ArrayValue(value) => Some(BasicValueEnum::ArrayValue(value)),
+        AnyValueEnum::IntValue(value) => Some(BasicValueEnum::IntValue(value)),
+        AnyValueEnum::FloatValue(value) => Some(BasicValueEnum::FloatValue(value)),
+        AnyValueEnum::PointerValue(value) => Some(BasicValueEnum::PointerValue(value)),
+        AnyValueEnum::StructValue(value) => Some(BasicValueEnum::StructValue(value)),
+        AnyValueEnum::VectorValue(value) => Some(BasicValueEnum::VectorValue(value)),
+        AnyValueEnum::FunctionValue(value) => Some(BasicValueEnum::PointerValue(
+            value.as_global_value().as_pointer_value(),
+        )),
+        _ => None,
+    }
+}
+
 fn any_type_enum_to_basic_metadata_type_enum(ty: AnyTypeEnum) -> BasicMetadataTypeEnum {
     match ty {
         AnyTypeEnum::ArrayType(array_type) => BasicMetadataTypeEnum::ArrayType(array_type),
@@ -165,7 +186,10 @@ fn any_type_enum_to_basic_metadata_type_enum(ty: AnyTypeEnum) -> BasicMetadataTy
         AnyTypeEnum::PointerType(pointer_type) => BasicMetadataTypeEnum::PointerType(pointer_type),
         AnyTypeEnum::StructType(struct_type) => BasicMetadataTypeEnum::StructType(struct_type),
         AnyTypeEnum::VectorType(vector_type) => BasicMetadataTypeEnum::VectorType(vector_type),
-        AnyTypeEnum::FunctionType(_) | AnyTypeEnum::VoidType(_) => {
+        AnyTypeEnum::FunctionType(fn_type) => {
+            BasicMetadataTypeEnum::PointerType(ptr_type_from_fn_type(fn_type))
+        }
+        AnyTypeEnum::VoidType(_) => {
             unreachable!()
         }
     }
@@ -173,13 +197,14 @@ fn any_type_enum_to_basic_metadata_type_enum(ty: AnyTypeEnum) -> BasicMetadataTy
 
 fn any_type_enum_to_basic_type_enum(ty: AnyTypeEnum) -> BasicTypeEnum {
     match ty {
-        AnyTypeEnum::ArrayType(array_type) => BasicTypeEnum::ArrayType(array_type),
-        AnyTypeEnum::FloatType(float_type) => BasicTypeEnum::FloatType(float_type),
-        AnyTypeEnum::IntType(int_type) => BasicTypeEnum::IntType(int_type),
-        AnyTypeEnum::PointerType(pointer_type) => BasicTypeEnum::PointerType(pointer_type),
-        AnyTypeEnum::StructType(struct_type) => BasicTypeEnum::StructType(struct_type),
-        AnyTypeEnum::VectorType(vector_type) => BasicTypeEnum::VectorType(vector_type),
-        AnyTypeEnum::FunctionType(_) | AnyTypeEnum::VoidType(_) => {
+        AnyTypeEnum::ArrayType(array_type) => array_type.as_basic_type_enum(),
+        AnyTypeEnum::FloatType(float_type) => float_type.as_basic_type_enum(),
+        AnyTypeEnum::IntType(int_type) => int_type.as_basic_type_enum(),
+        AnyTypeEnum::PointerType(pointer_type) => pointer_type.as_basic_type_enum(),
+        AnyTypeEnum::StructType(struct_type) => struct_type.as_basic_type_enum(),
+        AnyTypeEnum::VectorType(vector_type) => vector_type.as_basic_type_enum(),
+        AnyTypeEnum::FunctionType(fn_type) => ptr_type_from_fn_type(fn_type).as_basic_type_enum(),
+        AnyTypeEnum::VoidType(_) => {
             unreachable!()
         }
     }
@@ -208,10 +233,13 @@ fn array_type_from_any_type_enum(ty: AnyTypeEnum, size: u32) -> inkwell::types::
         AnyTypeEnum::FloatType(float_type) => float_type.array_type(size),
         AnyTypeEnum::IntType(int_type) => int_type.array_type(size),
         AnyTypeEnum::StructType(struct_type) => struct_type.array_type(size),
+        AnyTypeEnum::VectorType(vector_type) => vector_type.array_type(size),
         AnyTypeEnum::PointerType(ptr_type) => ptr_type.array_type(size),
-        AnyTypeEnum::FunctionType(function_type) => todo!(),
-        AnyTypeEnum::VectorType(vector_type) => todo!(),
-        AnyTypeEnum::VoidType(void_type) => todo!(),
+        AnyTypeEnum::FunctionType(fn_type) => fn_type
+            .get_context()
+            .ptr_type(AddressSpace::default())
+            .array_type(size),
+        AnyTypeEnum::VoidType(void_type) => unreachable!(),
     }
 }
 
@@ -332,6 +360,10 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         Ref::map(temps, |temps| &temps[llvm_temps_counter])
     }
 
+    fn ptr_type(&self) -> PointerType<'ctx> {
+        self.context.ptr_type(AddressSpace::default())
+    }
+
     fn isize_type(&self) -> IntType<'ctx> {
         self.context
             .ptr_sized_int_type(&self.machine.get_target_data(), None)
@@ -391,38 +423,31 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
 
     fn lower_type(&self, type_key: TypeKey) -> AnyTypeEnum<'ctx> {
         match self.nir.types[type_key] {
-            Type::Unit => AnyTypeEnum::VoidType(self.context.void_type()),
-            Type::I | Type::U => AnyTypeEnum::IntType(self.isize_type()),
-            Type::Bool | Type::I1 | Type::U1 => AnyTypeEnum::IntType(self.context.i8_type()),
-            Type::I2 | Type::U2 => AnyTypeEnum::IntType(self.context.i16_type()),
-            Type::Char | Type::I4 | Type::U4 => AnyTypeEnum::IntType(self.context.i32_type()),
-            Type::I8 | Type::U8 => AnyTypeEnum::IntType(self.context.i64_type()),
-            Type::F4 => AnyTypeEnum::FloatType(self.context.f32_type()),
-            Type::F8 => AnyTypeEnum::FloatType(self.context.f64_type()),
-            Type::Struct(struct_key) => AnyTypeEnum::StructType(self.lower_struct_type(struct_key)),
-            Type::Ptr(_) | Type::MutPtr(_) => {
-                AnyTypeEnum::PointerType(self.context.ptr_type(AddressSpace::default()))
-            }
-            Type::FnPtr(fn_ptr_ty_key) => {
-                AnyTypeEnum::FunctionType(self.lower_fn_ptr_type(fn_ptr_ty_key))
-            }
-            Type::Tuple(tuple_type_key) => {
-                AnyTypeEnum::StructType(self.lower_tuple_type(tuple_type_key))
-            }
-            Type::Array(array_type_key) => {
-                AnyTypeEnum::ArrayType(self.lower_array_type(array_type_key))
-            }
-            Type::Slice(_) | Type::MutSlice(_) => AnyTypeEnum::StructType(
-                self.context.struct_type(
+            Type::Unit => self.context.void_type().as_any_type_enum(),
+            Type::I | Type::U => self.isize_type().as_any_type_enum(),
+            Type::Bool | Type::I1 | Type::U1 => self.context.i8_type().as_any_type_enum(),
+            Type::I2 | Type::U2 => self.context.i16_type().as_any_type_enum(),
+            Type::Char | Type::I4 | Type::U4 => self.context.i32_type().as_any_type_enum(),
+            Type::I8 | Type::U8 => self.context.i64_type().as_any_type_enum(),
+            Type::F4 => self.context.f32_type().as_any_type_enum(),
+            Type::F8 => self.context.f64_type().as_any_type_enum(),
+            Type::Struct(struct_key) => self.lower_struct_type(struct_key).as_any_type_enum(),
+            Type::Ptr(_) | Type::MutPtr(_) => self.ptr_type().as_any_type_enum(),
+            Type::FnPtr(fn_ptr_ty_key) => self.lower_fn_ptr_type(fn_ptr_ty_key).as_any_type_enum(),
+            Type::Tuple(tuple_type_key) => self.lower_tuple_type(tuple_type_key).as_any_type_enum(),
+            Type::Array(array_type_key) => self.lower_array_type(array_type_key).as_any_type_enum(),
+            Type::Slice(_) | Type::MutSlice(_) => self
+                .context
+                .struct_type(
                     &[
-                        self.context.ptr_type(AddressSpace::default()).into(),
+                        self.ptr_type().into(),
                         self.context
                             .ptr_sized_int_type(&self.machine.get_target_data(), None)
                             .into(),
                     ],
                     false,
-                ),
-            ),
+                )
+                .as_any_type_enum(),
             Type::Lambda(lambda_type_key) => todo!(),
         }
     }
@@ -461,7 +486,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                     AnyTypeEnum::StructType(struct_type)
                 } else {
                     params_types = Vec::with_capacity(params_len + 1);
-                    let ptr_ty = self.context.ptr_type(AddressSpace::default());
+                    let ptr_ty = self.ptr_type();
                     params_types.push(BasicMetadataTypeEnum::PointerType(ptr_ty));
                     AnyTypeEnum::VoidType(self.context.void_type())
                 };
@@ -596,9 +621,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             } else {
                 self.fmt_item_name(_fn.info)
             };
-            let AnyTypeEnum::FunctionType(fn_type) = self.lower_type(_fn.fn_ptr_type) else {
-                unreachable!()
-            };
+            let fn_type = self.lower_type(_fn.fn_ptr_type).into_function_type();
             let llvm_fn = self.module.add_function(&name, fn_type, None);
             self.llvm_fns.push(llvm_fn);
         }
@@ -606,15 +629,16 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
 
     fn lower_fns_bodies(&self) {
         for (fn_key, _fn) in self.nir.fns.iter_enumerated() {
+            self.llvm_temps_counter.set(0);
+            self.basic_blocks.borrow_mut().clear();
+            self.temps.borrow_mut().clear();
+            self.locals.borrow_mut().clear();
+
             let cfg = &_fn.cfg;
             let llvm_fn = self.llvm_fns[fn_key];
-            self.llvm_temps_counter.set(0);
             let entry_bb = self.context.append_basic_block(llvm_fn, "entry");
 
-            self.lower_temps(&cfg.temps);
-
             // Append all basic blocks
-            self.basic_blocks.borrow_mut().clear();
             for &bb_key in cfg.basic_blocks.keys() {
                 if bb_key == BasicBlockKey::START_BASIC_BLOCK {
                     self.basic_blocks.borrow_mut().insert(bb_key, entry_bb);
@@ -626,11 +650,12 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                 }
             }
 
+            self.builder.position_at_end(entry_bb);
+            self.lower_locals(&cfg.bindings);
+
             // Lower basic blocks
             for (&bb_key, bb) in &cfg.basic_blocks {
                 if bb_key == BasicBlockKey::START_BASIC_BLOCK {
-                    self.builder.position_at_end(entry_bb);
-                    self.lower_locals(&cfg.bindings);
                     self.lower_block_jmp(bb, cfg);
                     continue;
                 } else if bb_key == BasicBlockKey::END_BASIC_BLOCK {
@@ -638,19 +663,60 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                 }
                 self.builder
                     .position_at_end(self.basic_blocks.borrow()[&bb_key]);
+
+                for stm in &bb.stms {
+                    self.lower_stm(stm, cfg)
+                }
+
+                self.lower_block_jmp(bb, cfg);
             }
         }
     }
 
-    fn lower_temps(&self, temps: &TiSlice<TempKey, Temp>) {
-        self.temps.borrow_mut().clear();
-        for (key, temp) in temps.iter_enumerated() {
-            let typ = self.lower_type(temp.typ);
+    fn lower_stm(&self, stm: &Stm, cfg: &CFG) {
+        match stm {
+            Stm::Assign { lhs, rhs, typ } => self.lower_assign_stm(*lhs, rhs, *typ, cfg),
+            Stm::Phi { lhs, cases, typ } => {
+                let LValueKind::Temp(temp_key) = cfg.lvalues[*lhs].kind else {
+                    unreachable!()
+                };
+                let any_type = self.lower_type(*typ);
+                let basic_type = any_type_enum_to_basic_type_enum(any_type);
+                let phi = self
+                    .builder
+                    .build_phi(basic_type, &format!("tmp{}", temp_key.0))
+                    .unwrap();
+                for (bb_key, op_kind) in cases {
+                    let bb = self.basic_blocks.borrow()[&bb_key];
+                    let op = self.lower_operand_kind(*op_kind, cfg);
+                    let op = any_value_as_basic_value(op).unwrap();
+                    phi.add_incoming(&[(&op, bb)])
+                }
+            }
+            Stm::Return { rvalue, typ } => {
+                // TODO: Aggregate types
+                let rvalue = self.lower_rvalue(rvalue, &self.new_llvm_temp(), cfg);
+                let _ = self
+                    .builder
+                    .build_return(Some(&any_value_as_basic_value(rvalue).unwrap()));
+            }
+            Stm::Drop(lvalue_key) => todo!(),
+        }
+    }
+
+    fn lower_assign_stm(&self, lhs: LValueKey, rhs: &RValue, typ: TypeKey, cfg: &CFG) {
+        if let LValueKind::Temp(temp_key) = cfg.lvalues[lhs].kind {
+            let temp = self.lower_rvalue(rhs, &format!("tmp{}", temp_key.0), cfg);
+            self.temps.borrow_mut().insert(temp_key, temp);
+        } else {
+            let lvalue = self.lower_lvalue_to_ptr(lhs, cfg);
+            let rvalue = self.lower_rvalue(rhs, &self.new_llvm_temp(), cfg);
+            let rvalue = any_value_as_basic_value(rvalue).unwrap();
+            let _ = self.builder.build_store(lvalue, rvalue);
         }
     }
 
     fn lower_locals(&self, bindings: &TiSlice<BindingKey, Binding>) {
-        self.locals.borrow_mut().clear();
         for (key, binding) in bindings.iter_enumerated() {
             let llvm_ty = self.lower_type(binding.typ);
             let name = format!("loc{}", key.0);
@@ -690,9 +756,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                 return;
             }
 
-            let AnyValueEnum::IntValue(condition) = self.lower_operand(&operand, &cfg) else {
-                unreachable!("Bools should be lowered to i8 values")
-            };
+            let condition = self.lower_operand(&operand, &cfg).into_int_value();
 
             let then_bb = self.basic_blocks.borrow()[&branch.to];
             let else_bb = self.basic_blocks.borrow()[&else_branch.to];
@@ -729,11 +793,11 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
     }
 
     #[inline]
-    fn lower_operand(&self, operand: &Operand, cfg: &CFG) -> AnyValueEnum {
+    fn lower_operand(&self, operand: &Operand, cfg: &CFG) -> AnyValueEnum<'ctx> {
         self.lower_operand_kind(operand.kind, cfg)
     }
 
-    fn lower_operand_kind(&self, kind: OperandKind, cfg: &CFG) -> AnyValueEnum {
+    fn lower_operand_kind(&self, kind: OperandKind, cfg: &CFG) -> AnyValueEnum<'ctx> {
         match kind {
             OperandKind::LValue(lvalue_key) => self.lower_lvalue(lvalue_key, cfg),
             OperandKind::Const(Const::Unit) => unreachable!(),
@@ -788,6 +852,184 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         }
     }
 
+    fn lower_rvalue(&self, rvalue: &RValue, name: &str, cfg: &CFG) -> AnyValueEnum<'ctx> {
+        match rvalue {
+            RValue::Use(operand) => self.lower_operand(operand, cfg),
+            RValue::Ref(lvalue_key) | RValue::RefMut(lvalue_key) => self
+                .lower_lvalue_to_ptr(*lvalue_key, cfg)
+                .as_any_value_enum(),
+            RValue::Tuple(thin_vec) => todo!(),
+            RValue::ArrayElements(thin_vec) => todo!(),
+            RValue::ArrayRepeated { repeated, size } => todo!(),
+            RValue::Struct { struct_key, fields } => todo!(),
+            RValue::Cast { val, to } => todo!(),
+            RValue::BinOp { op, lhs, rhs } => self.lower_bin_op_rvalue(*op, lhs, rhs, name, cfg),
+            RValue::UnaryOp { op, operand } => self.lower_unary_op_rvalue(*op, operand, name, cfg),
+            RValue::Call { on, args } => {
+                let llvm_on = self.lower_operand(on, cfg);
+
+                // TODO: Aggregate types
+                todo!()
+
+                //     if let AnyValueEnum::FunctionValue(fn_value) = llvm_on {
+                //         self.builder.build_direct_call(fn_value);
+                //     } else if let AnyValueEnum::PointerValue(fn_ptr_value) = llvm_on {
+                //         let AnyTypeEnum::FunctionType(fn_type) = self.lower_type(on.typ) else {
+                //             unreachable!()
+                //         };
+                //         self.builder.build_indirect_call(fn_type, fn_ptr_value);
+                //     } else {
+                //         unreachable!()
+                //     }
+            }
+        }
+    }
+
+    fn lower_bin_op_rvalue(
+        &self,
+        op: BinOp,
+        lhs: &Operand,
+        rhs: &Operand,
+        name: &str,
+        cfg: &CFG,
+    ) -> AnyValueEnum<'ctx> {
+        let builder = &self.builder;
+
+        let llvm_lhs = self.lower_operand(lhs, cfg);
+
+        if let AnyValueEnum::FloatValue(lhs) = llvm_lhs {
+            let rhs = self.lower_operand(rhs, cfg).into_float_value();
+
+            macro_rules! build_cmp {
+                ($build_op: ident) => {
+                    builder
+                        .build_float_compare(FloatPredicate::$build_op, lhs, rhs, name)
+                        .unwrap()
+                        .as_any_value_enum()
+                };
+            }
+
+            macro_rules! build {
+                ($build_method: ident) => {
+                    builder
+                        .$build_method(lhs, rhs, name)
+                        .unwrap()
+                        .as_any_value_enum()
+                };
+            }
+
+            return match op {
+                BinOp::EqualEqual => build_cmp!(OEQ),
+                BinOp::NotEqual => build_cmp!(ONE),
+                BinOp::GE => build_cmp!(OGE),
+                BinOp::GT => build_cmp!(OGT),
+                BinOp::LE => build_cmp!(OLE),
+                BinOp::LT => build_cmp!(OLT),
+                BinOp::Plus => build!(build_float_add),
+                BinOp::Minus => build!(build_float_sub),
+                BinOp::Times => build!(build_float_mul),
+                BinOp::Div => build!(build_float_div),
+                BinOp::Mod => build!(build_float_rem),
+                _ => unreachable!(),
+            };
+        }
+
+        let is_unsigned = matches!(
+            self.nir.types[lhs.typ],
+            Type::U | Type::U1 | Type::U2 | Type::U4 | Type::U8
+        );
+
+        let lhs = llvm_lhs.into_int_value();
+        let rhs = self.lower_operand(rhs, cfg).into_int_value();
+
+        macro_rules! build_cmp {
+            ($build_op: ident) => {
+                builder
+                    .build_int_compare(IntPredicate::$build_op, lhs, rhs, name)
+                    .unwrap()
+                    .as_any_value_enum()
+            };
+        }
+
+        macro_rules! build {
+            ($build_method: ident) => {
+                builder
+                    .$build_method(lhs, rhs, name)
+                    .unwrap()
+                    .as_any_value_enum()
+            };
+        }
+
+        match op {
+            BinOp::EqualEqual => build_cmp!(EQ),
+            BinOp::NotEqual => build_cmp!(NE),
+            BinOp::GE if is_unsigned => build_cmp!(UGE),
+            BinOp::GT if is_unsigned => build_cmp!(UGT),
+            BinOp::LE if is_unsigned => build_cmp!(ULE),
+            BinOp::LT if is_unsigned => build_cmp!(ULT),
+            BinOp::GE => build_cmp!(SGE),
+            BinOp::GT => build_cmp!(SGT),
+            BinOp::LE => build_cmp!(SLE),
+            BinOp::LT => build_cmp!(SLT),
+            BinOp::Shr => builder
+                .build_right_shift(lhs, rhs, false, name)
+                .unwrap()
+                .as_any_value_enum(),
+            BinOp::Shl => build!(build_left_shift),
+            BinOp::BOr => build!(build_or),
+            BinOp::Xor => build!(build_xor),
+            BinOp::BAnd => build!(build_and),
+            BinOp::Plus => build!(build_int_add),
+            BinOp::Minus => build!(build_int_sub),
+            BinOp::Times => build!(build_int_mul),
+            BinOp::Div if is_unsigned => build!(build_int_unsigned_div),
+            BinOp::Mod if is_unsigned => build!(build_int_unsigned_rem),
+            BinOp::Div => build!(build_int_signed_div),
+            BinOp::Mod => build!(build_int_signed_rem),
+        }
+    }
+
+    fn lower_unary_op_rvalue(
+        &self,
+        op: UnaryOp,
+        operand: &Operand,
+        name: &str,
+        cfg: &CFG,
+    ) -> AnyValueEnum<'ctx> {
+        match op {
+            UnaryOp::LNot => {
+                let lhs = self.lower_operand(operand, cfg).into_int_value();
+                let rhs = lhs.get_type().const_int(1, false);
+                self.builder
+                    .build_xor(lhs, rhs, name)
+                    .unwrap()
+                    .as_any_value_enum()
+            }
+            UnaryOp::BNot => {
+                let operand = self.lower_operand(operand, cfg).into_int_value();
+                self.builder
+                    .build_not(operand, name)
+                    .unwrap()
+                    .as_any_value_enum()
+            }
+            UnaryOp::Minus => {
+                if let AnyValueEnum::FloatValue(operand) = self.lower_operand(operand, cfg) {
+                    self.builder
+                        .build_float_neg(operand, name)
+                        .unwrap()
+                        .as_any_value_enum()
+                } else if let AnyValueEnum::IntValue(operand) = self.lower_operand(operand, cfg) {
+                    self.builder
+                        .build_int_neg(operand, name)
+                        .unwrap()
+                        .as_any_value_enum()
+                } else {
+                    unreachable!()
+                }
+            }
+        }
+    }
+
     fn lower_lvalue(&self, lvalue_key: LValueKey, cfg: &CFG) -> AnyValueEnum<'ctx> {
         let type_key = cfg.lvalues[lvalue_key].typ;
         if let LValueKind::Arg(arg_key) = cfg.lvalues[lvalue_key].kind {
@@ -807,20 +1049,14 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             LValueKind::Arg(arg_key) => todo!(),
             LValueKind::Deref(lvalue_key) | LValueKind::MutDeref(lvalue_key) => {
                 // For dereference, we already have the pointer, just use it
-                let AnyValueEnum::PointerValue(llvm_ptr) = self.lower_lvalue(lvalue_key, cfg)
-                else {
-                    unreachable!()
-                };
-                llvm_ptr
+                self.lower_lvalue(lvalue_key, cfg).into_pointer_value()
             }
             LValueKind::Field { on, field_id } | LValueKind::MutField { on, field_id } => {
                 todo!()
             }
             LValueKind::TupleIdx { on, idx } | LValueKind::MutTupleIdx { on, idx } => {
                 let type_key = cfg.lvalues[lvalue_key].typ;
-                let AnyTypeEnum::StructType(pointee_ty) = self.lower_type(type_key) else {
-                    unreachable!()
-                };
+                let pointee_ty = self.lower_type(type_key).into_struct_type();
                 let pointee_name = self.new_llvm_temp();
                 let llvm_on_ptr = self.lower_lvalue_to_ptr(on, cfg);
                 let llvm_ptr = self

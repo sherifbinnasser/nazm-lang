@@ -345,7 +345,7 @@ impl PartialEq for Const {
 
 impl Eq for Const {}
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum BinOp {
     EqualEqual,
     NotEqual,
@@ -365,7 +365,7 @@ pub enum BinOp {
     Mod,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum UnaryOp {
     LNot,
     BNot,
