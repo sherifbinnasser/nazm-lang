@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use iter_tools::Itertools;
 use nazmc_ast::{ASTId, BinaryOpExpr, ExprKey, IfExpr, LetStmKey, ScopeKey};
 use nazmc_data_pool::{typed_index_collections::TiVec, DataPoolBuilder, IdKey};
 use nazmc_nir::{
@@ -679,16 +680,27 @@ impl<'a> SemanticsAnalyzer<'a> {
                 self.add_new_temp_assign_stm(typ, rvalue)
             }
             nazmc_ast::ExprKind::FieldsStruct(fields_struct_expr) => {
-                let fields = fields_struct_expr
-                    .fields
-                    .iter()
-                    .map(|(id, expr_key)| (id.id, self.lower_expr(*expr_key)))
-                    .collect();
-
                 let struct_key =
                     self.ast.state.field_structs_paths_exprs[fields_struct_expr.path_key];
 
                 let struct_key = StructKey::from(usize::from(struct_key));
+
+                let fields = fields_struct_expr
+                    .fields
+                    .iter()
+                    .map(|(id, expr_key)| {
+                        (
+                            // REVIEW: Should we cache the fields indecies
+                            self.nir_builder.nir.structs[struct_key]
+                                .fields
+                                .iter()
+                                .find_position(|f| f.id == id.id)
+                                .unwrap()
+                                .0 as u32,
+                            self.lower_expr(*expr_key),
+                        )
+                    })
+                    .collect();
 
                 let rvalue = RValue::Struct { struct_key, fields };
 
@@ -732,22 +744,34 @@ impl<'a> SemanticsAnalyzer<'a> {
             }
             nazmc_ast::ExprKind::Field(field_expr) => {
                 let Operand {
-                    typ: _,
+                    typ,
                     kind: OperandKind::LValue(lvalue_key),
                 } = self.lower_expr(field_expr.on)
                 else {
                     unreachable!()
                 };
 
+                let Type::Struct(struct_key) = self.nir_builder.nir.types[typ] else {
+                    unreachable!()
+                };
+
+                // REVIEW: Should we cache fields indecies
+                let idx = self.nir_builder.nir.structs[struct_key]
+                    .fields
+                    .iter()
+                    .find_position(|f| f.id == field_expr.name.id)
+                    .unwrap()
+                    .0 as u32;
+
                 let lvalue = if self.is_mut_lvalue(lvalue_key) {
                     LValueKind::MutField {
                         on: lvalue_key,
-                        field_id: field_expr.name.id,
+                        idx,
                     }
                 } else {
                     LValueKind::Field {
                         on: lvalue_key,
-                        field_id: field_expr.name.id,
+                        idx,
                     }
                 };
 

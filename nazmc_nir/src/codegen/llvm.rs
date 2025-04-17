@@ -516,10 +516,10 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
 
         let _struct = &self.nir.structs[struct_key];
         let field_types = _struct
-            .fields_order
+            .fields
             .iter()
-            .map(|field_id| {
-                let any_ty_enum = self.lower_type(_struct.fields_types[field_id]);
+            .map(|field| {
+                let any_ty_enum = self.lower_type(field.typ);
                 any_type_enum_to_basic_type_enum(any_ty_enum)
             })
             .collect::<Vec<_>>();
@@ -1051,10 +1051,10 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                 // For dereference, we already have the pointer, just use it
                 self.lower_lvalue(lvalue_key, cfg).into_pointer_value()
             }
-            LValueKind::Field { on, field_id } | LValueKind::MutField { on, field_id } => {
-                todo!()
-            }
-            LValueKind::TupleIdx { on, idx } | LValueKind::MutTupleIdx { on, idx } => {
+            LValueKind::Field { on, idx }
+            | LValueKind::MutField { on, idx }
+            | LValueKind::TupleIdx { on, idx }
+            | LValueKind::MutTupleIdx { on, idx } => {
                 let type_key = cfg.lvalues[lvalue_key].typ;
                 let pointee_ty = self.lower_type(type_key).into_struct_type();
                 let pointee_name = self.new_llvm_temp();

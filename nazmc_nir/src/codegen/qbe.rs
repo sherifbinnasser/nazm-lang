@@ -129,19 +129,18 @@ impl<'a> QbeCodegen<'a> {
                 Type::Struct(struct_key) => {
                     let _struct = std::mem::take(&mut self.nir.structs[struct_key]);
                     let mut offset = 0;
-                    let mut fields_offsets = HashMap::with_capacity(_struct.fields_types.len());
-                    let mut items = Vec::with_capacity(_struct.fields_types.len());
+                    let mut fields_offsets = HashMap::with_capacity(_struct.fields.len());
+                    let mut items = Vec::with_capacity(_struct.fields.len());
 
-                    for field_id in _struct.fields_order.iter() {
-                        let field_type_key = _struct.fields_types[field_id];
-                        let qbe_field_type = self.lower_type(field_type_key);
+                    for field in _struct.fields.iter() {
+                        let qbe_field_type = self.lower_type(field.typ);
 
                         // Align offset to the field's alignment
                         let alignment: u32 = qbe_field_type.align() as u32;
                         offset = (offset + alignment - 1) & !(alignment - 1); // Round up to alignment
 
                         // Store the offset for this field
-                        fields_offsets.insert(*field_id, offset);
+                        fields_offsets.insert(field.id, offset);
 
                         // Add to QBE type definition (repetition count is 0 for single fields)
                         items.push((qbe_field_type.clone(), 0));
@@ -454,7 +453,7 @@ impl<'a> QbeCodegen<'a> {
                 let qbe_ptr = self.lower_lvalue(lvalue_key, cfg, qbe_bb);
                 qbe_bb.add_instr(qbe::Instr::Store(qbe_typ, qbe_ptr, qbe_temp));
             }
-            LValueKind::MutField { on, field_id } => todo!(),
+            LValueKind::MutField { on, idx: field_id } => todo!(),
             LValueKind::MutTupleIdx { on, idx } => todo!(),
             LValueKind::MutArrayIdx { on, idx } => todo!(),
             LValueKind::MutArrayConstIdx { on, idx } => todo!(),
@@ -584,11 +583,11 @@ impl<'a> QbeCodegen<'a> {
                 // For dereference, we already have the pointer, just use it
                 self.lower_lvalue(lvalue_key, cfg, qbe_bb)
             }
-            LValueKind::Field { on, field_id } => todo!(),
+            LValueKind::Field { on, idx: field_id } => todo!(),
             LValueKind::TupleIdx { on, idx } => todo!(),
             LValueKind::ArrayIdx { on, idx } => todo!(),
             LValueKind::ArrayConstIdx { on, idx } => todo!(),
-            LValueKind::MutField { on, field_id } => todo!(),
+            LValueKind::MutField { on, idx: field_id } => todo!(),
             LValueKind::MutTupleIdx { on, idx } => todo!(),
             LValueKind::MutArrayIdx { on, idx } => todo!(),
             LValueKind::MutArrayConstIdx { on, idx } => todo!(),
@@ -650,11 +649,11 @@ impl<'a> QbeCodegen<'a> {
                 let qbe_ptr = self.lower_lvalue(lvalue_key, cfg, qbe_bb);
                 self.add_load_instr(type_key, qbe_ptr, qbe_bb)
             }
-            LValueKind::Field { on, field_id } => todo!(),
+            LValueKind::Field { on, idx: field_id } => todo!(),
             LValueKind::TupleIdx { on, idx } => todo!(),
             LValueKind::ArrayIdx { on, idx } => todo!(),
             LValueKind::ArrayConstIdx { on, idx } => todo!(),
-            LValueKind::MutField { on, field_id } => todo!(),
+            LValueKind::MutField { on, idx: field_id } => todo!(),
             LValueKind::MutTupleIdx { on, idx } => todo!(),
             LValueKind::MutArrayIdx { on, idx } => todo!(),
             LValueKind::MutArrayConstIdx { on, idx } => todo!(),

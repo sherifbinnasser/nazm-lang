@@ -96,10 +96,7 @@ impl<'a> NIRAbiTransformer<'a> {
             return;
         }
         let _struct = std::mem::take(&mut self.nir.structs[struct_key]);
-        let field_types = _struct
-            .fields_order
-            .iter()
-            .map(|&field_id| _struct.fields_types[&field_id]);
+        let field_types = _struct.fields.iter().map(|field| field.typ);
         let layout = self.calculate_layout_from_types(field_types);
         self.nir.structs[struct_key] = _struct;
         self.structs_layouts.insert(struct_key, layout);

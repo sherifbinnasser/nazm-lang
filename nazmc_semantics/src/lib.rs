@@ -19,7 +19,7 @@ use nazmc_diagnostics::{
     span::{Span, SpanCursor},
     CodeWindow, Diagnostic,
 };
-use nazmc_nir::{Arg, Struct, CFG, NIR};
+use nazmc_nir::{Arg, Field, Struct, CFG, NIR};
 use nir_builder::{CFGBuilder, NIRBuilder};
 use std::{collections::HashMap, process::exit};
 use thin_vec::ThinVec;
@@ -165,26 +165,20 @@ impl<'a> SemanticsAnalyzer<'a> {
             .fields_structs
             .iter_enumerated()
             .for_each(|(struct_key, _struct)| {
-                let fields_types = self.typed_ast.fields_structs[&struct_key]
+                let fields = self.typed_ast.fields_structs[&struct_key]
                     .fields
                     .iter()
-                    .map(|(field_id, field_info)| {
+                    .map(|(&id, field_info)| {
                         let Type::Concrete(field_typ) = &field_info.typ else {
                             unreachable!()
                         };
-                        let field_typ = self.nir_builder.get_unique_type(field_typ);
-                        (*field_id, field_typ)
+                        let typ = self.nir_builder.get_unique_type(field_typ);
+                        Field { id, typ }
                     })
-                    .collect();
-                let fields_order = _struct
-                    .fields
-                    .iter()
-                    .map(|field_info| field_info.id.id)
                     .collect();
                 self.nir_builder.nir.structs.push(Struct {
                     info: _struct.info,
-                    fields_types,
-                    fields_order,
+                    fields,
                 });
             });
 

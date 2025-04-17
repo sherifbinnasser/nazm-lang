@@ -47,8 +47,12 @@ pub struct NIR<'a> {
 #[derive(Default)]
 pub struct Struct {
     pub info: ItemInfo,
-    pub fields_types: HashMap<IdKey, TypeKey>,
-    pub fields_order: ThinVec<IdKey>,
+    pub fields: ThinVec<Field>,
+}
+
+pub struct Field {
+    pub id: IdKey,
+    pub typ: TypeKey,
 }
 
 pub struct Static {
@@ -223,7 +227,7 @@ pub enum LValueKind {
     Deref(LValueKey),
     Field {
         on: LValueKey,
-        field_id: IdKey,
+        idx: u32,
     },
     TupleIdx {
         on: LValueKey,
@@ -242,7 +246,7 @@ pub enum LValueKind {
     /// Comes from a mutable lvalue
     MutField {
         on: LValueKey,
-        field_id: IdKey,
+        idx: u32,
     },
     /// Comes from a mutable lvalue
     MutTupleIdx {
@@ -274,7 +278,7 @@ pub enum RValue {
     },
     Struct {
         struct_key: StructKey,
-        fields: ThinVec<(IdKey, Operand)>,
+        fields: ThinVec<(u32, Operand)>,
     },
     Cast {
         val: Operand,
