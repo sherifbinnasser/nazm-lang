@@ -4,6 +4,7 @@ use std::{
 };
 
 use inkwell::{
+    attributes::{Attribute, AttributeLoc},
     basic_block::BasicBlock,
     builder::Builder,
     context::Context,
@@ -36,12 +37,17 @@ pub struct LLVMCodeGen<'ctx, 'nir> {
     llvm_statics: TiVec<StaticKey, PointerValue<'ctx>>,
     llvm_temps_counter: Cell<usize>,
     llvm_temps: RefCell<Vec<String>>,
-    fn_ptr_types: RefCell<HashMap<FnPtrTypeKey, FunctionType<'ctx>>>,
+    fn_ptr_types: RefCell<HashMap<FnPtrTypeKey, FnPtrLayout<'ctx>>>,
     structs_layouts: RefCell<HashMap<StructKey, TypeLayout<'ctx>>>,
     tuples_layouts: RefCell<HashMap<TupleTypeKey, TypeLayout<'ctx>>>,
     basic_blocks: RefCell<HashMap<BasicBlockKey, BasicBlock<'ctx>>>,
     locals: RefCell<HashMap<BindingKey, PointerValue<'ctx>>>,
     temps: RefCell<HashMap<TempKey, AnyValueEnum<'ctx>>>,
+}
+
+struct FnPtrLayout<'ctx> {
+    fn_type: FunctionType<'ctx>,
+    attributes: Vec<(AttributeLoc, Attribute)>,
 }
 
 struct TypeLayout<'ctx> {
@@ -221,8 +227,10 @@ fn fn_type_from_any_type_enum<'a>(
         AnyTypeEnum::VoidType(void_type) => void_type.fn_type(param_types, is_var_args),
         AnyTypeEnum::ArrayType(array_type) => array_type.fn_type(param_types, is_var_args),
         AnyTypeEnum::PointerType(ptr_type) => ptr_type.fn_type(param_types, is_var_args),
-        AnyTypeEnum::FunctionType(function_type) => todo!(),
-        AnyTypeEnum::StructType(struct_type) => todo!(),
+        AnyTypeEnum::FunctionType(fn_type) => {
+            ptr_type_from_fn_type(fn_type).fn_type(param_types, is_var_args)
+        }
+        AnyTypeEnum::StructType(struct_type) => struct_type.fn_type(param_types, is_var_args),
         AnyTypeEnum::VectorType(vector_type) => todo!(),
     }
 }
@@ -452,61 +460,107 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         }
     }
 
+    fn is_agg_type(&self, type_key: TypeKey) -> bool {
+        matches!(
+            self.nir.types[type_key],
+            Type::Struct(_)
+                | Type::Slice(_)
+                | Type::MutSlice(_)
+                | Type::Array(_)
+                | Type::Tuple(_)
+                | Type::Lambda(_)
+        )
+    }
+
+    fn is_sret_or_byval_type(&self, type_key: TypeKey) -> bool {
+        self.is_agg_type(type_key) && self.get_type_size(type_key) > 16
+    }
+
+    fn lower_param_type(&self, type_key: TypeKey) -> AnyTypeEnum<'ctx> {
+        let typ = self.lower_type(type_key);
+        let size = self.get_type_size(type_key);
+        if !self.is_agg_type(type_key) {
+            typ
+        } else if size <= 8 {
+            AnyTypeEnum::IntType(self.context.custom_width_int_type(size * 8))
+        } else if size <= 16 {
+            let align = self.get_type_align(type_key);
+            let (class1, class2) = flatten_type(
+                &self.machine.get_target_data(),
+                any_type_enum_to_basic_type_enum(typ),
+                align,
+            );
+            let (class1, class2) = (
+                class1.to_llvm_type(&self.context),
+                class2.to_llvm_type(&self.context),
+            );
+            let struct_type = self
+                .context
+                .struct_type(&[class1.into(), class2.into()], false);
+            AnyTypeEnum::StructType(struct_type)
+        } else {
+            AnyTypeEnum::PointerType(self.ptr_type())
+        }
+    }
+
     fn lower_fn_ptr_type(&self, fn_ptr_ty_key: FnPtrTypeKey) -> FunctionType<'ctx> {
         if let Some(fn_ty) = self.fn_ptr_types.borrow().get(&fn_ptr_ty_key) {
-            return *fn_ty;
+            return fn_ty.fn_type;
         }
 
         let params_len = self.nir.fn_ptr_types[fn_ptr_ty_key].params_types.len();
         let return_type = self.nir.fn_ptr_types[fn_ptr_ty_key].return_type;
-        let mut llvm_return_ty = self.lower_type(return_type);
+        let mut llvm_return_ty = self.lower_param_type(return_type);
 
-        let mut params_types = Vec::new();
+        let mut params_types;
+        let mut attributes = Vec::new();
 
-        match self.nir.types[return_type] {
-            Type::Struct(struct_key) => {
-                let size = self.structs_layouts.borrow()[&struct_key].size;
-
-                llvm_return_ty = if size <= 8 {
-                    AnyTypeEnum::IntType(self.context.custom_width_int_type(size * 8))
-                } else if size <= 16 {
-                    let align = self.structs_layouts.borrow()[&struct_key].align;
-                    let (class1, class2) = flatten_type(
-                        &self.machine.get_target_data(),
-                        any_type_enum_to_basic_type_enum(llvm_return_ty),
-                        align,
-                    );
-                    let (class1, class2) = (
-                        class1.to_llvm_type(&self.context),
-                        class2.to_llvm_type(&self.context),
-                    );
-                    let struct_type = self
-                        .context
-                        .struct_type(&[class1.into(), class2.into()], false);
-                    AnyTypeEnum::StructType(struct_type)
-                } else {
-                    params_types = Vec::with_capacity(params_len + 1);
-                    let ptr_ty = self.ptr_type();
-                    params_types.push(BasicMetadataTypeEnum::PointerType(ptr_ty));
-                    AnyTypeEnum::VoidType(self.context.void_type())
-                };
-            }
-            Type::Slice(type_key) => todo!(),
-            Type::MutSlice(type_key) => todo!(),
-            Type::Array(array_type_key) => todo!(),
-            Type::Tuple(tuple_type_key) => todo!(),
-            Type::Lambda(lambda_type_key) => todo!(),
-            _ => {
-                params_types = Vec::with_capacity(params_len);
-            }
+        if self.is_sret_or_byval_type(return_type) {
+            params_types = Vec::with_capacity(params_len + 1);
+            params_types.push(any_type_enum_to_basic_metadata_type_enum(llvm_return_ty));
+            llvm_return_ty = AnyTypeEnum::VoidType(self.context.void_type());
+            let noalias_id = Attribute::get_named_enum_kind_id("noalias");
+            let sret_id = Attribute::get_named_enum_kind_id("sret");
+            let noalias = self.context.create_enum_attribute(noalias_id, 0);
+            let sret = self
+                .context
+                .create_type_attribute(sret_id, self.lower_type(return_type));
+            attributes.push((AttributeLoc::Param(0), noalias));
+            attributes.push((AttributeLoc::Param(0), sret));
+        } else {
+            params_types = Vec::with_capacity(params_len);
         }
 
         for &ty in &self.nir.fn_ptr_types[fn_ptr_ty_key].params_types {
-            let ty = any_type_enum_to_basic_metadata_type_enum(self.lower_type(ty));
-            params_types.push(ty);
+            if self.is_sret_or_byval_type(ty) {
+                let kind_id = Attribute::get_named_enum_kind_id("byval");
+                let byval = self
+                    .context
+                    .create_type_attribute(kind_id, self.lower_type(ty));
+                attributes.push((AttributeLoc::Param(params_types.len() as u32), byval));
+
+                let noundef_id = Attribute::get_named_enum_kind_id("noundef");
+                let byval = self.context.create_enum_attribute(noundef_id, 0);
+                attributes.push((AttributeLoc::Param(params_types.len() as u32), byval));
+            } else if !self.is_agg_type(ty) {
+                let noundef_id = Attribute::get_named_enum_kind_id("noundef");
+                let byval = self.context.create_enum_attribute(noundef_id, 0);
+                attributes.push((AttributeLoc::Param(params_types.len() as u32), byval));
+            }
+
+            let llvm_ty = any_type_enum_to_basic_metadata_type_enum(self.lower_param_type(ty));
+            params_types.push(llvm_ty);
         }
 
-        fn_type_from_any_type_enum(llvm_return_ty, &params_types, false)
+        let fn_type = fn_type_from_any_type_enum(llvm_return_ty, &params_types, false);
+        self.fn_ptr_types.borrow_mut().insert(
+            fn_ptr_ty_key,
+            FnPtrLayout {
+                fn_type,
+                attributes,
+            },
+        );
+        fn_type
     }
 
     fn lower_struct_type(&self, struct_key: StructKey) -> StructType<'ctx> {
@@ -523,6 +577,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                 any_type_enum_to_basic_type_enum(any_ty_enum)
             })
             .collect::<Vec<_>>();
+
         let name = self.fmt_item_name(_struct.info);
         let struct_ty = self.context.opaque_struct_type(&name);
         struct_ty.set_body(&field_types, false);
@@ -621,8 +676,15 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             } else {
                 self.fmt_item_name(_fn.info)
             };
-            let fn_type = self.lower_type(_fn.fn_ptr_type).into_function_type();
+
+            let Type::FnPtr(fn_ptr_type) = self.nir.types[_fn.fn_ptr_type] else {
+                unreachable!()
+            };
+            let fn_type = self.lower_fn_ptr_type(fn_ptr_type);
             let llvm_fn = self.module.add_function(&name, fn_type, None);
+            for &(attr_loc, attr_kind) in &self.fn_ptr_types.borrow()[&fn_ptr_type].attributes {
+                llvm_fn.add_attribute(attr_loc, attr_kind);
+            }
             self.llvm_fns.push(llvm_fn);
         }
     }
@@ -861,7 +923,11 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             RValue::Tuple(thin_vec) => todo!(),
             RValue::ArrayElements(thin_vec) => todo!(),
             RValue::ArrayRepeated { repeated, size } => todo!(),
-            RValue::Struct { struct_key, fields } => todo!(),
+            RValue::Struct { struct_key, fields } => self
+                .context
+                .i8_type()
+                .const_int(4, false)
+                .as_any_value_enum(),
             RValue::Cast { val, to } => todo!(),
             RValue::BinOp { op, lhs, rhs } => self.lower_bin_op_rvalue(*op, lhs, rhs, name, cfg),
             RValue::UnaryOp { op, operand } => self.lower_unary_op_rvalue(*op, operand, name, cfg),

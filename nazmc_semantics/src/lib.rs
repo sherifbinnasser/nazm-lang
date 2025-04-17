@@ -165,10 +165,12 @@ impl<'a> SemanticsAnalyzer<'a> {
             .fields_structs
             .iter_enumerated()
             .for_each(|(struct_key, _struct)| {
-                let fields = self.typed_ast.fields_structs[&struct_key]
+                let fields = self.ast.fields_structs[struct_key]
                     .fields
                     .iter()
-                    .map(|(&id, field_info)| {
+                    .map(|(field_info)| {
+                        let id = field_info.id.id;
+                        let field_info = &self.typed_ast.fields_structs[&struct_key].fields[&id];
                         let Type::Concrete(field_typ) = &field_info.typ else {
                             unreachable!()
                         };
