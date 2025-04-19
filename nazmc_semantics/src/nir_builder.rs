@@ -744,14 +744,14 @@ impl<'a> SemanticsAnalyzer<'a> {
             }
             nazmc_ast::ExprKind::Field(field_expr) => {
                 let Operand {
-                    typ,
+                    typ: on_typ,
                     kind: OperandKind::LValue(lvalue_key),
                 } = self.lower_expr(field_expr.on)
                 else {
                     unreachable!()
                 };
 
-                let Type::Struct(struct_key) = self.nir_builder.nir.types[typ] else {
+                let Type::Struct(struct_key) = self.nir_builder.nir.types[on_typ] else {
                     unreachable!()
                 };
 

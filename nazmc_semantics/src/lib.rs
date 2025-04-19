@@ -239,8 +239,6 @@ impl<'a> SemanticsAnalyzer<'a> {
                 })
             }
 
-            self.lower_fn_scope(_fn.scope_key);
-
             self.nir_builder.nir.fns.push(nazmc_nir::Fn {
                 info: _fn.info,
                 args,
@@ -248,6 +246,8 @@ impl<'a> SemanticsAnalyzer<'a> {
                 return_type,
                 cfg: CFG::default(),
             });
+
+            self.lower_fn_scope(_fn.scope_key);
 
             let cfg = self.cfg_builder.build();
             self.nir_builder.nir.fns.last_mut().unwrap().cfg = cfg;

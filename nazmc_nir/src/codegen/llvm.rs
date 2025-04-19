@@ -1,5 +1,5 @@
 use std::{
-    cell::{Cell, Ref, RefCell},
+    cell::{Cell, RefCell},
     cmp::max,
 };
 
@@ -36,18 +36,31 @@ pub struct LLVMCodeGen<'ctx, 'nir> {
     llvm_str_pool: TiVec<StrKey, PointerValue<'ctx>>,
     llvm_statics: TiVec<StaticKey, PointerValue<'ctx>>,
     llvm_temps_counter: Cell<usize>,
+    ret_ptr: Cell<Option<PointerValue<'ctx>>>,
     llvm_temps: RefCell<Vec<String>>,
     fn_ptr_types: RefCell<HashMap<FnPtrTypeKey, FnPtrLayout<'ctx>>>,
     structs_layouts: RefCell<HashMap<StructKey, TypeLayout<'ctx>>>,
     tuples_layouts: RefCell<HashMap<TupleTypeKey, TypeLayout<'ctx>>>,
     basic_blocks: RefCell<HashMap<BasicBlockKey, BasicBlock<'ctx>>>,
+    args: RefCell<HashMap<ArgKey, PointerValue<'ctx>>>,
     locals: RefCell<HashMap<BindingKey, PointerValue<'ctx>>>,
     temps: RefCell<HashMap<TempKey, AnyValueEnum<'ctx>>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ArgLayout {
+    RetPtr,
+    ByvalPtr,
+    IntStruct,
+    BinaryStruct,
+    Regular,
+    Skipped,
 }
 
 struct FnPtrLayout<'ctx> {
     fn_type: FunctionType<'ctx>,
     attributes: Vec<(AttributeLoc, Attribute)>,
+    args_layout: Vec<ArgLayout>,
 }
 
 struct TypeLayout<'ctx> {
@@ -291,6 +304,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
 
         let module = context.create_module(name);
         module.set_triple(&triple);
+        module.set_data_layout(&machine.get_target_data().get_data_layout());
 
         let builder = context.create_builder();
 
@@ -303,11 +317,13 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             llvm_str_pool: TiVec::with_capacity(nir.str_pool.len()),
             llvm_statics: TiVec::with_capacity(nir.statics.len()),
             llvm_temps_counter: Cell::new(0),
+            ret_ptr: Default::default(),
             llvm_temps: RefCell::new(Vec::new()),
             fn_ptr_types: RefCell::new(HashMap::with_capacity(nir.fn_ptr_types.len())),
             structs_layouts: RefCell::new(HashMap::with_capacity(nir.structs.len())),
             tuples_layouts: RefCell::new(HashMap::with_capacity(nir.tuple_types.len())),
             basic_blocks: Default::default(),
+            args: Default::default(),
             locals: Default::default(),
             temps: Default::default(),
             nir,
@@ -356,7 +372,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         }
     }
 
-    fn new_llvm_temp(&self) -> Ref<String> {
+    fn new_llvm_temp(&self) -> String {
         let llvm_temps_counter = self.llvm_temps_counter.get();
         if llvm_temps_counter == self.llvm_temps.borrow().len() {
             self.llvm_temps
@@ -365,7 +381,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         }
         self.llvm_temps_counter.set(llvm_temps_counter + 1);
         let temps = self.llvm_temps.borrow();
-        Ref::map(temps, |temps| &temps[llvm_temps_counter])
+        temps[llvm_temps_counter].clone()
     }
 
     fn ptr_type(&self) -> PointerType<'ctx> {
@@ -476,13 +492,21 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         self.is_agg_type(type_key) && self.get_type_size(type_key) > 16
     }
 
-    fn lower_param_type(&self, type_key: TypeKey) -> AnyTypeEnum<'ctx> {
+    fn lower_param_type(&self, type_key: TypeKey) -> (AnyTypeEnum<'ctx>, ArgLayout) {
         let typ = self.lower_type(type_key);
         let size = self.get_type_size(type_key);
         if !self.is_agg_type(type_key) {
-            typ
+            (typ, ArgLayout::Regular)
+        } else if size == 0 {
+            (
+                self.context.void_type().as_any_type_enum(),
+                ArgLayout::Skipped,
+            )
         } else if size <= 8 {
-            AnyTypeEnum::IntType(self.context.custom_width_int_type(size * 8))
+            (
+                AnyTypeEnum::IntType(self.context.custom_width_int_type(size * 8)),
+                ArgLayout::IntStruct,
+            )
         } else if size <= 16 {
             let align = self.get_type_align(type_key);
             let (class1, class2) = flatten_type(
@@ -497,9 +521,15 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             let struct_type = self
                 .context
                 .struct_type(&[class1.into(), class2.into()], false);
-            AnyTypeEnum::StructType(struct_type)
+            (
+                AnyTypeEnum::StructType(struct_type),
+                ArgLayout::BinaryStruct,
+            )
         } else {
-            AnyTypeEnum::PointerType(self.ptr_type())
+            (
+                AnyTypeEnum::PointerType(self.ptr_type()),
+                ArgLayout::ByvalPtr,
+            )
         }
     }
 
@@ -510,14 +540,17 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
 
         let params_len = self.nir.fn_ptr_types[fn_ptr_ty_key].params_types.len();
         let return_type = self.nir.fn_ptr_types[fn_ptr_ty_key].return_type;
-        let mut llvm_return_ty = self.lower_param_type(return_type);
+        let (mut llvm_return_ty, return_arg_layout) = self.lower_param_type(return_type);
 
         let mut params_types;
+        let mut args_layout;
         let mut attributes = Vec::new();
 
-        if self.is_sret_or_byval_type(return_type) {
+        if let ArgLayout::ByvalPtr = return_arg_layout {
             params_types = Vec::with_capacity(params_len + 1);
+            args_layout = Vec::with_capacity(params_len + 1);
             params_types.push(any_type_enum_to_basic_metadata_type_enum(llvm_return_ty));
+            args_layout.push(ArgLayout::RetPtr);
             llvm_return_ty = AnyTypeEnum::VoidType(self.context.void_type());
             let noalias_id = Attribute::get_named_enum_kind_id("noalias");
             let sret_id = Attribute::get_named_enum_kind_id("sret");
@@ -529,26 +562,40 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             attributes.push((AttributeLoc::Param(0), sret));
         } else {
             params_types = Vec::with_capacity(params_len);
+            args_layout = Vec::with_capacity(params_len);
         }
 
         for &ty in &self.nir.fn_ptr_types[fn_ptr_ty_key].params_types {
-            if self.is_sret_or_byval_type(ty) {
-                let kind_id = Attribute::get_named_enum_kind_id("byval");
-                let byval = self
-                    .context
-                    .create_type_attribute(kind_id, self.lower_type(ty));
-                attributes.push((AttributeLoc::Param(params_types.len() as u32), byval));
+            let (llvm_ty, arg_layout) = self.lower_param_type(ty);
 
-                let noundef_id = Attribute::get_named_enum_kind_id("noundef");
-                let byval = self.context.create_enum_attribute(noundef_id, 0);
-                attributes.push((AttributeLoc::Param(params_types.len() as u32), byval));
-            } else if !self.is_agg_type(ty) {
-                let noundef_id = Attribute::get_named_enum_kind_id("noundef");
-                let byval = self.context.create_enum_attribute(noundef_id, 0);
-                attributes.push((AttributeLoc::Param(params_types.len() as u32), byval));
+            args_layout.push(arg_layout);
+
+            match arg_layout {
+                ArgLayout::RetPtr => unreachable!(),
+                ArgLayout::IntStruct | ArgLayout::BinaryStruct => {}
+                ArgLayout::ByvalPtr => {
+                    let kind_id = Attribute::get_named_enum_kind_id("byval");
+                    let byval = self
+                        .context
+                        .create_type_attribute(kind_id, self.lower_type(ty));
+                    attributes.push((AttributeLoc::Param(params_types.len() as u32), byval));
+
+                    let noundef_id = Attribute::get_named_enum_kind_id("noundef");
+                    let byval = self.context.create_enum_attribute(noundef_id, 0);
+                    attributes.push((AttributeLoc::Param(params_types.len() as u32), byval));
+                }
+                ArgLayout::Regular => {
+                    let noundef_id = Attribute::get_named_enum_kind_id("noundef");
+                    let byval = self.context.create_enum_attribute(noundef_id, 0);
+                    attributes.push((AttributeLoc::Param(params_types.len() as u32), byval));
+                }
+                ArgLayout::Skipped => {
+                    // Skip ZSTs and void params
+                    continue;
+                }
             }
 
-            let llvm_ty = any_type_enum_to_basic_metadata_type_enum(self.lower_param_type(ty));
+            let llvm_ty = any_type_enum_to_basic_metadata_type_enum(llvm_ty);
             params_types.push(llvm_ty);
         }
 
@@ -558,6 +605,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             FnPtrLayout {
                 fn_type,
                 attributes,
+                args_layout,
             },
         );
         fn_type
@@ -693,8 +741,9 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         for (fn_key, _fn) in self.nir.fns.iter_enumerated() {
             self.llvm_temps_counter.set(0);
             self.basic_blocks.borrow_mut().clear();
-            self.temps.borrow_mut().clear();
+            self.args.borrow_mut().clear();
             self.locals.borrow_mut().clear();
+            self.temps.borrow_mut().clear();
 
             let cfg = &_fn.cfg;
             let llvm_fn = self.llvm_fns[fn_key];
@@ -713,14 +762,17 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             }
 
             self.builder.position_at_end(entry_bb);
+            self.lower_ret_ptr_and_args(fn_key, _fn);
             self.lower_locals(&cfg.bindings);
+            // Position may be set to first arg store instruction, so move it to the end
+            self.builder.position_at_end(entry_bb);
+            self.lower_block_jmp(&cfg.basic_blocks[&BasicBlockKey::START_BASIC_BLOCK], cfg);
 
             // Lower basic blocks
             for (&bb_key, bb) in &cfg.basic_blocks {
-                if bb_key == BasicBlockKey::START_BASIC_BLOCK {
-                    self.lower_block_jmp(bb, cfg);
-                    continue;
-                } else if bb_key == BasicBlockKey::END_BASIC_BLOCK {
+                if bb_key == BasicBlockKey::START_BASIC_BLOCK
+                    || bb_key == BasicBlockKey::END_BASIC_BLOCK
+                {
                     continue;
                 }
                 self.builder
@@ -775,6 +827,125 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             let rvalue = self.lower_rvalue(rhs, &self.new_llvm_temp(), cfg);
             let rvalue = any_value_as_basic_value(rvalue).unwrap();
             let _ = self.builder.build_store(lvalue, rvalue);
+        }
+    }
+
+    fn lower_ret_ptr_and_args(&self, fn_key: FnKey, _fn: &Fn) {
+        let entry_bb = self.builder.get_insert_block().unwrap();
+
+        let Type::FnPtr(fn_ptr_type_key) = self.nir.types[_fn.fn_ptr_type] else {
+            unreachable!()
+        };
+
+        let fn_type = self.fn_ptr_types.borrow()[&fn_ptr_type_key].fn_type;
+        let fn_value = self.llvm_fns[fn_key];
+
+        let args_layout = &self.fn_ptr_types.borrow()[&fn_ptr_type_key].args_layout;
+        let has_ret_ptr = matches!(args_layout.first(), Some(ArgLayout::RetPtr));
+        let mut args_layout_iter = args_layout.iter().enumerate();
+        let mut llvm_params_types_iter = fn_type.get_param_types().into_iter().enumerate();
+        let mut first_store = None;
+
+        let ret_ptr = if let Some(return_type) = fn_type.get_return_type() {
+            // No need for array allocation is it will be lowered either to a pointer or a struct
+            Some(self.builder.build_alloca(return_type, "ret_ptr").unwrap())
+        } else if has_ret_ptr {
+            args_layout_iter = args_layout[1..].iter().enumerate();
+            llvm_params_types_iter.next();
+            Some(fn_value.get_first_param().unwrap().into_pointer_value())
+        } else {
+            None
+        };
+
+        self.ret_ptr.set(ret_ptr);
+
+        for (i, arg_layout) in args_layout_iter {
+            match arg_layout {
+                ArgLayout::Regular => {
+                    let arg_key = ArgKey::from(i);
+                    let (llvm_idx, llvm_ty) = llvm_params_types_iter.next().unwrap();
+
+                    let arg_ptr = self
+                        .builder
+                        .build_alloca(llvm_ty, &format!("arg{}", i))
+                        .unwrap();
+
+                    self.args.borrow_mut().insert(arg_key, arg_ptr);
+                    self.builder.position_at_end(entry_bb);
+                    let _ = self
+                        .builder
+                        .build_store(arg_ptr, fn_value.get_nth_param(llvm_idx as u32).unwrap());
+
+                    if first_store.is_none() {
+                        first_store = entry_bb.get_last_instruction();
+                    }
+
+                    self.builder.position_before(&first_store.unwrap());
+                }
+                ArgLayout::IntStruct | ArgLayout::BinaryStruct => {
+                    let arg_key = ArgKey::from(i);
+                    let (llvm_idx, llvm_lowered_ty) = llvm_params_types_iter.next().unwrap();
+                    let nir_ty = _fn.args[arg_key].typ;
+                    let llvm_ty = any_type_enum_to_basic_type_enum(self.lower_type(nir_ty));
+                    let dest_align = self.get_type_align(nir_ty);
+                    let src_align = self
+                        .machine
+                        .get_target_data()
+                        .get_abi_alignment(&llvm_lowered_ty);
+                    let ty_size = self
+                        .context
+                        .i64_type()
+                        .const_int(self.get_type_size(nir_ty) as u64, false);
+
+                    let arg_ptr = self
+                        .builder
+                        .build_alloca(llvm_ty, &format!("arg{}", i))
+                        .unwrap();
+
+                    self.args.borrow_mut().insert(arg_key, arg_ptr);
+
+                    let lowered_arg_ptr = self
+                        .builder
+                        .build_alloca(llvm_lowered_ty, &format!("lowered_arg{}", i))
+                        .unwrap();
+
+                    self.builder.position_at_end(entry_bb);
+
+                    let _ = self.builder.build_store(
+                        lowered_arg_ptr,
+                        fn_value.get_nth_param(llvm_idx as u32).unwrap(),
+                    );
+
+                    if first_store.is_none() {
+                        first_store = entry_bb.get_last_instruction();
+                    }
+
+                    let _ = self.builder.build_memcpy(
+                        arg_ptr,
+                        dest_align,
+                        lowered_arg_ptr,
+                        src_align,
+                        ty_size,
+                    );
+
+                    self.builder.position_before(&first_store.unwrap());
+                }
+                ArgLayout::ByvalPtr => {
+                    let arg_key = ArgKey::from(i);
+                    let (llvm_idx, _) = llvm_params_types_iter.next().unwrap();
+                    let arg_ptr = fn_value
+                        .get_nth_param(llvm_idx as u32)
+                        .unwrap()
+                        .into_pointer_value();
+                    self.args.borrow_mut().insert(arg_key, arg_ptr);
+                }
+                ArgLayout::RetPtr | ArgLayout::Skipped => {}
+            }
+        }
+
+        if let Some(first_store) = first_store {
+            // This will allocate locals after top allocas
+            self.builder.position_before(&first_store);
         }
     }
 
@@ -1098,9 +1269,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
 
     fn lower_lvalue(&self, lvalue_key: LValueKey, cfg: &CFG) -> AnyValueEnum<'ctx> {
         let type_key = cfg.lvalues[lvalue_key].typ;
-        if let LValueKind::Arg(arg_key) = cfg.lvalues[lvalue_key].kind {
-            todo!()
-        } else if let LValueKind::Temp(temp_key) = cfg.lvalues[lvalue_key].kind {
+        if let LValueKind::Temp(temp_key) = cfg.lvalues[lvalue_key].kind {
             self.temps.borrow()[&temp_key]
         } else {
             let llvm_ptr = self.lower_lvalue_to_ptr(lvalue_key, cfg);
@@ -1112,7 +1281,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         match cfg.lvalues[lvalue_key].kind {
             LValueKind::Binding(binding_key) => self.locals.borrow()[&binding_key],
             LValueKind::Static(static_key) => self.llvm_statics[static_key],
-            LValueKind::Arg(arg_key) => todo!(),
+            LValueKind::Arg(arg_key) => self.args.borrow()[&arg_key],
             LValueKind::Deref(lvalue_key) | LValueKind::MutDeref(lvalue_key) => {
                 // For dereference, we already have the pointer, just use it
                 self.lower_lvalue(lvalue_key, cfg).into_pointer_value()
@@ -1121,13 +1290,13 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             | LValueKind::MutField { on, idx }
             | LValueKind::TupleIdx { on, idx }
             | LValueKind::MutTupleIdx { on, idx } => {
-                let type_key = cfg.lvalues[lvalue_key].typ;
-                let pointee_ty = self.lower_type(type_key).into_struct_type();
-                let pointee_name = self.new_llvm_temp();
+                let type_key = cfg.lvalues[on].typ;
+                let struct_ty = self.lower_type(type_key).into_struct_type();
                 let llvm_on_ptr = self.lower_lvalue_to_ptr(on, cfg);
+                let name = self.new_llvm_temp();
                 let llvm_ptr = self
                     .builder
-                    .build_struct_gep(pointee_ty, llvm_on_ptr, idx, &pointee_name)
+                    .build_struct_gep(struct_ty, llvm_on_ptr, idx, &name)
                     .unwrap();
                 llvm_ptr
             }
