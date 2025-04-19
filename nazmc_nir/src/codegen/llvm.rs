@@ -9,6 +9,7 @@ use inkwell::{
     builder::Builder,
     context::Context,
     module::Module,
+    passes::PassBuilderOptions,
     targets::{
         CodeModel, InitializationConfig, RelocMode, Target, TargetData, TargetMachine, TargetTriple,
     },
@@ -334,6 +335,34 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         self.lower_string_consts();
         self.lower_fns_signatures();
         self.lower_fns_bodies();
+    }
+
+    pub fn optimize_module(&self, opt_level: OptimizationLevel) {
+        // Configure PassBuilderOptions
+        let pbo = PassBuilderOptions::create();
+        pbo.set_loop_vectorization(true);
+        pbo.set_loop_unrolling(true);
+        pbo.set_verify_each(true);
+        pbo.set_debug_logging(false);
+
+        // Map optimization level to passes string
+        let passes = match opt_level {
+            OptimizationLevel::None => "default<O0>",
+            OptimizationLevel::Less => "default<O1>",
+            OptimizationLevel::Default => "default<O2>",
+            OptimizationLevel::Aggressive => "default<O3>",
+        };
+
+        // Run passes on the module
+        let _ = self
+            .module
+            .run_passes(passes, &self.machine, pbo)
+            .map_err(|e| {
+                eprintln!("Optimization failed: {}", e.to_string());
+            });
+    }
+
+    pub fn print_ir(&self) {
         let _ = self
             .module
             .print_to_file(&format!("{}.ll", self.module.get_name().to_str().unwrap()));
@@ -730,9 +759,11 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             };
             let fn_type = self.lower_fn_ptr_type(fn_ptr_type);
             let llvm_fn = self.module.add_function(&name, fn_type, None);
+
             for &(attr_loc, attr_kind) in &self.fn_ptr_types.borrow()[&fn_ptr_type].attributes {
                 llvm_fn.add_attribute(attr_loc, attr_kind);
             }
+
             self.llvm_fns.push(llvm_fn);
         }
     }

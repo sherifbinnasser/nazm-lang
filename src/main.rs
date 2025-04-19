@@ -277,6 +277,8 @@ fn main() {
     let mut llvm_codegen =
         LLVMCodeGen::new(&llvm_ctx, nir, &name, None, OptimizationLevel::Default);
     llvm_codegen.lower();
+    // llvm_codegen.optimize_module(OptimizationLevel::Default);
+    llvm_codegen.print_ir();
 
     // let (file_path, file_content) = cli::read_file();
 
