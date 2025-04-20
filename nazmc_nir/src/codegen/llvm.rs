@@ -1224,11 +1224,28 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                     .build_memcpy(dest_ptr, align, src_ptr, align, size);
             }
             RValue::Call { on, args } => self.lower_call_rvalue_agg_type(dest_ptr, on, &args, cfg),
-            RValue::Tuple(types) => todo!(),
-            RValue::ArrayElements(thin_vec) => todo!(),
             RValue::ArrayRepeated { repeated, size } => todo!(),
+            RValue::ArrayElements(thin_vec) => todo!(),
+            RValue::Tuple(types) => {
+                let Type::Tuple(tuple_type_key) = self.nir.types[typ] else {
+                    unreachable!()
+                };
+                let struct_ty = self.tuples_layouts.borrow()[&tuple_type_key].struct_ty;
+                self.lower_struct_rvalue(
+                    dest_ptr,
+                    struct_ty,
+                    types.iter().enumerate().map(|(i, &t)| (i as u32, t)),
+                    cfg,
+                )
+            }
             RValue::Struct { struct_key, fields } => {
-                self.lower_struct_rvalue(dest_ptr, *struct_key, &fields, cfg)
+                let struct_ty = self.structs_layouts.borrow()[struct_key].struct_ty;
+                self.lower_struct_rvalue(
+                    dest_ptr,
+                    struct_ty,
+                    fields.iter().map(|(i, t)| (*i, *t)),
+                    cfg,
+                )
             }
             _ => unreachable!(),
         };
@@ -1248,28 +1265,26 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         }
     }
 
-    fn lower_struct_rvalue(
+    fn lower_struct_rvalue<'a>(
         &self,
         ptr: PointerValue,
-        struct_key: StructKey,
-        fields: &[(u32, Operand)],
+        struct_ty: StructType,
+        fields: impl Iterator<Item = (u32, Operand)>,
         cfg: &CFG,
     ) {
         for (i, field) in fields {
             let size = self.get_type_size(field.typ);
+
             if size == 0 {
                 continue;
             }
-            let struct_ty = self.structs_layouts.borrow()[&struct_key].struct_ty;
+
             let field_ptr = self
                 .builder
-                .build_struct_gep(struct_ty.as_basic_type_enum(), ptr, *i, "")
+                .build_struct_gep(struct_ty.as_basic_type_enum(), ptr, i, "")
                 .unwrap();
 
-            if !self.is_agg_type(field.typ) {
-                let llvm_field = any_value_as_basic_value(self.lower_operand(field, cfg)).unwrap();
-                let _ = self.builder.build_store(field_ptr, llvm_field);
-            } else {
+            if self.is_agg_type(field.typ) {
                 let align = self.get_type_align(field.typ);
 
                 let OperandKind::LValue(field_lvalue) = field.kind else {
@@ -1285,6 +1300,9 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                     align,
                     self.context.i64_type().const_int(size as u64, false),
                 );
+            } else {
+                let llvm_field = any_value_as_basic_value(self.lower_operand(&field, cfg)).unwrap();
+                let _ = self.builder.build_store(field_ptr, llvm_field);
             }
         }
     }
