@@ -969,9 +969,11 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                 AnyTypeEnum::IntType(int_type) => self.builder.build_alloca(int_type, &name),
                 AnyTypeEnum::PointerType(ptr_type) => self.builder.build_alloca(ptr_type, &name),
                 AnyTypeEnum::StructType(struct_ty) => self.builder.build_alloca(struct_ty, &name),
-                AnyTypeEnum::FunctionType(function_type) => todo!(),
+                AnyTypeEnum::FunctionType(function_type) => self
+                    .builder
+                    .build_alloca(ptr_type_from_fn_type(function_type), &name),
                 AnyTypeEnum::VectorType(vector_type) => todo!(),
-                AnyTypeEnum::VoidType(void_type) => todo!(),
+                AnyTypeEnum::VoidType(void_type) => continue,
             }
             .unwrap();
             self.locals.borrow_mut().insert(key, ptr_value);
@@ -1742,9 +1744,36 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                     .unwrap();
                 llvm_ptr
             }
-            LValueKind::ArrayIdx { on, idx } | LValueKind::MutArrayIdx { on, idx } => todo!(),
+            LValueKind::ArrayIdx { on, idx } | LValueKind::MutArrayIdx { on, idx } => {
+                let array_ptr = self.lower_lvalue_to_ptr(on, cfg);
+                let array_type_key = cfg.lvalues[on].typ;
+                let llvm_array_ty = self.lower_type(array_type_key);
+                let index = self.lower_lvalue(idx, cfg).into_int_value();
+                unsafe {
+                    self.builder
+                        .build_gep(
+                            any_type_enum_to_basic_type_enum(llvm_array_ty),
+                            array_ptr,
+                            &[index],
+                            &self.new_llvm_temp(),
+                        )
+                        .unwrap()
+                }
+            }
             LValueKind::ArrayConstIdx { on, idx } | LValueKind::MutArrayConstIdx { on, idx } => {
-                todo!()
+                let array_ptr = self.lower_lvalue_to_ptr(on, cfg);
+                let array_type_key = cfg.lvalues[on].typ;
+                let llvm_array_ty = self.lower_type(array_type_key);
+                unsafe {
+                    self.builder
+                        .build_gep(
+                            any_type_enum_to_basic_type_enum(llvm_array_ty),
+                            array_ptr,
+                            &[self.context.i64_type().const_int(idx as u64, false)],
+                            &self.new_llvm_temp(),
+                        )
+                        .unwrap()
+                }
             }
         }
     }
