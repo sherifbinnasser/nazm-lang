@@ -1224,8 +1224,36 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                     .build_memcpy(dest_ptr, align, src_ptr, align, size);
             }
             RValue::Call { on, args } => self.lower_call_rvalue_agg_type(dest_ptr, on, &args, cfg),
-            RValue::ArrayRepeated { repeated, size } => todo!(),
-            RValue::ArrayElements(thin_vec) => todo!(),
+            RValue::ArrayRepeated { repeated, size } => {
+                struct OperandIter<'a> {
+                    repeated: &'a Operand,
+                    count: u32,
+                    size: u32,
+                }
+                impl<'a> Iterator for OperandIter<'a> {
+                    type Item = &'a Operand;
+
+                    fn next(&mut self) -> Option<Self::Item> {
+                        if self.count < self.size - 1 {
+                            self.count += 1;
+                            Some(self.repeated)
+                        } else {
+                            None
+                        }
+                    }
+                }
+                let iter = OperandIter {
+                    repeated,
+                    size: *size,
+                    count: 0,
+                };
+                self.lower_array_rvalue(dest_ptr, typ, repeated.typ, iter, cfg)
+            }
+            // Size is not zero, as it called from assign stm on non zero type
+            // So it has at least one element
+            RValue::ArrayElements(elements) => {
+                self.lower_array_rvalue(dest_ptr, typ, elements[0].typ, elements.iter(), cfg)
+            }
             RValue::Tuple(types) => {
                 let Type::Tuple(tuple_type_key) = self.nir.types[typ] else {
                     unreachable!()
@@ -1265,9 +1293,66 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         }
     }
 
+    fn lower_array_rvalue<'a>(
+        &self,
+        dest_ptr: PointerValue,
+        array_type_key: TypeKey,
+        element_type_key: TypeKey,
+        elements: impl Iterator<Item = &'a Operand>,
+        cfg: &CFG,
+    ) {
+        let llvm_array_ty = self.lower_type(array_type_key);
+
+        if self.is_agg_type(element_type_key) {
+            let align = self.get_type_align(element_type_key);
+            let size = self.get_type_size(element_type_key);
+            let ty_size = self.context.i64_type().const_int(size as u64, false);
+
+            for (i, element) in elements.enumerate() {
+                let element_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            any_type_enum_to_basic_type_enum(llvm_array_ty),
+                            dest_ptr,
+                            &[self.context.i64_type().const_int(i as u64, false)],
+                            "",
+                        )
+                        .unwrap()
+                };
+
+                let OperandKind::LValue(field_lvalue) = element.kind else {
+                    unreachable!()
+                };
+
+                let src_ptr = self.lower_lvalue_to_ptr(field_lvalue, cfg);
+
+                let _ = self
+                    .builder
+                    .build_memcpy(element_ptr, align, src_ptr, align, ty_size);
+            }
+        } else {
+            for (i, element) in elements.enumerate() {
+                let element_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            any_type_enum_to_basic_type_enum(llvm_array_ty),
+                            dest_ptr,
+                            &[self.context.i64_type().const_int(i as u64, false)],
+                            "",
+                        )
+                        .unwrap()
+                };
+
+                let element = any_value_as_basic_value(self.lower_operand(element, cfg)).unwrap();
+
+                let _ = self.builder.build_store(element_ptr, element);
+            }
+        }
+    }
+
     fn lower_struct_rvalue<'a>(
         &self,
-        ptr: PointerValue,
+        dest_ptr: PointerValue,
         struct_ty: StructType,
         fields: impl Iterator<Item = (u32, Operand)>,
         cfg: &CFG,
@@ -1281,7 +1366,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
 
             let field_ptr = self
                 .builder
-                .build_struct_gep(struct_ty.as_basic_type_enum(), ptr, i, "")
+                .build_struct_gep(struct_ty.as_basic_type_enum(), dest_ptr, i, "")
                 .unwrap();
 
             if self.is_agg_type(field.typ) {
