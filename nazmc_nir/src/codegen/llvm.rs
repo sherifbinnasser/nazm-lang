@@ -18,7 +18,8 @@ use inkwell::{
         IntType, PointerType, StructType,
     },
     values::{
-        AnyValue, AnyValueEnum, BasicValueEnum, FunctionValue, InstructionOpcode, PointerValue,
+        AnyValue, AnyValueEnum, BasicMetadataValueEnum, BasicValueEnum, FunctionValue,
+        InstructionOpcode, PointerValue,
     },
     AddressSpace, FloatPredicate, IntPredicate,
 };
@@ -195,6 +196,21 @@ fn any_value_as_basic_value(any_value: AnyValueEnum) -> Option<BasicValueEnum> {
             value.as_global_value().as_pointer_value(),
         )),
         _ => None,
+    }
+}
+
+fn any_value_as_basic_metadata_value(any_value: AnyValueEnum) -> BasicMetadataValueEnum {
+    match any_value {
+        AnyValueEnum::ArrayValue(value) => BasicMetadataValueEnum::ArrayValue(value),
+        AnyValueEnum::IntValue(value) => BasicMetadataValueEnum::IntValue(value),
+        AnyValueEnum::FloatValue(value) => BasicMetadataValueEnum::FloatValue(value),
+        AnyValueEnum::PointerValue(value) => BasicMetadataValueEnum::PointerValue(value),
+        AnyValueEnum::StructValue(value) => BasicMetadataValueEnum::StructValue(value),
+        AnyValueEnum::VectorValue(value) => BasicMetadataValueEnum::VectorValue(value),
+        AnyValueEnum::FunctionValue(value) => {
+            BasicMetadataValueEnum::PointerValue(value.as_global_value().as_pointer_value())
+        }
+        _ => unreachable!(),
     }
 }
 
@@ -818,49 +834,6 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         }
     }
 
-    fn lower_stm(&self, stm: &Stm, cfg: &CFG) {
-        match stm {
-            Stm::Assign { lhs, rhs, typ } => self.lower_assign_stm(*lhs, rhs, *typ, cfg),
-            Stm::Phi { lhs, cases, typ } => {
-                let LValueKind::Temp(temp_key) = cfg.lvalues[*lhs].kind else {
-                    unreachable!()
-                };
-                let any_type = self.lower_type(*typ);
-                let basic_type = any_type_enum_to_basic_type_enum(any_type);
-                let phi = self
-                    .builder
-                    .build_phi(basic_type, &format!("tmp{}", temp_key.0))
-                    .unwrap();
-                for (bb_key, op_kind) in cases {
-                    let bb = self.basic_blocks.borrow()[&bb_key];
-                    let op = self.lower_operand_kind(*op_kind, cfg);
-                    let op = any_value_as_basic_value(op).unwrap();
-                    phi.add_incoming(&[(&op, bb)])
-                }
-            }
-            Stm::Return { rvalue, typ } => {
-                // TODO: Aggregate types
-                let rvalue = self.lower_rvalue(rvalue, &self.new_llvm_temp(), cfg);
-                let _ = self
-                    .builder
-                    .build_return(Some(&any_value_as_basic_value(rvalue).unwrap()));
-            }
-            Stm::Drop(lvalue_key) => todo!(),
-        }
-    }
-
-    fn lower_assign_stm(&self, lhs: LValueKey, rhs: &RValue, typ: TypeKey, cfg: &CFG) {
-        if let LValueKind::Temp(temp_key) = cfg.lvalues[lhs].kind {
-            let temp = self.lower_rvalue(rhs, &format!("tmp{}", temp_key.0), cfg);
-            self.temps.borrow_mut().insert(temp_key, temp);
-        } else {
-            let lvalue = self.lower_lvalue_to_ptr(lhs, cfg);
-            let rvalue = self.lower_rvalue(rhs, &self.new_llvm_temp(), cfg);
-            let rvalue = any_value_as_basic_value(rvalue).unwrap();
-            let _ = self.builder.build_store(lvalue, rvalue);
-        }
-    }
-
     fn lower_ret_ptr_and_args(&self, fn_key: FnKey, _fn: &Fn) {
         let entry_bb = self.builder.get_insert_block().unwrap();
 
@@ -1056,6 +1029,118 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         }
     }
 
+    fn lower_stm(&self, stm: &Stm, cfg: &CFG) {
+        match stm {
+            Stm::Assign { lhs: _, rhs, typ } if self.get_type_size(*typ) == 0 => {
+                let RValue::Call { on, args } = rhs else {
+                    return;
+                };
+
+                self.lower_call_rvalue(on, &args, cfg);
+            }
+            Stm::Assign { lhs, rhs, typ } if self.is_agg_type(*typ) => {
+                self.lower_assign_stm_agg_typ(*lhs, rhs, *typ, cfg)
+            }
+            Stm::Assign { lhs, rhs, typ: _ } => self.lower_assign_stm(*lhs, rhs, cfg),
+            Stm::Phi { lhs, cases, typ } => {
+                let LValueKind::Temp(temp_key) = cfg.lvalues[*lhs].kind else {
+                    unreachable!()
+                };
+                let any_type = self.lower_type(*typ);
+                let basic_type = any_type_enum_to_basic_type_enum(any_type);
+                let phi = self
+                    .builder
+                    .build_phi(basic_type, &format!("tmp{}", temp_key.0))
+                    .unwrap();
+                for (bb_key, op_kind) in cases {
+                    let bb = self.basic_blocks.borrow()[&bb_key];
+                    let op = self.lower_operand_kind(*op_kind, cfg);
+                    let op = any_value_as_basic_value(op).unwrap();
+                    phi.add_incoming(&[(&op, bb)])
+                }
+            }
+            Stm::Return { rvalue: _, typ } if self.get_type_size(*typ) == 0 => {
+                let _ = self.builder.build_return(None);
+            }
+            Stm::Return { rvalue, typ } if self.is_agg_type(*typ) => {
+                let ret_ptr = self.ret_ptr.get().unwrap();
+                self.lower_rvalue_agg_type(ret_ptr, rvalue, *typ, cfg);
+                let size = self.get_type_size(*typ);
+                if size > 16 {
+                    return;
+                }
+
+                let llvm_lowered_ty =
+                    any_type_enum_to_basic_type_enum(self.lower_param_type(*typ).0);
+
+                let dest_align = self
+                    .machine
+                    .get_target_data()
+                    .get_abi_alignment(&llvm_lowered_ty);
+                let src_align = self.get_type_align(*typ);
+                let ty_size = self.context.i64_type().const_int(size as u64, false);
+
+                let abi_ret_ptr = self.builder.build_alloca(llvm_lowered_ty, "").unwrap();
+                let _ =
+                    self.builder
+                        .build_memcpy(abi_ret_ptr, dest_align, ret_ptr, src_align, ty_size);
+                let value = self
+                    .builder
+                    .build_load(llvm_lowered_ty, abi_ret_ptr, "")
+                    .unwrap();
+                let _ = self.builder.build_return(Some(&value));
+            }
+            Stm::Return { rvalue, typ: _ } => {
+                let rvalue = self.lower_rvalue(rvalue, &self.new_llvm_temp(), cfg);
+                let _ = self
+                    .builder
+                    .build_return(Some(&any_value_as_basic_value(rvalue).unwrap()));
+            }
+            Stm::Drop(lvalue_key) => todo!(),
+        }
+    }
+
+    fn lower_assign_stm_agg_typ(&self, lhs: LValueKey, rhs: &RValue, typ: TypeKey, cfg: &CFG) {
+        let ptr = if let LValueKind::Temp(temp_key) = cfg.lvalues[lhs].kind {
+            let llvm_ty = self.lower_type(typ);
+            let name = format!("tmp{}", temp_key.0);
+
+            let temp_ptr = if let AnyTypeEnum::ArrayType(array_ty) = llvm_ty {
+                let len = self
+                    .context
+                    .i64_type()
+                    .const_int(array_ty.len() as u64, false);
+                self.builder
+                    .build_array_alloca(array_ty, len, &name)
+                    .unwrap()
+            } else {
+                self.builder
+                    .build_alloca(any_type_enum_to_basic_type_enum(llvm_ty), &name)
+                    .unwrap()
+            };
+            let temp = temp_ptr.as_any_value_enum();
+            self.temps.borrow_mut().insert(temp_key, temp);
+            temp_ptr
+        } else {
+            self.lower_lvalue_to_ptr(lhs, cfg)
+        };
+
+        self.lower_rvalue_agg_type(ptr, rhs, typ, cfg)
+    }
+
+    fn lower_assign_stm(&self, lhs: LValueKey, rhs: &RValue, cfg: &CFG) {
+        if let LValueKind::Temp(temp_key) = cfg.lvalues[lhs].kind {
+            let name = format!("tmp{}", temp_key.0);
+            let temp = self.lower_rvalue(rhs, &name, cfg);
+            self.temps.borrow_mut().insert(temp_key, temp);
+        } else {
+            let lvalue = self.lower_lvalue_to_ptr(lhs, cfg);
+            let rvalue = self.lower_rvalue(rhs, &self.new_llvm_temp(), cfg);
+            let rvalue = any_value_as_basic_value(rvalue).unwrap();
+            let _ = self.builder.build_store(lvalue, rvalue);
+        }
+    }
+
     #[inline]
     fn lower_operand(&self, operand: &Operand, cfg: &CFG) -> AnyValueEnum<'ctx> {
         self.lower_operand_kind(operand.kind, cfg)
@@ -1116,41 +1201,159 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         }
     }
 
+    fn lower_rvalue_agg_type(
+        &self,
+        dest_ptr: PointerValue<'ctx>,
+        rvalue: &RValue,
+        typ: TypeKey,
+        cfg: &CFG,
+    ) {
+        let align = self.get_type_align(typ);
+        let size = self
+            .context
+            .i64_type()
+            .const_int(self.get_type_size(typ) as u64, false);
+        match rvalue {
+            RValue::Use(Operand {
+                kind: OperandKind::LValue(src),
+                ..
+            }) => {
+                let src_ptr = self.lower_lvalue_to_ptr(*src, cfg);
+                let _ = self
+                    .builder
+                    .build_memcpy(dest_ptr, align, src_ptr, align, size);
+            }
+            RValue::Call { on, args } => self.lower_call_rvalue_agg_type(dest_ptr, on, &args, cfg),
+            RValue::Tuple(types) => todo!(),
+            RValue::ArrayElements(thin_vec) => todo!(),
+            RValue::ArrayRepeated { repeated, size } => todo!(),
+            RValue::Struct { struct_key, fields } => {
+                self.lower_struct_rvalue(dest_ptr, *struct_key, &fields, cfg)
+            }
+            _ => unreachable!(),
+        };
+    }
+
     fn lower_rvalue(&self, rvalue: &RValue, name: &str, cfg: &CFG) -> AnyValueEnum<'ctx> {
         match rvalue {
             RValue::Use(operand) => self.lower_operand(operand, cfg),
             RValue::Ref(lvalue_key) | RValue::RefMut(lvalue_key) => self
                 .lower_lvalue_to_ptr(*lvalue_key, cfg)
                 .as_any_value_enum(),
-            RValue::Tuple(thin_vec) => todo!(),
-            RValue::ArrayElements(thin_vec) => todo!(),
-            RValue::ArrayRepeated { repeated, size } => todo!(),
-            RValue::Struct { struct_key, fields } => self
-                .context
-                .i8_type()
-                .const_int(4, false)
-                .as_any_value_enum(),
             RValue::Cast { val, to } => todo!(),
             RValue::BinOp { op, lhs, rhs } => self.lower_bin_op_rvalue(*op, lhs, rhs, name, cfg),
             RValue::UnaryOp { op, operand } => self.lower_unary_op_rvalue(*op, operand, name, cfg),
-            RValue::Call { on, args } => {
-                let llvm_on = self.lower_operand(on, cfg);
+            RValue::Call { on, args } => self.lower_call_rvalue(on, &args, cfg),
+            _ => unreachable!(),
+        }
+    }
 
-                // TODO: Aggregate types
-                todo!()
+    fn lower_struct_rvalue(
+        &self,
+        ptr: PointerValue,
+        struct_key: StructKey,
+        fields: &[(u32, Operand)],
+        cfg: &CFG,
+    ) {
+        for (i, field) in fields {
+            let size = self.get_type_size(field.typ);
+            if size == 0 {
+                continue;
+            }
+            let struct_ty = self.structs_layouts.borrow()[&struct_key].struct_ty;
+            let field_ptr = self
+                .builder
+                .build_struct_gep(struct_ty.as_basic_type_enum(), ptr, *i, "")
+                .unwrap();
 
-                //     if let AnyValueEnum::FunctionValue(fn_value) = llvm_on {
-                //         self.builder.build_direct_call(fn_value);
-                //     } else if let AnyValueEnum::PointerValue(fn_ptr_value) = llvm_on {
-                //         let AnyTypeEnum::FunctionType(fn_type) = self.lower_type(on.typ) else {
-                //             unreachable!()
-                //         };
-                //         self.builder.build_indirect_call(fn_type, fn_ptr_value);
-                //     } else {
-                //         unreachable!()
-                //     }
+            if !self.is_agg_type(field.typ) {
+                let llvm_field = any_value_as_basic_value(self.lower_operand(field, cfg)).unwrap();
+                let _ = self.builder.build_store(field_ptr, llvm_field);
+            } else {
+                let align = self.get_type_align(field.typ);
+
+                let OperandKind::LValue(field_lvalue) = field.kind else {
+                    unreachable!()
+                };
+
+                let src_ptr = self.lower_lvalue_to_ptr(field_lvalue, cfg);
+
+                let _ = self.builder.build_memcpy(
+                    field_ptr,
+                    align,
+                    src_ptr,
+                    align,
+                    self.context.i64_type().const_int(size as u64, false),
+                );
             }
         }
+    }
+
+    fn lower_call_rvalue_agg_type(
+        &self,
+        dest_ptr: PointerValue<'ctx>,
+        on: &Operand,
+        args: &[Operand],
+        cfg: &CFG,
+    ) {
+        let llvm_on = self.lower_operand(on, cfg);
+
+        let Type::FnPtr(fn_ptr_type_key) = self.nir.types[on.typ] else {
+            unreachable!()
+        };
+
+        let fn_type = self.fn_ptr_types.borrow()[&fn_ptr_type_key].fn_type;
+        let args_layout = &self.fn_ptr_types.borrow()[&fn_ptr_type_key].args_layout;
+        let has_ret_ptr = matches!(args_layout.first(), Some(ArgLayout::RetPtr));
+        let mut args_layout_iter = args_layout.iter().enumerate();
+        let mut llvm_params_types_iter = fn_type.get_param_types().into_iter().enumerate();
+        let mut llvm_args;
+        if has_ret_ptr {
+            llvm_params_types_iter.next();
+            args_layout_iter = args_layout[1..].iter().enumerate();
+            llvm_args = Vec::with_capacity(args.len() + 1);
+            llvm_args.push(BasicMetadataValueEnum::PointerValue(dest_ptr));
+        } else {
+            llvm_args = Vec::with_capacity(args.len());
+        }
+
+        let call_site_value = self.lower_call_args(
+            llvm_on,
+            fn_ptr_type_key,
+            fn_type,
+            args,
+            llvm_args,
+            args_layout_iter,
+            llvm_params_types_iter,
+            cfg,
+        );
+
+        if has_ret_ptr {
+            return;
+        }
+
+        let llvm_return_type = fn_type.get_return_type().unwrap();
+
+        let abi_ptr = self.builder.build_alloca(llvm_return_type, "").unwrap();
+
+        let _ = self
+            .builder
+            .build_store(abi_ptr, any_value_as_basic_value(call_site_value).unwrap());
+
+        let nir_return_type = self.nir.fn_ptr_types[fn_ptr_type_key].return_type;
+        let dest_align = self.get_type_align(nir_return_type);
+        let src_align = self
+            .machine
+            .get_target_data()
+            .get_abi_alignment(&llvm_return_type);
+        let ty_size = self
+            .context
+            .i64_type()
+            .const_int(self.get_type_size(nir_return_type) as u64, false);
+
+        let _ = self
+            .builder
+            .build_memcpy(dest_ptr, dest_align, abi_ptr, src_align, ty_size);
     }
 
     fn lower_bin_op_rvalue(
@@ -1298,6 +1501,110 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         }
     }
 
+    fn lower_call_rvalue(&self, on: &Operand, args: &[Operand], cfg: &CFG) -> AnyValueEnum<'ctx> {
+        let llvm_on = self.lower_operand(on, cfg);
+
+        let Type::FnPtr(fn_ptr_type_key) = self.nir.types[on.typ] else {
+            unreachable!()
+        };
+
+        let fn_type = self.fn_ptr_types.borrow()[&fn_ptr_type_key].fn_type;
+        let args_layout = &self.fn_ptr_types.borrow()[&fn_ptr_type_key].args_layout;
+        let args_layout_iter = args_layout.iter().enumerate();
+        let llvm_params_types_iter = fn_type.get_param_types().into_iter().enumerate();
+        let llvm_args = Vec::with_capacity(args.len());
+
+        self.lower_call_args(
+            llvm_on,
+            fn_ptr_type_key,
+            fn_type,
+            args,
+            llvm_args,
+            args_layout_iter,
+            llvm_params_types_iter,
+            cfg,
+        )
+    }
+
+    fn lower_call_args<'a>(
+        &self,
+        llvm_on: AnyValueEnum<'ctx>,
+        fn_ptr_type_key: FnPtrTypeKey,
+        fn_type: FunctionType<'ctx>,
+        args: &[Operand],
+        mut llvm_args: Vec<BasicMetadataValueEnum<'ctx>>,
+        args_layout_iter: impl Iterator<Item = (usize, &'a ArgLayout)>,
+        mut llvm_params_types_iter: impl Iterator<Item = (usize, BasicTypeEnum<'ctx>)>,
+        cfg: &CFG,
+    ) -> AnyValueEnum<'ctx> {
+        for (i, arg_layout) in args_layout_iter {
+            match arg_layout {
+                ArgLayout::RetPtr => unreachable!(),
+                ArgLayout::ByvalPtr | ArgLayout::IntStruct | ArgLayout::BinaryStruct => {
+                    let (_, llvm_lowered_ty) = llvm_params_types_iter.next().unwrap();
+                    let Operand {
+                        kind: OperandKind::LValue(arg_lvalue),
+                        typ: arg_typ,
+                    } = args[i]
+                    else {
+                        unreachable!()
+                    };
+
+                    let arg_ptr = self.lower_lvalue_to_ptr(arg_lvalue, cfg);
+
+                    let dest_align = self.get_type_align(arg_typ);
+                    let src_align = self
+                        .machine
+                        .get_target_data()
+                        .get_abi_alignment(&llvm_lowered_ty);
+                    let ty_size = self
+                        .context
+                        .i64_type()
+                        .const_int(self.get_type_size(arg_typ) as u64, false);
+
+                    let abi_ptr = self.builder.build_alloca(llvm_lowered_ty, "").unwrap();
+
+                    let _ = self
+                        .builder
+                        .build_memcpy(abi_ptr, dest_align, arg_ptr, src_align, ty_size);
+
+                    let llvm_arg = if let ArgLayout::ByvalPtr = arg_layout {
+                        abi_ptr.into()
+                    } else {
+                        self.builder
+                            .build_load(llvm_lowered_ty, abi_ptr, "")
+                            .unwrap()
+                            .into()
+                    };
+
+                    llvm_args.push(llvm_arg);
+                }
+                ArgLayout::Regular => {
+                    llvm_params_types_iter.next();
+                    let arg = self.lower_operand(&args[i], cfg);
+                    llvm_args.push(any_value_as_basic_metadata_value(arg));
+                }
+                ArgLayout::Skipped => {}
+            }
+        }
+
+        let call_site_value = if let AnyValueEnum::FunctionValue(fn_value) = llvm_on {
+            self.builder.build_direct_call(fn_value, &llvm_args, "")
+        } else if let AnyValueEnum::PointerValue(fn_ptr_value) = llvm_on {
+            self.builder
+                .build_indirect_call(fn_type, fn_ptr_value, &llvm_args, "")
+        } else {
+            unreachable!()
+        }
+        .unwrap();
+
+        for &(attr_loc, attr_kind) in &self.fn_ptr_types.borrow()[&fn_ptr_type_key].attributes {
+            call_site_value.add_attribute(attr_loc, attr_kind);
+        }
+
+        call_site_value.as_any_value_enum()
+    }
+
     fn lower_lvalue(&self, lvalue_key: LValueKey, cfg: &CFG) -> AnyValueEnum<'ctx> {
         let type_key = cfg.lvalues[lvalue_key].typ;
         if let LValueKind::Temp(temp_key) = cfg.lvalues[lvalue_key].kind {
@@ -1313,6 +1620,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             LValueKind::Binding(binding_key) => self.locals.borrow()[&binding_key],
             LValueKind::Static(static_key) => self.llvm_statics[static_key],
             LValueKind::Arg(arg_key) => self.args.borrow()[&arg_key],
+            LValueKind::Temp(temp_key) => self.temps.borrow()[&temp_key].into_pointer_value(),
             LValueKind::Deref(lvalue_key) | LValueKind::MutDeref(lvalue_key) => {
                 // For dereference, we already have the pointer, just use it
                 self.lower_lvalue(lvalue_key, cfg).into_pointer_value()
@@ -1334,9 +1642,6 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             LValueKind::ArrayIdx { on, idx } | LValueKind::MutArrayIdx { on, idx } => todo!(),
             LValueKind::ArrayConstIdx { on, idx } | LValueKind::MutArrayConstIdx { on, idx } => {
                 todo!()
-            }
-            LValueKind::Temp(temp_key) => {
-                unreachable!("Temps don't have pointers to them, use lower_lvalue() instead")
             }
         }
     }
