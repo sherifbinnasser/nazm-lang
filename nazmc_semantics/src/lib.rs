@@ -19,7 +19,7 @@ use nazmc_diagnostics::{
     span::{Span, SpanCursor},
     CodeWindow, Diagnostic,
 };
-use nazmc_nir::{Arg, Struct, CFG, NIR};
+use nazmc_nir::{Arg, Field, Struct, CFG, NIR};
 use nir_builder::{CFGBuilder, NIRBuilder};
 use std::{collections::HashMap, process::exit};
 use thin_vec::ThinVec;
@@ -165,26 +165,22 @@ impl<'a> SemanticsAnalyzer<'a> {
             .fields_structs
             .iter_enumerated()
             .for_each(|(struct_key, _struct)| {
-                let fields_types = self.typed_ast.fields_structs[&struct_key]
+                let fields = self.ast.fields_structs[struct_key]
                     .fields
                     .iter()
-                    .map(|(field_id, field_info)| {
+                    .map(|(field_info)| {
+                        let id = field_info.id.id;
+                        let field_info = &self.typed_ast.fields_structs[&struct_key].fields[&id];
                         let Type::Concrete(field_typ) = &field_info.typ else {
                             unreachable!()
                         };
-                        let field_typ = self.nir_builder.get_unique_type(field_typ);
-                        (*field_id, field_typ)
+                        let typ = self.nir_builder.get_unique_type(field_typ);
+                        Field { id, typ }
                     })
-                    .collect();
-                let fields_order = _struct
-                    .fields
-                    .iter()
-                    .map(|field_info| field_info.id.id)
                     .collect();
                 self.nir_builder.nir.structs.push(Struct {
                     info: _struct.info,
-                    fields_types,
-                    fields_order,
+                    fields,
                 });
             });
 
@@ -243,8 +239,6 @@ impl<'a> SemanticsAnalyzer<'a> {
                 })
             }
 
-            self.lower_fn_scope(_fn.scope_key);
-
             self.nir_builder.nir.fns.push(nazmc_nir::Fn {
                 info: _fn.info,
                 args,
@@ -252,6 +246,8 @@ impl<'a> SemanticsAnalyzer<'a> {
                 return_type,
                 cfg: CFG::default(),
             });
+
+            self.lower_fn_scope(_fn.scope_key);
 
             let cfg = self.cfg_builder.build();
             self.nir_builder.nir.fns.last_mut().unwrap().cfg = cfg;

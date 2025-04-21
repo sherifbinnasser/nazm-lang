@@ -1,13 +1,14 @@
 mod cli;
 use cli::print_err;
 use nazmc_ast::{Item, PkgPoolBuilder};
+use nazmc_codegen_llvm::LLVMCodeGen;
+use nazmc_codegen_llvm::OptimizationLevel;
 use nazmc_data_pool::typed_index_collections::TiVec;
 use nazmc_data_pool::FileKey;
 use nazmc_data_pool::PkgKey;
 use nazmc_data_pool::{IdPoolBuilder, StrPoolBuilder};
 use nazmc_diagnostics::file_info::FileInfo;
 use nazmc_lexer::LexerIter;
-use nazmc_nir::codegen::qbe::QbeCodegen;
 use nazmc_nir::nir_analyzer::NIRAnalyzer;
 use nazmc_parser::parse;
 use nazmc_resolve::NameResolver;
@@ -263,11 +264,20 @@ fn main() {
 
     nir.fmt_cfg(&nir.fns.raw[0].cfg, "CFG.dot");
 
-    let qbe = QbeCodegen::new(nir).lower();
-    let _ = std::fs::write(
-        format!("{}.ssa", الاسم.unwrap_or("out".into())),
-        qbe.to_string(),
-    );
+    let name = الاسم.unwrap_or("out".into());
+
+    // let qbe = QbeCodegen::new(nir).lower();
+    // let _ = std::fs::write(
+    //     format!("{}.ssa", الاسم.unwrap_or("out".into())),
+    //     qbe.to_string(),
+    // );
+
+    let llvm_ctx = LLVMCodeGen::new_ctx();
+    let mut llvm_codegen =
+        LLVMCodeGen::new(&llvm_ctx, nir, &name, None, OptimizationLevel::Default);
+    llvm_codegen.lower();
+    // llvm_codegen.optimize_module(OptimizationLevel::Default);
+    llvm_codegen.print_ir();
 
     // let (file_path, file_content) = cli::read_file();
 

@@ -6,7 +6,6 @@ use nazmc_diagnostics::file_info::FileInfo;
 use nazmc_diagnostics::span::Span;
 use std::collections::HashMap;
 use thin_vec::ThinVec;
-pub mod abi;
 pub mod codegen;
 pub mod fmt;
 pub mod nir_analyzer;
@@ -47,8 +46,12 @@ pub struct NIR<'a> {
 #[derive(Default)]
 pub struct Struct {
     pub info: ItemInfo,
-    pub fields_types: HashMap<IdKey, TypeKey>,
-    pub fields_order: ThinVec<IdKey>,
+    pub fields: ThinVec<Field>,
+}
+
+pub struct Field {
+    pub id: IdKey,
+    pub typ: TypeKey,
 }
 
 pub struct Static {
@@ -223,7 +226,7 @@ pub enum LValueKind {
     Deref(LValueKey),
     Field {
         on: LValueKey,
-        field_id: IdKey,
+        idx: u32,
     },
     TupleIdx {
         on: LValueKey,
@@ -242,7 +245,7 @@ pub enum LValueKind {
     /// Comes from a mutable lvalue
     MutField {
         on: LValueKey,
-        field_id: IdKey,
+        idx: u32,
     },
     /// Comes from a mutable lvalue
     MutTupleIdx {
@@ -274,7 +277,7 @@ pub enum RValue {
     },
     Struct {
         struct_key: StructKey,
-        fields: ThinVec<(IdKey, Operand)>,
+        fields: ThinVec<(u32, Operand)>,
     },
     Cast {
         val: Operand,
@@ -345,7 +348,7 @@ impl PartialEq for Const {
 
 impl Eq for Const {}
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum BinOp {
     EqualEqual,
     NotEqual,
@@ -365,7 +368,7 @@ pub enum BinOp {
     Mod,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum UnaryOp {
     LNot,
     BNot,

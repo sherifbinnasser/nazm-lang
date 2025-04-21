@@ -232,9 +232,8 @@ impl<'a> NIR<'a> {
             LValueKind::Deref(lvalue_key) | LValueKind::MutDeref(lvalue_key) => {
                 format!("*{}", self.fmt_lvalue(cfg, lvalue_key))
             }
-            LValueKind::Field { on, field_id } | LValueKind::MutField { on, field_id } => {
-                let field_id = &self.id_pool[field_id];
-                format!("{}.{}", self.fmt_lvalue(cfg, on), field_id)
+            LValueKind::Field { on, idx } | LValueKind::MutField { on, idx } => {
+                format!("{}.{}", self.fmt_lvalue(cfg, on), idx)
             }
             LValueKind::TupleIdx { on, idx } | LValueKind::MutTupleIdx { on, idx } => {
                 format!("{}.{}", self.fmt_lvalue(cfg, on), idx)
@@ -281,11 +280,7 @@ impl<'a> NIR<'a> {
                 self.fmt_item_name(self.structs[*struct_key].info),
                 fields
                     .iter()
-                    .map(|(id, op)| format!(
-                        "{}: {}",
-                        &self.id_pool[*id],
-                        self.fmt_operand(cfg, op)
-                    ))
+                    .map(|(idx, op)| format!("{}: {}", idx, self.fmt_operand(cfg, op)))
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
