@@ -221,6 +221,8 @@ version = "0.1.0"
 dependencies = [
  "bpaf",
  "nazmc_ast",
+ "nazmc_codegen_llvm",
+ "nazmc_codegen_qbe",
  "nazmc_data_pool",
  "nazmc_diagnostics",
  "nazmc_lexer",
@@ -242,6 +244,26 @@ dependencies = [
  "derive_more",
  "nazmc_data_pool",
  "nazmc_diagnostics",
+ "thin-vec",
+]
+
+[[package]]
+name = "nazmc_codegen_llvm"
+version = "0.1.0"
+dependencies = [
+ "inkwell",
+ "nazmc_data_pool",
+ "nazmc_nir",
+ "thin-vec",
+]
+
+[[package]]
+name = "nazmc_codegen_qbe"
+version = "0.1.0"
+dependencies = [
+ "nazmc_data_pool",
+ "nazmc_nir",
+ "qbe",
  "thin-vec",
 ]
 
@@ -278,7 +300,6 @@ name = "nazmc_nir"
 version = "0.1.0"
 dependencies = [
  "derive_more",
- "inkwell",
  "nazmc_data_pool",
  "nazmc_diagnostics",
  "qbe",

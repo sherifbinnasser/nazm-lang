@@ -1,0 +1,10 @@
+[package]
+name = "nazmc_codegen_qbe"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+nazmc_data_pool = { path = "../nazmc_data_pool" }
+nazmc_nir = { path = "../nazmc_nir" }
+thin-vec = "*"
+qbe = "*"

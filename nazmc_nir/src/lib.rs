@@ -6,7 +6,6 @@ use nazmc_diagnostics::file_info::FileInfo;
 use nazmc_diagnostics::span::Span;
 use std::collections::HashMap;
 use thin_vec::ThinVec;
-pub mod abi;
 pub mod codegen;
 pub mod fmt;
 pub mod nir_analyzer;
