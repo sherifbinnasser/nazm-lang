@@ -5,6 +5,7 @@ pub(crate) enum Type {
     Path(Box<SimplePath>),
     Ptr(Box<PtrType>),
     Slice(Box<SliceType>),
+    FnPtr(Box<FnPtrType>),
     Paren(Box<ParenType>),
 }
 
@@ -27,6 +28,13 @@ pub(crate) struct SliceType {
 pub(crate) struct ArraySizeExpr {
     pub(crate) semicolon: SemicolonSymbol,
     pub(crate) expr: ParseResult<Expr>,
+}
+
+#[derive(NazmcParse, Debug)]
+pub(crate) struct FnPtrType {
+    pub(crate) fn_keyword: FnKeyword,
+    pub(crate) params_types: ParseResult<TupleType>,
+    pub(crate) return_type: ParseResult<LambdaType>,
 }
 
 #[derive(NazmcParse, Debug)]

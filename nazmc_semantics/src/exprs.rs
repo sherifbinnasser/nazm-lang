@@ -669,15 +669,13 @@ impl<'a> SemanticsAnalyzer<'a> {
         lambda_scope_key: ScopeKey,
         kinds: &[BindingKind],
     ) -> Type {
-        let mut tuple_types = ThinVec::with_capacity(kinds.len());
-        for i in 0..kinds.len() {
-            let kind = &kinds[i];
+        let iter = kinds.iter().map(|kind| {
             let ty = self.type_inf_ctx.new_ty_var();
             self.set_bindnig_ty_for_lambda(lambda_scope_key, kind, &ty);
-            tuple_types.push(ty);
-        }
+            ty
+        });
 
-        Type::tuple(tuple_types)
+        Type::tuple(iter)
     }
 
     fn infer_unary_op_expr(&mut self, UnaryOpExpr { op, op_span, expr }: &UnaryOpExpr) -> Type {

@@ -106,6 +106,24 @@ impl<'a> SemanticsAnalyzer<'a> {
                 let underlying_type_key = self.analyze_type_expr(underlying_typ);
                 Type::ptr_mut(underlying_type_key)
             }
+            TypeExpr::FnPtr(fn_ptr_type_expr_key) => {
+                let fn_ptr_type_expr_key = *fn_ptr_type_expr_key;
+
+                let return_type = self.analyze_type_expr(
+                    self.ast.types_exprs.fn_ptrs[fn_ptr_type_expr_key].return_type,
+                );
+
+                let params_len = self.ast.types_exprs.fn_ptrs[fn_ptr_type_expr_key]
+                    .params_types
+                    .len();
+
+                let params_types = (0..params_len).map(|i| {
+                    let param = self.ast.types_exprs.fn_ptrs[fn_ptr_type_expr_key].params_types[i];
+                    self.analyze_type_expr(param)
+                });
+
+                Type::fn_ptr(params_types, return_type)
+            }
         }
     }
 
@@ -197,15 +215,12 @@ impl<'a> SemanticsAnalyzer<'a> {
             return Type::unit();
         }
 
-        let mut types = ThinVec::with_capacity(types_len);
-
-        for i in 0..types_len {
+        let iter = (0..types_len).map(|i| {
             let type_expr_key = self.ast.types_exprs.tuples[key].types[i];
-            let typ = self.analyze_type_expr(type_expr_key);
-            types.push(typ);
-        }
+            self.analyze_type_expr(type_expr_key)
+        });
 
-        Type::tuple(types)
+        Type::tuple(iter)
     }
 
     #[inline]

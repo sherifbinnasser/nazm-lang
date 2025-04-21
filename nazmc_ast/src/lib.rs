@@ -21,6 +21,7 @@ new_data_pool_key! { ParenTypeExprKey }
 new_data_pool_key! { SliceTypeExprKey }
 new_data_pool_key! { PtrTypeExprKey }
 new_data_pool_key! { PtrMutTypeExprKey }
+new_data_pool_key! { FnPtrTypeExprKey }
 new_data_pool_key! { TupleTypeExprKey }
 new_data_pool_key! { ArrayTypeExprKey }
 new_data_pool_key! { LambdaTypeExprKey }

@@ -140,6 +140,11 @@ impl<'a> SemanticsAnalyzer<'a> {
                 expr.span
                     .merged_with(&self.get_type_expr_span(expr.underlying_typ))
             }
+            TypeExpr::FnPtr(fn_ptr_type_expr_key) => {
+                let expr = &self.ast.types_exprs.fn_ptrs[*fn_ptr_type_expr_key];
+                expr.fn_keyword_span
+                    .merged_with(&self.get_type_expr_span(expr.return_type))
+            }
             TypeExpr::Tuple(tuple_type_expr_key) => {
                 self.ast.types_exprs.tuples[*tuple_type_expr_key].span
             }

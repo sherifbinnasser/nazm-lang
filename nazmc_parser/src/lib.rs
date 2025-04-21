@@ -773,6 +773,34 @@ impl<'a> ParseErrorsReporter<'a> {
                     self.report_unclosed_delimiter(slice_type.open_bracket.span);
                 }
             }
+            Type::FnPtr(fn_ptr_type) => {
+                match &fn_ptr_type.params_types {
+                    Ok(tuple) => self.check_tuple_type(tuple),
+                    Err(err) => {
+                        self.report_expected(
+                            "`(`",
+                            err,
+                            vec![(
+                                fn_ptr_type.fn_keyword.span,
+                                vec!["يُتوقَّع تعريف نوع مؤشر الدالة".into()],
+                            )],
+                        );
+                        return;
+                    }
+                }
+
+                match &fn_ptr_type.return_type {
+                    Ok(lambda_typ) => self.check_type_result(&lambda_typ.typ),
+                    Err(err) => self.report_expected(
+                        "`->`",
+                        err,
+                        vec![(
+                            fn_ptr_type.fn_keyword.span,
+                            vec!["يُتوقَّع تعريف نوع مؤشر الدالة".into()],
+                        )],
+                    ),
+                }
+            }
             Type::Paren(paren_type) => {
                 self.check_tuple_type(&paren_type.tuple);
 

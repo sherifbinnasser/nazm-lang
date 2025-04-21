@@ -560,6 +560,43 @@ impl<'a> ASTValidator<'a> {
                         nazmc_ast::TypeExpr::Slice(key)
                     }
                 }
+                Type::FnPtr(fn_ptr_type) => {
+                    let fn_keyword_span = fn_ptr_type.fn_keyword.span;
+
+                    let mut params_types = ThinVec::new();
+
+                    let params_types_nodes = fn_ptr_type.params_types.unwrap();
+
+                    let return_type_node = fn_ptr_type.return_type.unwrap().typ.unwrap();
+
+                    if let Some(PunctuatedType {
+                        first_item,
+                        rest_items,
+                        trailing_comma: _,
+                    }) = params_types_nodes.items
+                    {
+                        let first = self.lower_type(first_item.unwrap());
+                        params_types.push(first);
+                        for r in rest_items {
+                            let r = self.lower_type(r.unwrap().item);
+                            params_types.push(r);
+                        }
+                    }
+
+                    let return_type = self.lower_type(return_type_node);
+
+                    let key =
+                        self.ast
+                            .types_exprs
+                            .fn_ptrs
+                            .push_and_get_key(nazmc_ast::FnPtrTypeExpr {
+                                fn_keyword_span,
+                                params_types,
+                                return_type,
+                            });
+
+                    nazmc_ast::TypeExpr::FnPtr(key)
+                }
                 Type::Paren(paren_type) => {
                     let span = paren_type
                         .tuple

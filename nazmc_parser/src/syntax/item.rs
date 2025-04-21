@@ -100,7 +100,7 @@ pub(crate) struct Fn {
     pub(crate) fn_keyword: FnKeyword,
     pub(crate) name: ParseResult<Id>,
     pub(crate) params_decl: ParseResult<FnParams>,
-    pub(crate) return_type: Option<ColonWithType>,
+    pub(crate) return_type: Option<LambdaType>,
     /// This must be checked that it doesn't have a lambda arrow
     pub(crate) body: ParseResult<LambdaExpr>,
 }
