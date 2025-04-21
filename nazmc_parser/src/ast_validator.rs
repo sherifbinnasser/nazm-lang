@@ -426,7 +426,7 @@ impl<'a> ASTValidator<'a> {
 
                     self.current_fn_scope_key = Some(ScopeKey::from(self.ast.scopes.len()));
 
-                    let scope_key = self.lower_lambda_as_body(f.body.unwrap());
+                    let scope_key = self.lower_lambda_as_body(f.body.unwrap(), true);
 
                     self.current_fn_scope_key = None;
 
@@ -770,7 +770,11 @@ impl<'a> ASTValidator<'a> {
     }
 
     #[inline]
-    fn lower_lambda_as_body(&mut self, lambda: LambdaExpr) -> nazmc_ast::ScopeKey {
+    fn lower_lambda_as_body(
+        &mut self,
+        lambda: LambdaExpr,
+        is_fn_scope: bool,
+    ) -> nazmc_ast::ScopeKey {
         self.lower_lambda_stms_and_return_expr(
             lambda.stms,
             lambda.last_expr,
@@ -778,6 +782,7 @@ impl<'a> ASTValidator<'a> {
                 .open_curly
                 .span
                 .merged_with(&lambda.close_curly.unwrap().span),
+            is_fn_scope,
         )
     }
 
@@ -786,6 +791,7 @@ impl<'a> ASTValidator<'a> {
         stms: Vec<ParseResult<Stm>>,
         return_expr: Option<Expr>,
         span: Span,
+        is_fn_scope: bool,
     ) -> nazmc_ast::ScopeKey {
         let scope = nazmc_ast::Scope {
             span,
@@ -825,8 +831,8 @@ impl<'a> ASTValidator<'a> {
 
                     self.current_loop_scope_key = Some(ScopeKey::from(self.ast.scopes.len()));
 
-                    let scope_key =
-                        self.lower_lambda_as_body(while_stm.conditional_block.block.unwrap());
+                    let scope_key = self
+                        .lower_lambda_as_body(while_stm.conditional_block.block.unwrap(), false);
 
                     self.current_loop_scope_key = outter_loop_scope_key;
 
@@ -856,8 +862,10 @@ impl<'a> ASTValidator<'a> {
 
         self.current_scope_key = last_scope_key;
 
-        self.ast.state.scope_events[self.current_scope_key]
-            .push(nazmc_ast::ScopeEvent::Scope(scope_key));
+        if !is_fn_scope {
+            self.ast.state.scope_events[self.current_scope_key]
+                .push(nazmc_ast::ScopeEvent::Scope(scope_key));
+        }
 
         scope_key
     }
@@ -1521,8 +1529,12 @@ impl<'a> ASTValidator<'a> {
 
         self.current_lambda_scope_key = Some(ScopeKey::from(self.ast.scopes.len()));
 
-        let lambda_scope_key =
-            self.lower_lambda_stms_and_return_expr(lambda_expr.stms, lambda_expr.last_expr, span);
+        let lambda_scope_key = self.lower_lambda_stms_and_return_expr(
+            lambda_expr.stms,
+            lambda_expr.last_expr,
+            span,
+            false,
+        );
 
         self.current_lambda_scope_key = outter_lambda_scope;
 
@@ -1575,7 +1587,7 @@ impl<'a> ASTValidator<'a> {
 
     fn lower_if_expr(&mut self, if_expr: IfExpr) -> nazmc_ast::IfExpr {
         let if_condition = self.lower_expr(if_expr.conditional_block.condition.unwrap());
-        let if_body = self.lower_lambda_as_body(if_expr.conditional_block.block.unwrap());
+        let if_body = self.lower_lambda_as_body(if_expr.conditional_block.block.unwrap(), false);
 
         let if_ = (if_expr.if_keyword.span, if_condition, if_body);
 
@@ -1583,7 +1595,7 @@ impl<'a> ASTValidator<'a> {
 
         for else_if in if_expr.else_ifs {
             let condition = self.lower_expr(else_if.conditional_block.condition.unwrap());
-            let body = self.lower_lambda_as_body(else_if.conditional_block.block.unwrap());
+            let body = self.lower_lambda_as_body(else_if.conditional_block.block.unwrap(), false);
 
             else_ifs.push((
                 else_if
@@ -1596,7 +1608,7 @@ impl<'a> ASTValidator<'a> {
         }
 
         let else_ = if_expr.else_cluase.map(|e| {
-            let body = self.lower_lambda_as_body(e.block.unwrap());
+            let body = self.lower_lambda_as_body(e.block.unwrap(), false);
             (e.else_keyword.span, body)
         });
 
