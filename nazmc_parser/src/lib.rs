@@ -804,7 +804,6 @@ impl<'a> ParseErrorsReporter<'a> {
         match typ {
             Type::Path(simple_path) => self.check_simple_path(simple_path),
             Type::Ptr(ptr_type) => self.check_type_result(&ptr_type.typ),
-            Type::Ref(ref_type) => self.check_type_result(&ref_type.typ),
             Type::Slice(slice_type) => {
                 self.check_type_result(&slice_type.typ);
                 if let Some(ArraySizeExpr { semicolon: _, expr }) = &slice_type.array_size {

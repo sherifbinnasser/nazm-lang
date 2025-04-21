@@ -553,7 +553,7 @@ impl<'a> ASTValidator<'a> {
         let typ_expr =
             match typ {
                 Type::Path(simple_path) => {
-                    let item_path = self.lower_simple_path(simple_path);
+                    let item_path = self.lower_simple_path(*simple_path);
                     let type_path_key = self.ast.types_exprs.paths.push_and_get_key(item_path);
                     nazmc_ast::TypeExpr::Path(type_path_key)
                 }
@@ -586,35 +586,6 @@ impl<'a> ASTValidator<'a> {
                                 });
 
                         nazmc_ast::TypeExpr::Ptr(key)
-                    }
-                }
-                Type::Ref(ref_type) => {
-                    let underlying_typ = self.lower_type(ref_type.typ.unwrap());
-                    let span = ref_type.hash.span;
-                    if let Some(mut_) = ref_type.mut_keyword {
-                        let span = span.merged_with(&mut_.span);
-
-                        let key = self.ast.types_exprs.refs_mut.push_and_get_key(
-                            nazmc_ast::RefMutTypeExpr {
-                                underlying_typ,
-                                file_key: self.file_key,
-                                span,
-                            },
-                        );
-
-                        nazmc_ast::TypeExpr::RefMut(key)
-                    } else {
-                        let key =
-                            self.ast
-                                .types_exprs
-                                .refs
-                                .push_and_get_key(nazmc_ast::RefTypeExpr {
-                                    underlying_typ,
-                                    file_key: self.file_key,
-                                    span,
-                                });
-
-                        nazmc_ast::TypeExpr::Ref(key)
                     }
                 }
                 Type::Slice(slice_type) => {

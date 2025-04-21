@@ -69,9 +69,7 @@ impl<'a> SemanticsAnalyzer<'a> {
         match comp_ty {
             CompositeType::Slice(inner) => format!("[{}]", self.fmt_ty(&inner)),
             CompositeType::Ptr(inner) => format!("*{}", self.fmt_ty(&inner)),
-            CompositeType::Ref(inner) => format!("#{}", self.fmt_ty(&inner)),
             CompositeType::PtrMut(inner) => format!("*متغير {}", self.fmt_ty(&inner)),
-            CompositeType::RefMut(inner) => format!("#متغير {}", self.fmt_ty(&inner)),
             CompositeType::Array {
                 underlying_typ,
                 size,
@@ -128,7 +126,6 @@ impl<'a> SemanticsAnalyzer<'a> {
             PrimitiveType::F8 => format!("ع8"),
             PrimitiveType::Bool => format!("شرط"),
             PrimitiveType::Char => format!("حرف"),
-            PrimitiveType::Str => format!("متن"),
         }
     }
 
@@ -146,18 +143,8 @@ impl<'a> SemanticsAnalyzer<'a> {
                 expr.span
                     .merged_with(&self.get_type_expr_span(expr.underlying_typ))
             }
-            TypeExpr::Ref(ref_type_expr_key) => {
-                let expr = &self.ast.types_exprs.refs[*ref_type_expr_key];
-                expr.span
-                    .merged_with(&self.get_type_expr_span(expr.underlying_typ))
-            }
             TypeExpr::PtrMut(ptr_mut_type_expr_key) => {
                 let expr = &self.ast.types_exprs.ptrs_mut[*ptr_mut_type_expr_key];
-                expr.span
-                    .merged_with(&self.get_type_expr_span(expr.underlying_typ))
-            }
-            TypeExpr::RefMut(ref_mut_type_expr_key) => {
-                let expr = &self.ast.types_exprs.refs_mut[*ref_mut_type_expr_key];
                 expr.span
                     .merged_with(&self.get_type_expr_span(expr.underlying_typ))
             }

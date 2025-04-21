@@ -2,9 +2,8 @@ use super::*;
 
 #[derive(NazmcParse, Debug)]
 pub(crate) enum Type {
-    Path(SimplePath),
+    Path(Box<SimplePath>),
     Ptr(Box<PtrType>),
-    Ref(Box<RefType>),
     Slice(Box<SliceType>),
     Paren(Box<ParenType>),
 }
@@ -12,13 +11,6 @@ pub(crate) enum Type {
 #[derive(NazmcParse, Debug)]
 pub(crate) struct PtrType {
     pub(crate) star: StarSymbol,
-    pub(crate) mut_keyword: Option<MutKeyword>,
-    pub(crate) typ: ParseResult<Type>,
-}
-
-#[derive(NazmcParse, Debug)]
-pub(crate) struct RefType {
-    pub(crate) hash: HashSymbol,
     pub(crate) mut_keyword: Option<MutKeyword>,
     pub(crate) typ: ParseResult<Type>,
 }

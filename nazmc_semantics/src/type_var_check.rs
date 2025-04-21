@@ -123,9 +123,7 @@ impl<'a> SemanticsAnalyzer<'a> {
             ConcreteType::Composite(comp_ty) => match comp_ty {
                 CompositeType::Slice(underlying_typ)
                 | CompositeType::Ptr(underlying_typ)
-                | CompositeType::Ref(underlying_typ)
                 | CompositeType::PtrMut(underlying_typ)
-                | CompositeType::RefMut(underlying_typ)
                 | CompositeType::Array {
                     underlying_typ,
                     size: _,

@@ -150,7 +150,6 @@ impl IdKey {
     pub const F8_TYPE: Self = Self(15); // "ع8"
     pub const BOOL_TYPE: Self = Self(16); // "شرط"
     pub const CHAR_TYPE: Self = Self(17); // "حرف"
-    pub const STR_TYPE: Self = Self(18); // "متن"
 }
 
 impl IdPoolBuilder {
@@ -177,6 +176,5 @@ impl IdPoolBuilder {
 
         self.get_key(&"شرط".to_string());
         self.get_key(&"حرف".to_string());
-        self.get_key(&"متن".to_string());
     }
 }

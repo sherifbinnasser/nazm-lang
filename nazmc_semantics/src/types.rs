@@ -144,22 +144,11 @@ impl<'a> SemanticsAnalyzer<'a> {
                 let underlying_type_key = self.analyze_type_expr(underlying_typ);
                 Type::ptr(underlying_type_key)
             }
-            TypeExpr::Ref(ref_type_expr_key) => {
-                let underlying_typ = self.ast.types_exprs.refs[*ref_type_expr_key].underlying_typ;
-                let underlying_type_key = self.analyze_type_expr(underlying_typ);
-                Type::reference(underlying_type_key)
-            }
             TypeExpr::PtrMut(ptr_mut_type_expr_key) => {
                 let underlying_typ =
                     self.ast.types_exprs.ptrs_mut[*ptr_mut_type_expr_key].underlying_typ;
                 let underlying_type_key = self.analyze_type_expr(underlying_typ);
                 Type::ptr_mut(underlying_type_key)
-            }
-            TypeExpr::RefMut(ref_mut_type_expr_key) => {
-                let underlying_typ =
-                    self.ast.types_exprs.refs_mut[*ref_mut_type_expr_key].underlying_typ;
-                let underlying_type_key = self.analyze_type_expr(underlying_typ);
-                Type::ref_mut(underlying_type_key)
             }
         }
     }
@@ -208,7 +197,6 @@ impl<'a> SemanticsAnalyzer<'a> {
             IdKey::F8_TYPE => Type::f8(),
             IdKey::BOOL_TYPE => Type::boolean(),
             IdKey::CHAR_TYPE => Type::character(),
-            IdKey::STR_TYPE => Type::string(),
             _ => unreachable!(),
         }
     }
@@ -298,8 +286,6 @@ impl<'a> SemanticsAnalyzer<'a> {
         }
 
         let mut types = ThinVec::with_capacity(types_len);
-        let mut max_align = 0;
-        let mut offset: u32 = 0;
 
         for i in 0..types_len {
             let type_expr_key = self.ast.types_exprs.tuples[key].types[i];

@@ -22,9 +22,7 @@ new_data_pool_key! { PathTypeExprKey }
 new_data_pool_key! { ParenTypeExprKey }
 new_data_pool_key! { SliceTypeExprKey }
 new_data_pool_key! { PtrTypeExprKey }
-new_data_pool_key! { RefTypeExprKey }
 new_data_pool_key! { PtrMutTypeExprKey }
-new_data_pool_key! { RefMutTypeExprKey }
 new_data_pool_key! { TupleTypeExprKey }
 new_data_pool_key! { ArrayTypeExprKey }
 new_data_pool_key! { LambdaTypeExprKey }

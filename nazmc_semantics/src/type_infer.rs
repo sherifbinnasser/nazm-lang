@@ -51,9 +51,7 @@ pub enum ConcreteType {
 pub enum CompositeType {
     Slice(Box<Type>),
     Ptr(Box<Type>),
-    Ref(Box<Type>),
     PtrMut(Box<Type>),
-    RefMut(Box<Type>),
     Array {
         underlying_typ: Box<Type>,
         size: u32,
@@ -89,7 +87,6 @@ pub enum PrimitiveType {
     F8,
     Bool,
     Char,
-    Str,
 }
 
 impl NumberConstraints {
@@ -163,9 +160,7 @@ impl CompositeType {
         match self {
             CompositeType::Slice(underlying_typ)
             | CompositeType::Ptr(underlying_typ)
-            | CompositeType::Ref(underlying_typ)
             | CompositeType::PtrMut(underlying_typ)
-            | CompositeType::RefMut(underlying_typ)
             | CompositeType::Array {
                 underlying_typ,
                 size: _,
@@ -215,19 +210,9 @@ impl Type {
         Self::composite(CompositeType::Ptr(Box::new(inner)))
     }
 
-    /// Create a `Ref` type.
-    pub fn reference(inner: Type) -> Self {
-        Self::composite(CompositeType::Ref(Box::new(inner)))
-    }
-
     /// Create a `PtrMut` type.
     pub fn ptr_mut(inner: Type) -> Self {
         Self::composite(CompositeType::PtrMut(Box::new(inner)))
-    }
-
-    /// Create a `RefMut` type.
-    pub fn ref_mut(inner: Type) -> Self {
-        Self::composite(CompositeType::RefMut(Box::new(inner)))
     }
 
     /// Create a `Array` type.
@@ -334,11 +319,6 @@ impl Type {
     pub fn character() -> Self {
         Self::primitive(PrimitiveType::Char)
     }
-
-    /// Create a `ConcreteType::Str` type.
-    pub fn string() -> Self {
-        Self::primitive(PrimitiveType::Str)
-    }
 }
 
 impl Default for Type {
@@ -411,10 +391,7 @@ impl TypeInferenceCtx {
                 CompositeType::Slice(Box::new(self.apply(inner.as_ref())))
             }
             CompositeType::Ptr(inner) => CompositeType::Ptr(Box::new(self.apply(inner))),
-            CompositeType::Ref(inner) => CompositeType::Ref(Box::new(self.apply(inner))),
             CompositeType::PtrMut(inner) => CompositeType::PtrMut(Box::new(self.apply(inner))),
-            CompositeType::RefMut(inner) => CompositeType::RefMut(Box::new(self.apply(inner))),
-
             CompositeType::Array {
                 underlying_typ,
                 size,
@@ -560,9 +537,7 @@ impl TypeInferenceCtx {
         match (c1, c2) {
             (CompositeType::Slice(t1), CompositeType::Slice(t2))
             | (CompositeType::Ptr(t1), CompositeType::Ptr(t2))
-            | (CompositeType::Ref(t1), CompositeType::Ref(t2))
-            | (CompositeType::PtrMut(t1), CompositeType::PtrMut(t2))
-            | (CompositeType::RefMut(t1), CompositeType::RefMut(t2)) => self.unify(&t1, &t2),
+            | (CompositeType::PtrMut(t1), CompositeType::PtrMut(t2)) => self.unify(&t1, &t2),
 
             (
                 CompositeType::Array {

@@ -47,8 +47,6 @@ impl<'a> NIRBuilder<'a> {
                     };
                     Type::MutPtr(self.get_unique_type(underlying_typ))
                 }
-                crate::CompositeType::Ref(underlying_typ) => todo!(),
-                crate::CompositeType::RefMut(underlying_typ) => todo!(),
                 crate::CompositeType::Array {
                     underlying_typ,
                     size,
@@ -168,9 +166,6 @@ impl<'a> NIRBuilder<'a> {
                 crate::type_infer::PrimitiveType::F8 => Type::F8,
                 crate::type_infer::PrimitiveType::Bool => Type::Bool,
                 crate::type_infer::PrimitiveType::Char => Type::Char,
-                crate::type_infer::PrimitiveType::Str => {
-                    Type::Slice(self.all_types.get_key(&Type::U1))
-                }
             },
         };
 

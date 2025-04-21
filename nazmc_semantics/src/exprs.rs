@@ -87,7 +87,7 @@ impl<'a> SemanticsAnalyzer<'a> {
 
     fn infer_lit_expr(&mut self, lit_expr: LiteralExpr) -> Type {
         match lit_expr {
-            LiteralExpr::Str(_) => Type::reference(Type::string()),
+            LiteralExpr::Str(_) => Type::slice(Type::u1()),
             LiteralExpr::Char(_) => Type::character(),
             LiteralExpr::Bool(_) => Type::boolean(),
             LiteralExpr::Num(num_kind) => match num_kind {
