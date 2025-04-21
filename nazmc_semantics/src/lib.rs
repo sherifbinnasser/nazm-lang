@@ -31,15 +31,13 @@ enum CycleDetected {
     #[default]
     None,
     Const(ConstKey),
-    TupleStruct(TupleStructKey),
-    FieldsStruct(FieldsStructKey),
+    Struct(StructKey),
 }
 
 #[derive(Default)]
 struct SemanticsStack {
     consts: HashMap<ConstKey, ()>,
-    tuple_structs: HashMap<TupleStructKey, ()>,
-    fields_structs: HashMap<FieldsStructKey, ()>,
+    fields_structs: HashMap<StructKey, ()>,
     is_cycle_detected: CycleDetected,
 }
 
@@ -87,8 +85,7 @@ impl<'a> SemanticsAnalyzer<'a> {
             typed_ast: TypedAST {
                 consts: HashMap::with_capacity(ast.consts.len()),
                 statics: HashMap::with_capacity(ast.statics.len()),
-                tuple_structs: HashMap::with_capacity(ast.tuple_structs.len()),
-                fields_structs: HashMap::with_capacity(ast.fields_structs.len()),
+                structs: HashMap::with_capacity(ast.structs.len()),
                 fns_signatures: HashMap::with_capacity(ast.fns.len()),
                 lets: HashMap::with_capacity(ast.lets.len()),
                 exprs: HashMap::with_capacity(ast.exprs.len()),
@@ -96,7 +93,7 @@ impl<'a> SemanticsAnalyzer<'a> {
             },
             nir_builder: NIRBuilder {
                 nir: NIR {
-                    structs: TiVec::with_capacity(ast.fields_structs.len()),
+                    structs: TiVec::with_capacity(ast.structs.len()),
                     statics: TiVec::with_capacity(ast.statics.len()),
                     fns: TiVec::with_capacity(ast.fns.len()),
                     ..Default::default()
@@ -115,8 +112,8 @@ impl<'a> SemanticsAnalyzer<'a> {
         //     self.analyze_type_expr(type_expr_key);
         // }
 
-        for struct_key in self.ast.fields_structs.keys() {
-            self.analyze_fields_struct(struct_key);
+        for struct_key in self.ast.structs.keys() {
+            self.analyze_struct(struct_key);
         }
 
         self.analyze_fn_signatures();
@@ -162,15 +159,15 @@ impl<'a> SemanticsAnalyzer<'a> {
             });
 
         self.ast
-            .fields_structs
+            .structs
             .iter_enumerated()
             .for_each(|(struct_key, _struct)| {
-                let fields = self.ast.fields_structs[struct_key]
+                let fields = self.ast.structs[struct_key]
                     .fields
                     .iter()
                     .map(|(field_info)| {
                         let id = field_info.id.id;
-                        let field_info = &self.typed_ast.fields_structs[&struct_key].fields[&id];
+                        let field_info = &self.typed_ast.structs[&struct_key].fields[&id];
                         let Type::Concrete(field_typ) = &field_info.typ else {
                             unreachable!()
                         };

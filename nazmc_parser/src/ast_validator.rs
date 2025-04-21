@@ -294,83 +294,44 @@ impl<'a> ASTValidator<'a> {
                         id_span,
                     };
 
-                    match s.kind.unwrap() {
-                        StructKind::Unit(_) => {
-                            let key = self
-                                .ast
-                                .unit_structs
-                                .push_and_get_key(nazmc_ast::UnitStruct { info });
+                    let struct_fields = s.fields.unwrap();
 
-                            let item = nazmc_ast::Item::UnitStruct { vis, key };
+                    let mut fields_map = HashMap::new();
+                    let mut fields = ThinVec::new();
 
-                            self.ast.state.pkgs_to_items[self.pkg_key].insert(id_key, item);
-                        }
-                        StructKind::Tuple(tuple_struct_fields) => {
-                            let mut types = ThinVec::new();
+                    if let Some(PunctuatedStructField {
+                        first_item,
+                        rest_items,
+                        trailing_comma: _,
+                    }) = struct_fields.items
+                    {
+                        let (id, field_info) = self.lower_struct_field(first_item.unwrap());
+                        fields_map.insert(id, field_info.id.span);
+                        fields.push(field_info);
 
-                            if let Some(PunctuatedTupleStructField {
-                                first_item,
-                                rest_items,
-                                trailing_comma: _,
-                            }) = tuple_struct_fields.items
-                            {
-                                let first = self.lower_tuple_struct_field(first_item.unwrap());
-                                types.push(first);
+                        for r in rest_items {
+                            let (id, field_info) = self.lower_struct_field(r.unwrap().item);
 
-                                for r in rest_items {
-                                    let typ = self.lower_tuple_struct_field(r.unwrap().item);
-                                    types.push(typ);
-                                }
-                            }
-
-                            let key = self
-                                .ast
-                                .tuple_structs
-                                .push_and_get_key(nazmc_ast::TupleStruct { info, types });
-
-                            let item = nazmc_ast::Item::TupleStruct { vis, key };
-
-                            self.ast.state.pkgs_to_items[self.pkg_key].insert(id_key, item);
-                        }
-                        StructKind::Fields(struct_fields) => {
-                            let mut fields_map = HashMap::new();
-                            let mut fields = ThinVec::new();
-
-                            if let Some(PunctuatedStructField {
-                                first_item,
-                                rest_items,
-                                trailing_comma: _,
-                            }) = struct_fields.items
-                            {
-                                let (id, field_info) = self.lower_struct_field(first_item.unwrap());
+                            if let Some(span_of_field_with_same_id) = fields_map.get(&id) {
+                                self.struct_fields_conflicts_in_files
+                                    .entry((id, self.file_key, name.span))
+                                    .or_insert_with(|| vec![*span_of_field_with_same_id])
+                                    .push(field_info.id.span);
+                            } else {
                                 fields_map.insert(id, field_info.id.span);
                                 fields.push(field_info);
-
-                                for r in rest_items {
-                                    let (id, field_info) = self.lower_struct_field(r.unwrap().item);
-
-                                    if let Some(span_of_field_with_same_id) = fields_map.get(&id) {
-                                        self.struct_fields_conflicts_in_files
-                                            .entry((id, self.file_key, name.span))
-                                            .or_insert_with(|| vec![*span_of_field_with_same_id])
-                                            .push(field_info.id.span);
-                                    } else {
-                                        fields_map.insert(id, field_info.id.span);
-                                        fields.push(field_info);
-                                    }
-                                }
                             }
-
-                            let key = self
-                                .ast
-                                .fields_structs
-                                .push_and_get_key(nazmc_ast::FieldsStruct { info, fields });
-
-                            let item = nazmc_ast::Item::FieldsStruct { vis, key };
-
-                            self.ast.state.pkgs_to_items[self.pkg_key].insert(id_key, item);
                         }
                     }
+
+                    let key = self
+                        .ast
+                        .structs
+                        .push_and_get_key(nazmc_ast::Struct { info, fields });
+
+                    let item = nazmc_ast::Item::Struct { vis, key };
+
+                    self.ast.state.pkgs_to_items[self.pkg_key].insert(id_key, item);
                 }
                 Item::Fn(f) => {
                     let name = f.name.unwrap();
@@ -460,9 +421,7 @@ impl<'a> ASTValidator<'a> {
             .entry(id)
             .or_insert_with(|| {
                 let first_occurrence_info = match *item_with_same_id {
-                    nazmc_ast::Item::UnitStruct { key, .. } => self.ast.unit_structs[key].info,
-                    nazmc_ast::Item::TupleStruct { key, .. } => self.ast.tuple_structs[key].info,
-                    nazmc_ast::Item::FieldsStruct { key, .. } => self.ast.fields_structs[key].info,
+                    nazmc_ast::Item::Struct { key, .. } => self.ast.structs[key].info,
                     nazmc_ast::Item::Const { key, .. } => self.ast.consts[key].info,
                     nazmc_ast::Item::Static { key, .. } => self.ast.statics[key].info,
                     nazmc_ast::Item::Fn { key, .. } => self.ast.fns[key].info,
@@ -483,27 +442,6 @@ impl<'a> ASTValidator<'a> {
             .push(id_span);
 
         return true;
-    }
-
-    fn lower_tuple_struct_field(
-        &mut self,
-        field: TupleStructField,
-    ) -> (nazmc_ast::VisModifier, nazmc_ast::TypeExprKey) {
-        let vis = match field.visibility {
-            Some(Terminal {
-                data: syntax::VisModifierToken::Public,
-                ..
-            }) => nazmc_ast::VisModifier::Public,
-            Some(Terminal {
-                data: syntax::VisModifierToken::Private,
-                ..
-            }) => nazmc_ast::VisModifier::Private,
-            None => nazmc_ast::VisModifier::Default,
-        };
-
-        let typ = self.lower_type(field.typ.unwrap());
-
-        (vis, typ)
     }
 
     fn lower_struct_field(&mut self, field: StructField) -> (IdKey, nazmc_ast::FieldInfo) {
@@ -1377,92 +1315,46 @@ impl<'a> ASTValidator<'a> {
     fn lower_struct_expr(&mut self, struct_expr: StructExpr) -> nazmc_ast::ExprKey {
         let item_path = self.lower_simple_path(struct_expr.path.unwrap());
 
-        if let Some(StructInit::Tuple(tuple_struct)) = struct_expr.init {
-            let span = struct_expr
-                .dot
-                .span
-                .merged_with(&tuple_struct.close_delim.unwrap().span);
+        let init_expr = struct_expr.init.unwrap();
 
-            let mut args = ThinVec::new();
+        let span = struct_expr
+            .dot
+            .span
+            .merged_with(&init_expr.close_delim.unwrap().span);
 
-            if let Some(PunctuatedExpr {
-                first_item,
-                rest_items,
-                trailing_comma: _,
-            }) = tuple_struct.items
-            {
-                let first = self.lower_expr(first_item.unwrap());
-                args.push(first);
-                for r in rest_items {
-                    args.push(self.lower_expr(r.unwrap().item));
-                }
+        let mut fields = ThinVec::new();
+
+        if let Some(PunctuatedFieldInitExpr {
+            first_item,
+            rest_items,
+            trailing_comma: _,
+        }) = init_expr.items
+        {
+            let first = self.lower_struct_field_expr(first_item.unwrap());
+            fields.push(first);
+            for r in rest_items {
+                fields.push(self.lower_struct_field_expr(r.unwrap().item));
             }
-
-            let tuple_struct_path_key = self
-                .ast
-                .state
-                .paths
-                .tuple_structs_paths_exprs
-                .push_and_get_key(item_path);
-
-            let tuple_struct: Box<nazmc_ast::TupleStructExpr> =
-                Box::new(nazmc_ast::TupleStructExpr {
-                    path_key: tuple_struct_path_key,
-                    args,
-                });
-
-            self.new_expr(span, nazmc_ast::ExprKind::TupleStruct(tuple_struct))
-        } else if let Some(StructInit::Fields(fields_struct)) = struct_expr.init {
-            let span = struct_expr
-                .dot
-                .span
-                .merged_with(&fields_struct.close_delim.unwrap().span);
-
-            let mut fields = ThinVec::new();
-
-            if let Some(PunctuatedStructFieldInitExpr {
-                first_item,
-                rest_items,
-                trailing_comma: _,
-            }) = fields_struct.items
-            {
-                let first = self.lower_struct_field_expr(first_item.unwrap());
-                fields.push(first);
-                for r in rest_items {
-                    fields.push(self.lower_struct_field_expr(r.unwrap().item));
-                }
-            }
-
-            let fields_struct_path_key = self
-                .ast
-                .state
-                .paths
-                .field_structs_paths_exprs
-                .push_and_get_key(item_path);
-
-            let fields_struct = Box::new(nazmc_ast::FieldsStructExpr {
-                path_key: fields_struct_path_key,
-                fields,
-            });
-
-            self.new_expr(span, nazmc_ast::ExprKind::FieldsStruct(fields_struct))
-        } else {
-            let span = struct_expr.dot.span.merged_with(&item_path.item.span);
-
-            let unit_struct_path_key = self
-                .ast
-                .state
-                .paths
-                .unit_structs_paths_exprs
-                .push_and_get_key(item_path);
-
-            self.new_expr(span, nazmc_ast::ExprKind::UnitStruct(unit_struct_path_key))
         }
+
+        let fields_struct_path_key = self
+            .ast
+            .state
+            .paths
+            .structs_paths_exprs
+            .push_and_get_key(item_path);
+
+        let fields_struct = Box::new(nazmc_ast::StructExpr {
+            path_key: fields_struct_path_key,
+            fields,
+        });
+
+        self.new_expr(span, nazmc_ast::ExprKind::Struct(fields_struct))
     }
 
     fn lower_struct_field_expr(
         &mut self,
-        e: StructFieldInitExpr,
+        e: FieldInitExpr,
     ) -> (nazmc_ast::ASTId, nazmc_ast::ExprKey) {
         let name = nazmc_ast::ASTId {
             span: e.name.span,

@@ -1,25 +1,14 @@
 use nazmc_data_pool::IdKey;
 
-use crate::{
-    ConstKey, FieldsStructKey, FnKey, LetStmKey, ScopeKey, StaticKey, TupleStructKey,
-    UnitStructKey, VisModifier,
-};
+use crate::{ConstKey, FnKey, LetStmKey, ScopeKey, StaticKey, StructKey, VisModifier};
 
 #[derive(Clone, Copy, Default, Debug)]
 pub enum Item {
     #[default]
     Pkg,
-    UnitStruct {
+    Struct {
         vis: VisModifier,
-        key: UnitStructKey,
-    },
-    TupleStruct {
-        vis: VisModifier,
-        key: TupleStructKey,
-    },
-    FieldsStruct {
-        vis: VisModifier,
-        key: FieldsStructKey,
+        key: StructKey,
     },
     Const {
         vis: VisModifier,

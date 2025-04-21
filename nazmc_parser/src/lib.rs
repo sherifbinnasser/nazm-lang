@@ -529,11 +529,11 @@ impl<'a> ParseErrorsReporter<'a> {
         let Struct {
             struct_keyword,
             name,
-            kind,
+            fields,
         } = s;
 
         let missing_name = name.is_err();
-        let missing_decl = kind.is_err();
+        let missing_decl = fields.is_err();
 
         if missing_name && missing_decl {
             self.report(
@@ -554,89 +554,49 @@ impl<'a> ParseErrorsReporter<'a> {
             );
         }
 
-        let kind = match kind {
-            Ok(kind) => kind,
+        let StructFields {
+            open_delim,
+            items,
+            close_delim,
+        } = match fields {
+            Ok(fields) => fields,
             Err(err) => {
-                self.report_expected("بعد الهيكل `؛` أو `{` أو `(`", err, vec![]);
+                self.report_expected("`{` بعد اسم الهيكل", err, vec![]);
                 return;
             }
         };
-
-        match kind {
-            StructKind::Unit(_) => {}
-            StructKind::Tuple(TupleStructFields {
-                open_delim,
-                items,
-                close_delim,
-            }) => {
-                if let Some(PunctuatedTupleStructField {
-                    first_item,
-                    rest_items,
-                    trailing_comma: _,
-                }) = items
-                {
-                    match first_item {
-                        Ok(TupleStructField { visibility: _, typ }) => self.check_type_result(typ),
-                        Err(err) => {
-                            self.report_expected("نوع", err, vec![]);
-                        }
-                    }
-
-                    for field in rest_items {
-                        match field {
-                            Ok(CommaWithTupleStructField {
-                                comma: _,
-                                item: TupleStructField { visibility: _, typ },
-                            }) => self.check_type_result(typ),
-                            Err(err) => {
-                                self.report_expected_comma_or_item("نوع", err, vec![]);
-                            }
-                        }
-                    }
-                }
-                if close_delim.is_err() {
-                    self.report_unclosed_delimiter(open_delim.span);
+        if let Some(PunctuatedStructField {
+            first_item,
+            rest_items,
+            trailing_comma: _,
+        }) = &items
+        {
+            match first_item {
+                Ok(StructField { typ, .. }) => match typ {
+                    Ok(ColonWithType { colon: _, typ }) => self.check_type_result(typ),
+                    Err(err) => self.report_expected("`:` ثم نوع الحقل", err, vec![]),
+                },
+                Err(err) => {
+                    self.report_expected("حقل", err, vec![]);
                 }
             }
-            StructKind::Fields(StructFields {
-                open_delim,
-                items,
-                close_delim,
-            }) => {
-                if let Some(PunctuatedStructField {
-                    first_item,
-                    rest_items,
-                    trailing_comma: _,
-                }) = &items
-                {
-                    match first_item {
-                        Ok(StructField { typ, .. }) => match typ {
-                            Ok(ColonWithType { colon: _, typ }) => self.check_type_result(typ),
-                            Err(err) => self.report_expected("`:` ثم نوع الحقل", err, vec![]),
-                        },
-                        Err(err) => {
-                            self.report_expected("حقل", err, vec![]);
-                        }
-                    }
 
-                    for field in rest_items {
-                        match field {
-                            Ok(CommaWithStructField {
-                                item: StructField { typ, .. },
-                                ..
-                            }) => match typ {
-                                Ok(ColonWithType { colon: _, typ }) => self.check_type_result(typ),
-                                Err(err) => self.report_expected("`:` ثم نوع الحقل", err, vec![]),
-                            },
-                            Err(err) => self.report_expected_comma_or_item("حقل", err, vec![]),
-                        }
-                    }
-                }
-
-                if close_delim.is_err() {
-                    self.report_unclosed_delimiter(open_delim.span);
+            for field in rest_items {
+                match field {
+                    Ok(CommaWithStructField {
+                        item: StructField { typ, .. },
+                        ..
+                    }) => match typ {
+                        Ok(ColonWithType { colon: _, typ }) => self.check_type_result(typ),
+                        Err(err) => self.report_expected("`:` ثم نوع الحقل", err, vec![]),
+                    },
+                    Err(err) => self.report_expected_comma_or_item("حقل", err, vec![]),
                 }
             }
+        }
+
+        if close_delim.is_err() {
+            self.report_unclosed_delimiter(open_delim.span);
         }
     }
 
@@ -1129,47 +1089,45 @@ impl<'a> ParseErrorsReporter<'a> {
                     Err(err) => self.report_expected("اسم هيكل أو مساره", err, vec![]),
                 }
 
-                match init {
-                    Some(StructInit::Fields(StructFieldsInitExpr {
-                        open_delim,
-                        items,
-                        close_delim,
-                    })) => {
-                        if close_delim.is_err() {
-                            self.report_unclosed_delimiter(open_delim.span);
-                        }
+                let StructInitExpr {
+                    open_delim,
+                    items,
+                    close_delim,
+                } = match init {
+                    Ok(init) => init,
+                    Err(err) => {
+                        self.report_expected("`{` ثم حقول الهيكل", err, vec![]);
+                        return;
+                    }
+                };
 
-                        if let Some(PunctuatedStructFieldInitExpr {
-                            first_item,
-                            rest_items,
-                            trailing_comma: _,
-                        }) = items
-                        {
-                            match first_item {
-                                Ok(node) => match &node.expr {
-                                    Some(node) => self.check_expr_result(&node.expr),
-                                    None => {}
-                                },
-                                Err(err) => self.report_expected("مُعرِّف", err, vec![]),
-                            }
+                if close_delim.is_err() {
+                    self.report_unclosed_delimiter(open_delim.span);
+                }
 
-                            for result in rest_items {
-                                match result {
-                                    Ok(CommaWithStructFieldInitExpr { comma: _, item }) => {
-                                        match &item.expr {
-                                            Some(node) => self.check_expr_result(&node.expr),
-                                            None => {}
-                                        }
-                                    }
-                                    Err(err) => {
-                                        self.report_expected_comma_or_item("مُعرِّف", err, vec![])
-                                    }
-                                }
-                            }
+                if let Some(PunctuatedFieldInitExpr {
+                    first_item,
+                    rest_items,
+                    trailing_comma: _,
+                }) = items
+                {
+                    match first_item {
+                        Ok(node) => match &node.expr {
+                            Some(node) => self.check_expr_result(&node.expr),
+                            None => {}
+                        },
+                        Err(err) => self.report_expected("مُعرِّف", err, vec![]),
+                    }
+
+                    for result in rest_items {
+                        match result {
+                            Ok(CommaWithFieldInitExpr { comma: _, item }) => match &item.expr {
+                                Some(node) => self.check_expr_result(&node.expr),
+                                None => {}
+                            },
+                            Err(err) => self.report_expected_comma_or_item("مُعرِّف", err, vec![]),
                         }
                     }
-                    Some(StructInit::Tuple(paren_expr)) => self.check_paren_expr(paren_expr),
-                    None => {}
                 }
             }
         }

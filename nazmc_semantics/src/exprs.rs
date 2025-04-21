@@ -22,13 +22,6 @@ impl<'a> SemanticsAnalyzer<'a> {
                 self.infer_path_with_pkg_expr(path_with_pkg_key),
                 ExprKind::PathInPkg(path_with_pkg_key),
             ),
-            ExprKind::UnitStruct(unit_struct_path_key) => {
-                let key = self.ast.state.unit_structs_paths_exprs[unit_struct_path_key];
-                (
-                    Type::unit_struct(key),
-                    ExprKind::UnitStruct(unit_struct_path_key),
-                )
-            }
             ExprKind::Tuple(thin_vec) => {
                 let types = thin_vec.iter().map(|&expr_key| self.infer(expr_key));
                 (Type::tuple(types), ExprKind::Tuple(thin_vec))
@@ -45,9 +38,9 @@ impl<'a> SemanticsAnalyzer<'a> {
                 self.infer_tuple_idx_expr(&tuple_idx_expr),
                 ExprKind::TupleIdx(tuple_idx_expr),
             ),
-            ExprKind::FieldsStruct(fields_struct_expr) => (
-                self.infer_fields_struct_expr(&fields_struct_expr, expr_key),
-                ExprKind::FieldsStruct(fields_struct_expr),
+            ExprKind::Struct(struct_expr) => (
+                self.infer_struct_expr(&struct_expr, expr_key),
+                ExprKind::Struct(struct_expr),
             ),
             ExprKind::If(if_expr) => (self.infer_if_expr(&if_expr), ExprKind::If(if_expr)),
             ExprKind::Field(field_expr) => (
@@ -58,7 +51,6 @@ impl<'a> SemanticsAnalyzer<'a> {
                 self.infer_lambda_expr(&lambda_expr),
                 ExprKind::Lambda(lambda_expr),
             ),
-            ExprKind::TupleStruct(_) => todo!(),
             ExprKind::ArrayRepeated(_) => todo!(),
             ExprKind::On => todo!(),
             ExprKind::UnaryOp(unary_op_expr) => (
@@ -324,17 +316,22 @@ impl<'a> SemanticsAnalyzer<'a> {
         }
     }
 
-    fn infer_fields_struct_expr(
+    fn infer_struct_expr(
         &mut self,
-        FieldsStructExpr {
+        StructExpr {
             path_key,
             fields: fields_exprs,
-        }: &FieldsStructExpr,
+        }: &StructExpr,
         expr_key: ExprKey,
     ) -> Type {
-        let struct_key = self.ast.state.field_structs_paths_exprs[*path_key];
+        let struct_key = self.ast.state.structs_paths_exprs[*path_key];
 
-        let mut struct_fields = self.typed_ast.fields_structs[&struct_key].fields.clone();
+        if let Some(typ) = self.try_analyze_as_primitive_type(struct_key) {
+            self.add_primitive_cannot_be_initiated(&typ, self.get_expr_span(expr_key));
+            return typ;
+        }
+
+        let mut struct_fields = self.typed_ast.structs[&struct_key].fields.clone();
 
         let mut used_fields = HashMap::with_capacity(struct_fields.len());
 
@@ -393,20 +390,20 @@ impl<'a> SemanticsAnalyzer<'a> {
             );
         }
 
-        Type::fields_struct(struct_key)
+        Type::_struct(struct_key)
     }
 
     fn check_field_is_accessible_in_current_file(
         &mut self,
-        struct_key: FieldsStructKey,
+        struct_key: StructKey,
         field_idx: u32,
         field_id_expr_span: Span,
     ) {
-        let struct_file_key = self.ast.fields_structs[struct_key].info.file_key;
+        let struct_file_key = self.ast.structs[struct_key].info.file_key;
         let struct_pkg_key = self.files_to_pkgs[struct_file_key];
         let current_file_pkg_key = self.files_to_pkgs[self.current_file_key];
 
-        let vis = self.ast.fields_structs[struct_key].fields[field_idx as usize].vis;
+        let vis = self.ast.structs[struct_key].fields[field_idx as usize].vis;
 
         if matches!(vis, VisModifier::Private) && struct_file_key != self.current_file_key
             || matches!(vis, VisModifier::Default) && struct_pkg_key != current_file_pkg_key
@@ -490,8 +487,8 @@ impl<'a> SemanticsAnalyzer<'a> {
 
         // TODO: Support methods and the length method on slices
         match on_expr_ty {
-            Type::Concrete(ConcreteType::FieldsStruct(struct_key)) => {
-                let struct_fields = &self.typed_ast.fields_structs[&struct_key].fields;
+            Type::Concrete(ConcreteType::Struct(struct_key)) => {
+                let struct_fields = &self.typed_ast.structs[&struct_key].fields;
                 if let Some(FieldInfo { typ, idx }) = struct_fields.get(&name.id) {
                     let ty = typ.clone();
                     self.check_field_is_accessible_in_current_file(struct_key, *idx, name.span);

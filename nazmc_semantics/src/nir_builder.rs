@@ -145,9 +145,7 @@ impl<'a> NIRBuilder<'a> {
                     Type::FnPtr(fn_ptr_type_key)
                 }
             },
-            crate::ConcreteType::UnitStruct(unit_struct_key) => todo!(),
-            crate::ConcreteType::TupleStruct(tuple_struct_key) => todo!(),
-            crate::ConcreteType::FieldsStruct(fields_struct_key) => {
+            crate::ConcreteType::Struct(fields_struct_key) => {
                 Type::Struct(StructKey::from(usize::from(*fields_struct_key)))
             }
             crate::ConcreteType::Primitive(primitive_type) => match primitive_type {
@@ -674,9 +672,8 @@ impl<'a> SemanticsAnalyzer<'a> {
 
                 self.add_new_temp_assign_stm(typ, rvalue)
             }
-            nazmc_ast::ExprKind::FieldsStruct(fields_struct_expr) => {
-                let struct_key =
-                    self.ast.state.field_structs_paths_exprs[fields_struct_expr.path_key];
+            nazmc_ast::ExprKind::Struct(fields_struct_expr) => {
+                let struct_key = self.ast.state.structs_paths_exprs[fields_struct_expr.path_key];
 
                 let struct_key = StructKey::from(usize::from(struct_key));
 
@@ -1180,8 +1177,6 @@ impl<'a> SemanticsAnalyzer<'a> {
             }
             nazmc_ast::ExprKind::Lambda(lambda_expr) => todo!(),
             nazmc_ast::ExprKind::On => todo!(),
-            nazmc_ast::ExprKind::UnitStruct(unit_struct_path_key) => todo!(),
-            nazmc_ast::ExprKind::TupleStruct(tuple_struct_expr) => todo!(),
         };
 
         Operand { typ, kind }

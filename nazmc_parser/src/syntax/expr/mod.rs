@@ -93,33 +93,27 @@ pub(crate) enum AtomicExpr {
 pub(crate) struct StructExpr {
     pub(crate) dot: DotSymbol,
     pub(crate) path: ParseResult<SimplePath>,
-    pub(crate) init: Option<StructInit>,
+    pub(crate) init: ParseResult<StructInitExpr>,
 }
 
 #[derive(NazmcParse, Debug)]
-pub(crate) enum StructInit {
-    Tuple(ParenExpr),
-    Fields(StructFieldsInitExpr),
-}
-
-#[derive(NazmcParse, Debug)]
-pub(crate) struct StructFieldInitExpr {
+pub(crate) struct FieldInitExpr {
     pub(crate) name: Id,
-    pub(crate) expr: Option<StructFieldInitExplicitExpr>,
+    pub(crate) expr: Option<FieldInitExplicitExpr>,
 }
 
 #[derive(NazmcParse, Debug)]
-pub(crate) struct StructFieldInitExplicitExpr {
+pub(crate) struct FieldInitExplicitExpr {
     pub(crate) equal: EqualSymbol,
     pub(crate) expr: ParseResult<Expr>,
 }
 
-generatePunctuatedItem!(StructFieldInitExpr);
+generatePunctuatedItem!(FieldInitExpr);
 
 generateDelimitedPunctuated!(
-    StructFieldsInitExpr,
+    StructInitExpr,
     OpenCurlyBraceSymbol,
-    StructFieldInitExpr,
+    FieldInitExpr,
     CloseCurlyBraceSymbol
 );
 

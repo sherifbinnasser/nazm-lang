@@ -4,8 +4,7 @@ use crate::*;
 pub struct TypedAST {
     pub consts: HashMap<ConstKey, Const>,
     pub statics: HashMap<StaticKey, Static>,
-    pub tuple_structs: HashMap<TupleStructKey, TupleStruct>,
-    pub fields_structs: HashMap<FieldsStructKey, FieldsStruct>,
+    pub structs: HashMap<StructKey, Struct>,
     /// Maps to fn ptr types
     pub fns_signatures: HashMap<FnKey, Type>,
     pub lets: HashMap<LetStmKey, LetStm>,
@@ -46,12 +45,7 @@ pub struct Static {
 }
 
 #[derive(Default)]
-pub struct TupleStruct {
-    pub types: ThinVec<FieldInfo>,
-}
-
-#[derive(Default)]
-pub struct FieldsStruct {
+pub struct Struct {
     pub fields: HashMap<IdKey, FieldInfo>,
 }
 

@@ -12,9 +12,7 @@ pub use typ::*;
 mod item;
 mod typ;
 
-new_data_pool_key! { UnitStructPathKey }
-new_data_pool_key! { TupleStructPathKey }
-new_data_pool_key! { FieldsStructPathKey }
+new_data_pool_key! { StructPathKey }
 new_data_pool_key! { PathNoPkgKey }
 new_data_pool_key! { PathWithPkgKey }
 new_data_pool_key! { TypeExprKey }
@@ -27,9 +25,7 @@ new_data_pool_key! { TupleTypeExprKey }
 new_data_pool_key! { ArrayTypeExprKey }
 new_data_pool_key! { LambdaTypeExprKey }
 
-new_data_pool_key! { UnitStructKey }
-new_data_pool_key! { TupleStructKey }
-new_data_pool_key! { FieldsStructKey }
+new_data_pool_key! { StructKey }
 new_data_pool_key! { ConstKey }
 new_data_pool_key! { StaticKey }
 new_data_pool_key! { FnKey }
@@ -56,12 +52,8 @@ pub struct Unresolved {
 /// Holds resolved paths
 #[derive(Default)]
 pub struct Resolved {
-    /// The list of all unit struct expressions paths
-    pub unit_structs_paths_exprs: TiVec<UnitStructPathKey, UnitStructKey>,
-    /// The list of all tuple struct expressions paths
-    pub tuple_structs_paths_exprs: TiVec<TupleStructPathKey, TupleStructKey>,
     /// The list of all fields struct expressions paths
-    pub field_structs_paths_exprs: TiVec<FieldsStructPathKey, FieldsStructKey>,
+    pub structs_paths_exprs: TiVec<StructPathKey, StructKey>,
     /// The list of all paths expressions that have no leading pkgs paths
     /// which point only to local vars, statics, consts and fns
     pub paths_no_pkgs_exprs: TiVec<PathNoPkgKey, Item>,
@@ -83,12 +75,8 @@ pub struct AST<S> {
     pub consts: TiVec<ConstKey, Const>,
     /// All statics
     pub statics: TiVec<StaticKey, Static>,
-    /// All unit structs
-    pub unit_structs: TiVec<UnitStructKey, UnitStruct>,
-    /// All tuple structs
-    pub tuple_structs: TiVec<TupleStructKey, TupleStruct>,
     /// All fields structs
-    pub fields_structs: TiVec<FieldsStructKey, FieldsStruct>,
+    pub structs: TiVec<StructKey, Struct>,
     /// All fns
     pub fns: TiVec<FnKey, Fn>,
     /// All scopes
@@ -124,12 +112,8 @@ pub struct ASTPaths {
     pub imports: TiVec<FileKey, ThinVec<ImportStm>>,
     /// The list of star imports for each file
     pub star_imports: TiVec<FileKey, ThinVec<StarImportStm>>,
-    /// The list of all unit struct expressions paths
-    pub unit_structs_paths_exprs: TiVec<UnitStructPathKey, ItemPath>,
-    /// The list of all tuple struct expressions paths
-    pub tuple_structs_paths_exprs: TiVec<TupleStructPathKey, ItemPath>,
-    /// The list of all fields struct expressions paths
-    pub field_structs_paths_exprs: TiVec<FieldsStructPathKey, ItemPath>,
+    /// The list of all struct expressions paths
+    pub structs_paths_exprs: TiVec<StructPathKey, ItemPath>,
     /// The list of all paths expressions that have no leading pkgs paths. The PkgKey here represent where this path is loctaed
     pub paths_no_pkgs_exprs: TiVec<PathNoPkgKey, (ASTId, PkgKey)>,
     /// The list of all paths expressions that have leading pkgs paths
@@ -237,18 +221,7 @@ pub struct Static {
 }
 
 #[derive(Clone, Default)]
-pub struct UnitStruct {
-    pub info: ItemInfo,
-}
-
-#[derive(Clone, Default)]
-pub struct TupleStruct {
-    pub info: ItemInfo,
-    pub types: ThinVec<(VisModifier, TypeExprKey)>,
-}
-
-#[derive(Clone, Default)]
-pub struct FieldsStruct {
+pub struct Struct {
     pub info: ItemInfo,
     pub fields: ThinVec<FieldInfo>,
 }
@@ -323,9 +296,7 @@ pub enum ExprKind {
     PathNoPkg(PathNoPkgKey),
     PathInPkg(PathWithPkgKey),
     Call(Box<CallExpr>),
-    UnitStruct(UnitStructPathKey),
-    TupleStruct(Box<TupleStructExpr>),
-    FieldsStruct(Box<FieldsStructExpr>),
+    Struct(Box<StructExpr>),
     Field(Box<FieldExpr>),
     Idx(Box<IdxExpr>),
     TupleIdx(Box<TupleIdxExpr>),
@@ -376,14 +347,8 @@ pub struct CallExpr {
 }
 
 #[derive(Clone, Debug)]
-pub struct TupleStructExpr {
-    pub path_key: TupleStructPathKey,
-    pub args: ThinVec<ExprKey>,
-}
-
-#[derive(Clone, Debug)]
-pub struct FieldsStructExpr {
-    pub path_key: FieldsStructPathKey,
+pub struct StructExpr {
+    pub path_key: StructPathKey,
     pub fields: ThinVec<(ASTId, ExprKey)>,
 }
 

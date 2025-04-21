@@ -76,30 +76,8 @@ pub(crate) struct ConstStaticStmBody {
 pub(crate) struct Struct {
     pub(crate) struct_keyword: StructKeyword,
     pub(crate) name: ParseResult<Id>,
-    pub(crate) kind: ParseResult<StructKind>,
+    pub(crate) fields: ParseResult<StructFields>,
 }
-
-#[derive(NazmcParse, Debug)]
-pub(crate) enum StructKind {
-    Unit(SemicolonSymbol),
-    Tuple(TupleStructFields),
-    Fields(StructFields),
-}
-
-#[derive(NazmcParse, Debug)]
-pub(crate) struct TupleStructField {
-    pub(crate) visibility: Option<VisModifier>,
-    pub(crate) typ: ParseResult<Type>,
-}
-
-generatePunctuatedItem!(TupleStructField);
-
-generateDelimitedPunctuated!(
-    TupleStructFields,
-    OpenParenthesisSymbol,
-    TupleStructField,
-    CloseParenthesisSymbol
-);
 
 #[derive(NazmcParse, Debug)]
 pub(crate) struct StructField {

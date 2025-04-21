@@ -90,6 +90,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "nazmc_nir"
+version = "0.1.0"
+dependencies = [
+ "derive_more",
+ "nazmc_data_pool",
+ "nazmc_diagnostics",
+ "qbe",
+ "thin-vec",
+]
+
+[[package]]
 name = "nazmc_semantics"
 version = "0.1.0"
 dependencies = [
@@ -98,6 +109,7 @@ dependencies = [
  "nazmc_ast",
  "nazmc_data_pool",
  "nazmc_diagnostics",
+ "nazmc_nir",
  "thin-vec",
 ]
 
@@ -115,6 +127,12 @@ checksum = "60946a68e5f9d28b0dc1c21bb8a97ee7d018a8b322fa57838ba31cc878e22d99"
 dependencies = [
  "unicode-ident",
 ]
+
+[[package]]
+name = "qbe"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c1ce54124980f3c530866c8145401764df3f0c428698f594ba8d634483af66e5"
 
 [[package]]
 name = "quote"

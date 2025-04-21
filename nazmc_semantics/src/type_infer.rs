@@ -1,4 +1,4 @@
-use nazmc_ast::{FieldsStructKey, TupleStructKey, UnitStructKey};
+use nazmc_ast::StructKey;
 use nazmc_data_pool::typed_index_collections::TiVec;
 use thin_vec::ThinVec;
 
@@ -41,9 +41,7 @@ pub enum Type {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConcreteType {
     Composite(CompositeType),
-    UnitStruct(UnitStructKey),
-    TupleStruct(TupleStructKey),
-    FieldsStruct(FieldsStructKey),
+    Struct(StructKey),
     Primitive(PrimitiveType),
 }
 
@@ -188,12 +186,8 @@ impl Type {
         Self::Concrete(ConcreteType::Composite(composite_type))
     }
 
-    pub fn unit_struct(unit_struct_key: UnitStructKey) -> Self {
-        Self::Concrete(ConcreteType::UnitStruct(unit_struct_key))
-    }
-
-    pub fn fields_struct(fields_struct_key: FieldsStructKey) -> Self {
-        Self::Concrete(ConcreteType::FieldsStruct(fields_struct_key))
+    pub fn _struct(fields_struct_key: StructKey) -> Self {
+        Self::Concrete(ConcreteType::Struct(fields_struct_key))
     }
 
     pub fn primitive(primitive_type: PrimitiveType) -> Self {
@@ -521,9 +515,7 @@ impl TypeInferenceCtx {
             (ConcreteType::Composite(c1), ConcreteType::Composite(c2)) => {
                 self.unify_composite(c1, c2)
             }
-            (ConcreteType::UnitStruct(k1), ConcreteType::UnitStruct(k2)) if k1 == k2 => Ok(()),
-            (ConcreteType::TupleStruct(k1), ConcreteType::TupleStruct(k2)) if k1 == k2 => Ok(()),
-            (ConcreteType::FieldsStruct(k1), ConcreteType::FieldsStruct(k2)) if k1 == k2 => Ok(()),
+            (ConcreteType::Struct(k1), ConcreteType::Struct(k2)) if k1 == k2 => Ok(()),
             (ConcreteType::Primitive(p1), ConcreteType::Primitive(p2)) if p1 == p2 => Ok(()),
             _ => Err(()),
         }

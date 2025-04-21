@@ -48,16 +48,8 @@ impl<'a> SemanticsAnalyzer<'a> {
 
     pub(crate) fn fmt_con_ty(&self, con_ty: &ConcreteType) -> String {
         match con_ty {
-            ConcreteType::UnitStruct(unit_struct_key) => {
-                let item_info = self.ast.unit_structs[*unit_struct_key].info;
-                self.fmt_item_name(item_info)
-            }
-            ConcreteType::TupleStruct(tuple_struct_key) => {
-                let item_info = self.ast.tuple_structs[*tuple_struct_key].info;
-                self.fmt_item_name(item_info)
-            }
-            ConcreteType::FieldsStruct(fields_struct_key) => {
-                let item_info = self.ast.fields_structs[*fields_struct_key].info;
+            ConcreteType::Struct(struct_key) => {
+                let item_info = self.ast.structs[*struct_key].info;
                 self.fmt_item_name(item_info)
             }
             ConcreteType::Composite(comp_ty) => self.fmt_comp_ty(comp_ty),
@@ -462,14 +454,28 @@ impl<'a> SemanticsAnalyzer<'a> {
         self.diagnostics.push(diagnostic);
     }
 
+    pub(crate) fn add_primitive_cannot_be_initiated(&mut self, ty: &Type, expr_span: Span) {
+        let msg = format!(
+            "لا يمكن تعريف تعبير هيكل من النوع البُدائي `{}`",
+            self.fmt_ty(ty)
+        );
+
+        let mut code_window =
+            CodeWindow::new(&self.files_infos[self.current_file_key], expr_span.start);
+
+        code_window.mark_error(expr_span, vec![]);
+        let diagnostic = Diagnostic::error(msg, vec![code_window]);
+        self.diagnostics.push(diagnostic);
+    }
+
     pub(crate) fn add_field_is_used_more_than_once_err(
         &mut self,
-        struct_key: FieldsStructKey,
+        struct_key: StructKey,
         field_id: IdKey,
         first_use_span: Span,
         second_use_span: Span,
     ) {
-        let struct_info = self.ast.fields_structs[struct_key].info;
+        let struct_info = self.ast.structs[struct_key].info;
 
         let msg = format!(
             "الحقل `{}` تم استخدامه أكثر من مرة في تعبير الهيكل",
@@ -499,11 +505,11 @@ impl<'a> SemanticsAnalyzer<'a> {
 
     pub(crate) fn add_missing_fields_in_struct_expr_err(
         &mut self,
-        struct_key: FieldsStructKey,
+        struct_key: StructKey,
         missing_fields: ThinVec<IdKey>,
         expr_span: Span,
     ) {
-        let struct_info = self.ast.fields_structs[struct_key].info;
+        let struct_info = self.ast.structs[struct_key].info;
         let struct_name = self.fmt_item_name(struct_info);
 
         let missing_fields_msg = format!("لم يتم تعريف الحقول التالية:");
@@ -517,7 +523,7 @@ impl<'a> SemanticsAnalyzer<'a> {
             missing_fields_list.push(':');
             missing_fields_list.push(' ');
             missing_fields_list.push_str(
-                &self.fmt_ty(&self.typed_ast.fields_structs[&struct_key].fields[field_id_key].typ),
+                &self.fmt_ty(&self.typed_ast.structs[&struct_key].fields[field_id_key].typ),
             );
             if i < missing_fields.len() - 1 {
                 missing_fields_list.push('\n');
@@ -551,11 +557,11 @@ impl<'a> SemanticsAnalyzer<'a> {
 
     pub(crate) fn add_unknown_field_in_struct_expr_err(
         &mut self,
-        struct_key: FieldsStructKey,
+        struct_key: StructKey,
         field_id_key: IdKey,
         field_id_expr_span: Span,
     ) {
-        let struct_info = self.ast.fields_structs[struct_key].info;
+        let struct_info = self.ast.structs[struct_key].info;
         let struct_name = self.fmt_item_name(struct_info);
         let field_name = self.id_pool[field_id_key].clone();
 
@@ -592,17 +598,17 @@ impl<'a> SemanticsAnalyzer<'a> {
         &mut self,
         expected_ty: &Type,
         found_ty: &Type,
-        struct_key: FieldsStructKey,
+        struct_key: StructKey,
         field_idx: u32,
         field_id_expr_span: Span,
         expr_span: Span,
     ) {
-        let field_info = &self.ast.fields_structs[struct_key].fields[field_idx as usize];
+        let field_info = &self.ast.structs[struct_key].fields[field_idx as usize];
         let field_ast_id = field_info.id;
         let field_ty_span = self.get_type_expr_span(field_info.typ);
         let field_name = &self.id_pool[field_ast_id.id];
 
-        let struct_info = self.ast.fields_structs[struct_key].info;
+        let struct_info = self.ast.structs[struct_key].info;
         let struct_name = self.fmt_item_name(struct_info);
 
         let msg = format!(
@@ -641,12 +647,12 @@ impl<'a> SemanticsAnalyzer<'a> {
 
     pub(crate) fn add_filed_is_inaccessable_err(
         &mut self,
-        struct_key: FieldsStructKey,
+        struct_key: StructKey,
         field_idx: u32,
         field_id_expr_span: Span,
     ) {
-        let struct_info = self.ast.fields_structs[struct_key].info;
-        let field_info = &self.ast.fields_structs[struct_key].fields[field_idx as usize];
+        let struct_info = self.ast.structs[struct_key].info;
+        let field_info = &self.ast.structs[struct_key].fields[field_idx as usize];
         let field_ast_id = field_info.id;
         let field_name = &self.id_pool[field_ast_id.id];
 
