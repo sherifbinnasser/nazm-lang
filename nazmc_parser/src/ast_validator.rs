@@ -401,19 +401,19 @@ impl<'a> ASTValidator<'a> {
                     {
                         let first = self.lower_fn_param(first_item.unwrap());
                         self.params_names_in_current_fn
-                            .insert(first.0.id, first.0.span);
+                            .insert(first.ast_id.id, first.ast_id.span);
                         params.push(first);
 
                         for r in rest_items {
                             let param = self.lower_fn_param(r.unwrap().item);
 
                             if let Some(span_of_param_with_same_name) =
-                                self.params_names_in_current_fn.get(&param.0.id)
+                                self.params_names_in_current_fn.get(&param.ast_id.id)
                             {
                                 self.fn_params_conflicts_in_files
-                                    .entry((param.0.id, self.file_key, name.span))
+                                    .entry((param.ast_id.id, self.file_key, name.span))
                                     .or_insert_with(|| vec![*span_of_param_with_same_name])
-                                    .push(param.0.span);
+                                    .push(param.ast_id.span);
                             }
 
                             params.push(param);
@@ -534,15 +534,19 @@ impl<'a> ASTValidator<'a> {
         )
     }
 
-    fn lower_fn_param(&mut self, param: FnParam) -> (nazmc_ast::ASTId, nazmc_ast::TypeExprKey) {
-        let name = nazmc_ast::ASTId {
+    fn lower_fn_param(&mut self, param: FnParam) -> nazmc_ast::FnParam {
+        let ast_id = nazmc_ast::ASTId {
             span: param.name.span,
             id: param.name.data.val,
         };
 
-        let typ = self.lower_type(param.typ.unwrap().typ.unwrap());
+        let type_expr_key = self.lower_type(param.typ.unwrap().typ.unwrap());
 
-        (name, typ)
+        nazmc_ast::FnParam {
+            ast_id,
+            is_mut: param.mut_keyword.is_some(),
+            type_expr_key,
+        }
     }
 
     fn lower_type(&mut self, typ: Type) -> nazmc_ast::TypeExprKey {

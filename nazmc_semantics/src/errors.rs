@@ -296,8 +296,12 @@ impl<'a> SemanticsAnalyzer<'a> {
 
         if let Some(Item::Fn { vis: _, key }) = self.check_expr_is_path_to_item(call_on_expr_key) {
             let info = self.ast.fns[key].info;
-            let (param_ast_id, type_expr_key) = self.ast.fns[key].params[arg_idx];
-            let param_span = param_ast_id
+            let FnParam {
+                ast_id,
+                is_mut: _,
+                type_expr_key,
+            } = self.ast.fns[key].params[arg_idx];
+            let param_span = ast_id
                 .span
                 .merged_with(&self.get_type_expr_span(type_expr_key));
 

@@ -1,7 +1,8 @@
 use nazmc_ast::{
-    ASTId, ArrayTypeExprKey, ConstKey, FieldsStructKey, FieldsStructPathKey, FnKey, Item, ItemPath,
-    LetStmKey, PathNoPkgKey, PathTypeExprKey, PathWithPkgKey, PkgPath, ScopeKey, StarImportStm,
-    StaticKey, TupleStructKey, TupleStructPathKey, UnitStructKey, UnitStructPathKey, VisModifier,
+    ASTId, ArrayTypeExprKey, ConstKey, FieldsStructKey, FieldsStructPathKey, FnKey, FnParam, Item,
+    ItemPath, LetStmKey, PathNoPkgKey, PathTypeExprKey, PathWithPkgKey, PkgPath, ScopeKey,
+    StarImportStm, StaticKey, TupleStructKey, TupleStructPathKey, UnitStructKey, UnitStructPathKey,
+    VisModifier,
 };
 use nazmc_data_pool::{
     typed_index_collections::{ti_vec, TiSlice, TiVec},
@@ -429,11 +430,12 @@ impl<'a> NameResolver<'a> {
 
                     // Searching in fn params
                     if let (Some(fn_key), 0) = (fn_key, stack_start_idx) {
-                        if let Some(idx) = self.ast.fns[fn_key]
-                            .params
-                            .iter()
-                            .position(|(ASTId { span: _, id }, _)| *id == path_expr.0.id)
-                        {
+                        if let Some(idx) = self.ast.fns[fn_key].params.iter().position(
+                            |FnParam {
+                                 ast_id: ASTId { id, .. },
+                                 ..
+                             }| *id == path_expr.0.id,
+                        ) {
                             resolved_paths[path_no_pkg_key] = Item::FnParam {
                                 idx: idx as u32,
                                 fn_key,

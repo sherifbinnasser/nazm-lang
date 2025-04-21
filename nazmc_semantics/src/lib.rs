@@ -232,10 +232,10 @@ impl<'a> SemanticsAnalyzer<'a> {
 
             for i in 0..params_types.len() {
                 args.push(Arg {
-                    id_key: _fn.params[i].0.id,
-                    id_span: _fn.params[i].0.span,
+                    id_key: _fn.params[i].ast_id.id,
+                    id_span: _fn.params[i].ast_id.span,
+                    is_mut: _fn.params[i].is_mut,
                     typ: params_types[i],
-                    is_mut: false,
                 })
             }
 
@@ -270,7 +270,7 @@ impl<'a> SemanticsAnalyzer<'a> {
             let params = _fn
                 .params
                 .iter()
-                .map(|(_, type_expr_key)| self.analyze_type_expr(*type_expr_key))
+                .map(|param| self.analyze_type_expr(param.type_expr_key))
                 .collect::<ThinVec<_>>();
 
             let return_type = _fn.return_type.map_or_else(

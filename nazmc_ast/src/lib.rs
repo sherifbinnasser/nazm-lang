@@ -265,9 +265,16 @@ pub struct FieldInfo {
 #[derive(Clone, Default)]
 pub struct Fn {
     pub info: ItemInfo,
-    pub params: ThinVec<(ASTId, TypeExprKey)>,
+    pub params: ThinVec<FnParam>,
     pub return_type: Option<TypeExprKey>,
     pub scope_key: ScopeKey,
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct FnParam {
+    pub ast_id: ASTId,
+    pub is_mut: bool,
+    pub type_expr_key: TypeExprKey,
 }
 
 #[derive(Clone, Default)]

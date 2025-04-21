@@ -129,6 +129,7 @@ pub(crate) struct Fn {
 
 #[derive(NazmcParse, Debug)]
 pub(crate) struct FnParam {
+    pub(crate) mut_keyword: Option<MutKeyword>,
     pub(crate) name: Id,
     pub(crate) typ: ParseResult<ColonWithType>,
 }
