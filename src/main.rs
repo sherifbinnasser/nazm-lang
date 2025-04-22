@@ -262,7 +262,20 @@ fn main() {
     }
     .analyze();
 
-    nir.fmt_cfg(&nir.fns.raw[0].cfg, "CFG.dot");
+    if let Some(first_cfg) = &nir
+        .fns
+        .iter()
+        .filter_map(|_fn| {
+            if let nazmc_nir::FnLinkage::Local(cfg) = &_fn.linkage {
+                Some(cfg)
+            } else {
+                None
+            }
+        })
+        .next()
+    {
+        nir.fmt_cfg(first_cfg, "CFG.dot");
+    }
 
     let name = الاسم.unwrap_or("out".into());
 

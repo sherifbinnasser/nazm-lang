@@ -239,7 +239,14 @@ pub struct Fn {
     pub info: ItemInfo,
     pub params: ThinVec<FnParam>,
     pub return_type: Option<TypeExprKey>,
-    pub scope_key: ScopeKey,
+    pub linkage: FnLinkage,
+}
+#[derive(Clone, Copy, Default)]
+pub enum FnLinkage {
+    #[default]
+    ExternWithSameId,
+    Extern(StrKey),
+    Local(ScopeKey),
 }
 
 #[derive(Clone, Copy, Default)]

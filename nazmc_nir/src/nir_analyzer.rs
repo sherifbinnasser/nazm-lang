@@ -3,7 +3,7 @@ use std::process::exit;
 use nazmc_data_pool::ItemInfo;
 use nazmc_diagnostics::{eprint_diagnostics, CodeWindow, Diagnostic};
 
-use crate::{BasicBlockKey, Stm, Type, CFG, NIR};
+use crate::{BasicBlockKey, FnLinkage, Stm, Type, CFG, NIR};
 
 pub struct NIRAnalyzer<'a, 'b: 'a> {
     pub nir: &'a mut NIR<'b>,
@@ -17,9 +17,12 @@ where
     pub fn analyze(mut self) {
         let mut fns = std::mem::take(&mut self.nir.fns);
         for _fn in &mut fns {
-            self.remove_dead_code(&mut _fn.cfg);
+            let FnLinkage::Local(cfg) = &mut _fn.linkage else {
+                continue;
+            };
+            self.remove_dead_code(cfg);
             if !matches!(self.nir.types[_fn.return_type], Type::Unit) {
-                self.check_all_paths_must_return(&_fn.cfg, &_fn.info);
+                self.check_all_paths_must_return(&cfg, &_fn.info);
             }
         }
         self.nir.fns = fns;

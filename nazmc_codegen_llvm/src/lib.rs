@@ -179,8 +179,10 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
     }
 
     pub fn lower(&mut self) {
-        self.lower_string_consts();
+        // lower_string_consts will take the ownership of str_pool
+        // So lower functions signatures first as extern functions may have string consts link names
         self.lower_fns_signatures();
+        self.lower_string_consts();
         self.lower_fns_bodies();
     }
 

@@ -241,13 +241,20 @@ impl<'a> SemanticsAnalyzer<'a> {
                 args,
                 fn_ptr_type,
                 return_type,
-                cfg: CFG::default(),
+                linkage: nazmc_nir::FnLinkage::default(),
             });
 
-            self.lower_fn_scope(_fn.scope_key);
+            let linkage = match _fn.linkage {
+                FnLinkage::ExternWithSameId => nazmc_nir::FnLinkage::ExternWithSameId,
+                FnLinkage::Extern(str_key) => nazmc_nir::FnLinkage::Extern(str_key),
+                FnLinkage::Local(scope_key) => {
+                    self.lower_fn_scope(scope_key);
+                    let cfg = self.cfg_builder.build();
+                    nazmc_nir::FnLinkage::Local(Box::new(cfg))
+                }
+            };
 
-            let cfg = self.cfg_builder.build();
-            self.nir_builder.nir.fns.last_mut().unwrap().cfg = cfg;
+            self.nir_builder.nir.fns.last_mut().unwrap().linkage = linkage;
         });
 
         if !self.diagnostics.is_empty() {
@@ -296,6 +303,10 @@ impl<'a> SemanticsAnalyzer<'a> {
         self.current_fn_key = fn_key;
         self.current_file_key = self.ast.fns[fn_key].info.file_key;
 
+        let FnLinkage::Local(fn_scope_key) = self.ast.fns[fn_key].linkage else {
+            return;
+        };
+
         self.current_scope_expected_return_ty =
             if let Type::Concrete(ConcreteType::Composite(CompositeType::FnPtr {
                 params_types: _,
@@ -307,7 +318,7 @@ impl<'a> SemanticsAnalyzer<'a> {
                 unreachable!()
             };
 
-        let found_return_ty = self.infer_scope(self.ast.fns[fn_key].scope_key);
+        let found_return_ty = self.infer_scope(fn_scope_key);
 
         if let Err(err) = self
             .type_inf_ctx
@@ -315,9 +326,7 @@ impl<'a> SemanticsAnalyzer<'a> {
         {
             // Show error if there is a return expr
             // and let control flow analysis detect explicit returns
-            if let Some(return_expr_key) =
-                self.ast.scopes[self.ast.fns[fn_key].scope_key].return_expr
-            {
+            if let Some(return_expr_key) = self.ast.scopes[fn_scope_key].return_expr {
                 let span = self.get_expr_span(return_expr_key);
 
                 self.add_type_mismatch_in_fn_return_ty_err(
@@ -329,7 +338,7 @@ impl<'a> SemanticsAnalyzer<'a> {
             }
         }
 
-        self.check_scope_ty_vars(self.ast.fns[fn_key].scope_key);
+        self.check_scope_ty_vars(fn_scope_key);
 
         for (unknown_ty, span, first_used_span) in &self.unknown_type_errors {
             println!("Span: {:?}", span);

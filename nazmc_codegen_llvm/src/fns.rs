@@ -3,12 +3,16 @@ use crate::*;
 impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
     pub(crate) fn lower_fns_signatures(&mut self) {
         for _fn in self.nir.fns.iter() {
-            let name = if _fn.info.id_key == IdKey::MAIN
-                && self.nir.files_to_pkgs[_fn.info.file_key] == PkgKey::TOP
-            {
-                format!("main")
-            } else {
-                self.fmt_item_name(_fn.info)
+            let name = match &_fn.linkage {
+                FnLinkage::ExternWithSameId => self.get_id(_fn.info.id_key).to_string(),
+                FnLinkage::Extern(str_key) => self.nir.str_pool[*str_key].clone(),
+                FnLinkage::Local(_)
+                    if _fn.info.id_key == IdKey::MAIN
+                        && self.nir.files_to_pkgs[_fn.info.file_key] == PkgKey::TOP =>
+                {
+                    "main".into()
+                }
+                FnLinkage::Local(_) => self.fmt_item_name(_fn.info),
             };
 
             let Type::FnPtr(fn_ptr_type) = self.nir.types[_fn.fn_ptr_type] else {
@@ -27,13 +31,15 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
 
     pub(crate) fn lower_fns_bodies(&self) {
         for (fn_key, _fn) in self.nir.fns.iter_enumerated() {
+            let FnLinkage::Local(cfg) = &_fn.linkage else {
+                continue;
+            };
             self.llvm_temps_counter.set(0);
             self.basic_blocks.borrow_mut().clear();
             self.args.borrow_mut().clear();
             self.locals.borrow_mut().clear();
             self.temps.borrow_mut().clear();
 
-            let cfg = &_fn.cfg;
             let llvm_fn = self.llvm_fns[fn_key];
             let entry_bb = self.context.append_basic_block(llvm_fn, "entry");
 

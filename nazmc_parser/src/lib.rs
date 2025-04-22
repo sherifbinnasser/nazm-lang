@@ -1,6 +1,6 @@
 pub use ast_validator::ASTValidator;
 use error::*;
-use nazmc_data_pool::{FileKey, PkgKey};
+use nazmc_data_pool::{FileKey, PkgKey, StrKey};
 use nazmc_diagnostics::{
     file_info::FileInfo, fmt_diagnostics, span::SpanCursor, CodeWindow, Diagnostic,
 };
@@ -760,6 +760,20 @@ impl<'a> ParseErrorsReporter<'a> {
                 self.report_expected("محتوى الدالة", err, vec![]);
             }
             _ => {}
+        }
+
+        if let Some(extern_decl) = extern_decl {
+            if let Some(link_name) = &extern_decl.link_name {
+                if let LiteralKind::Str(_) = link_name.data {
+                    // REVIEW: Do we need to check for invalid names
+                } else {
+                    let msg = format!("يُتوقّع `نص` لاسم الدالة المربوطة");
+                    let span = link_name.span;
+                    let primary_label = "رمز غير متوقع".into();
+                    let secondary_labels = vec![(extern_decl.extern_keyword.span, vec![])];
+                    self.report(msg, span, primary_label, secondary_labels);
+                }
+            }
         }
     }
 
