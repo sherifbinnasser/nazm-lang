@@ -103,13 +103,14 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                 let array_ptr = self.lower_lvalue_to_ptr(on, cfg);
                 let array_type_key = cfg.lvalues[on].typ;
                 let llvm_array_ty = self.lower_type(array_type_key);
+                let zero_index = self.context.i64_type().const_int(0, false);
                 let index = self.lower_lvalue(idx, cfg).into_int_value();
                 unsafe {
                     self.builder
                         .build_gep(
                             any_type_enum_to_basic_type_enum(llvm_array_ty),
                             array_ptr,
-                            &[index],
+                            &[zero_index, index],
                             &self.new_llvm_temp(),
                         )
                         .unwrap()
@@ -119,12 +120,14 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                 let array_ptr = self.lower_lvalue_to_ptr(on, cfg);
                 let array_type_key = cfg.lvalues[on].typ;
                 let llvm_array_ty = self.lower_type(array_type_key);
+                let zero_index = self.context.i64_type().const_int(0, false);
+                let index = self.context.i64_type().const_int(idx as u64, false);
                 unsafe {
                     self.builder
                         .build_gep(
                             any_type_enum_to_basic_type_enum(llvm_array_ty),
                             array_ptr,
-                            &[self.context.i64_type().const_int(idx as u64, false)],
+                            &[zero_index, index],
                             &self.new_llvm_temp(),
                         )
                         .unwrap()

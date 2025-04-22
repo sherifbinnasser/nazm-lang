@@ -187,6 +187,11 @@ impl<'a> QbeCodegen<'a> {
 
         // Lower fns signatures
         for (fn_key, _fn) in self.nir.fns.iter_enumerated() {
+            let FnLinkage::Local(cfg) = &_fn.linkage else {
+                // TODO: Lower extern functions
+                continue;
+            };
+
             let name = if _fn.info.id_key == IdKey::MAIN
                 && self.nir.files_to_pkgs[_fn.info.file_key] == PkgKey::TOP
             {
@@ -218,16 +223,16 @@ impl<'a> QbeCodegen<'a> {
             };
             self.module.add_function(qbe_fn);
 
-            if _fn.cfg.temps.len() > max_temps_count {
-                max_temps_count = _fn.cfg.temps.len();
+            if cfg.temps.len() > max_temps_count {
+                max_temps_count = cfg.temps.len();
             }
 
-            if _fn.cfg.bindings.len() > max_bindings_count {
-                max_bindings_count = _fn.cfg.bindings.len();
+            if cfg.bindings.len() > max_bindings_count {
+                max_bindings_count = cfg.bindings.len();
             }
 
-            if _fn.cfg.basic_blocks.len() > max_basic_blocks_count {
-                max_basic_blocks_count = _fn.cfg.basic_blocks.len();
+            if cfg.basic_blocks.len() > max_basic_blocks_count {
+                max_basic_blocks_count = cfg.basic_blocks.len();
             }
         }
 
@@ -262,25 +267,29 @@ impl<'a> QbeCodegen<'a> {
 
         // Lower fns bodys
         for (fn_key, _fn) in fns.into_iter_enumerated() {
+            let FnLinkage::Local(cfg) = &_fn.linkage else {
+                continue;
+            };
+
             self.qbe_temps_counter = 0;
-            let mut blocks = Vec::with_capacity(_fn.cfg.basic_blocks.len());
-            let start_bb = &_fn.cfg.basic_blocks[&BasicBlockKey::START_BASIC_BLOCK];
+            let mut blocks = Vec::with_capacity(cfg.basic_blocks.len());
+            let start_bb = &cfg.basic_blocks[&BasicBlockKey::START_BASIC_BLOCK];
             let mut start_qbe_bb = qbe::Block {
                 label: self.basic_blocks[BasicBlockKey::START_BASIC_BLOCK].clone(),
                 items: Vec::with_capacity(start_bb.stms.len()),
             };
             // Reserve for base ptr allocation
             start_qbe_bb.add_instr(qbe::Instr::Ret(None));
-            let total_stack_size = self.get_fn_locals_size(&_fn.cfg.bindings, &mut start_qbe_bb);
+            let total_stack_size = self.get_fn_locals_size(&cfg.bindings, &mut start_qbe_bb);
             start_qbe_bb.items[0] = qbe::BlockItem::Statement(qbe::Statement::Assign(
                 self.base_ptr.clone(),
                 qbe::Type::Long,
                 qbe::Instr::Alloc16(total_stack_size),
             ));
-            self.lower_block_jmp(&_fn.cfg, start_bb, &mut start_qbe_bb);
+            self.lower_block_jmp(&cfg, start_bb, &mut start_qbe_bb);
             blocks.push(start_qbe_bb);
 
-            for (bb_key, bb) in &_fn.cfg.basic_blocks {
+            for (bb_key, bb) in &cfg.basic_blocks {
                 if bb_key.0 == BasicBlockKey::START_BASIC_BLOCK.0
                     || bb_key.0 == BasicBlockKey::END_BASIC_BLOCK.0
                 {
@@ -293,10 +302,10 @@ impl<'a> QbeCodegen<'a> {
                 };
 
                 for stm in &bb.stms {
-                    self.lower_stm(stm, &_fn.cfg, &mut qbe_bb)
+                    self.lower_stm(stm, &cfg, &mut qbe_bb)
                 }
 
-                self.lower_block_jmp(&_fn.cfg, bb, &mut qbe_bb);
+                self.lower_block_jmp(&cfg, bb, &mut qbe_bb);
 
                 blocks.push(qbe_bb);
             }

@@ -1,5 +1,5 @@
 use crate::*;
-use nazmc_ast::{ASTId, ExprKind, ReturnExpr, ScopeKey};
+use nazmc_ast::{ASTId, ExprKind, FnLinkage, ReturnExpr, ScopeKey};
 use nazmc_data_pool::{typed_index_collections::TiSlice, IdKey};
 use nazmc_diagnostics::eprint_diagnostics;
 use std::{collections::HashMap, process::exit};
@@ -385,9 +385,24 @@ impl<'a> ASTValidator<'a> {
                         .return_type
                         .map(|colon_with_type| self.lower_type(colon_with_type.typ.unwrap()));
 
-                    self.current_fn_scope_key = Some(ScopeKey::from(self.ast.scopes.len()));
-
-                    let scope_key = self.lower_lambda_as_body(f.body.unwrap(), true);
+                    let linkage = if let Some(ExternDecl {
+                        extern_keyword: _,
+                        link_name,
+                    }) = f.extern_decl
+                    {
+                        if let Some(link_name) = link_name {
+                            let LiteralKind::Str(str_key) = link_name.data else {
+                                unreachable!()
+                            };
+                            FnLinkage::Extern(str_key)
+                        } else {
+                            FnLinkage::ExternWithSameId
+                        }
+                    } else {
+                        self.current_fn_scope_key = Some(ScopeKey::from(self.ast.scopes.len()));
+                        let scope_key = self.lower_lambda_as_body(f.body.unwrap(), true);
+                        FnLinkage::Local(scope_key)
+                    };
 
                     self.current_fn_scope_key = None;
 
@@ -395,7 +410,7 @@ impl<'a> ASTValidator<'a> {
                         info,
                         params,
                         return_type,
-                        scope_key,
+                        linkage,
                     });
 
                     let item = nazmc_ast::Item::Fn { vis, key };

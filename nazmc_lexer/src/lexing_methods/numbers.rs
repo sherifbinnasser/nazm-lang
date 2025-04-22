@@ -41,7 +41,6 @@ impl<'a> LexerIter<'a> {
         if prefix.starts_with("16#") {
             self.next_cursor();
             self.next_cursor();
-            self.next_cursor();
             self.next_cursor(); // Skip "16#" and stop on next digit
             return self.next_hex_num_token();
         }

@@ -154,4 +154,6 @@ pub enum KeywordKind {
     Return,
     /// استيراد
     Import,
+    /// ربط
+    Extern,
 }

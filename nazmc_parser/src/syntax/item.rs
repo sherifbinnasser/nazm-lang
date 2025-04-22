@@ -96,7 +96,14 @@ generateDelimitedPunctuated!(
 );
 
 #[derive(NazmcParse, Debug)]
+pub(crate) struct ExternDecl {
+    pub(crate) extern_keyword: ExternKeyword,
+    pub(crate) link_name: Option<LiteralExpr>,
+}
+
+#[derive(NazmcParse, Debug)]
 pub(crate) struct Fn {
+    pub(crate) extern_decl: Option<ExternDecl>,
     pub(crate) fn_keyword: FnKeyword,
     pub(crate) name: ParseResult<Id>,
     pub(crate) params_decl: ParseResult<FnParams>,

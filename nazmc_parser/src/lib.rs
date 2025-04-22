@@ -1,6 +1,6 @@
 pub use ast_validator::ASTValidator;
 use error::*;
-use nazmc_data_pool::{FileKey, PkgKey};
+use nazmc_data_pool::{FileKey, PkgKey, StrKey};
 use nazmc_diagnostics::{
     file_info::FileInfo, fmt_diagnostics, span::SpanCursor, CodeWindow, Diagnostic,
 };
@@ -602,6 +602,7 @@ impl<'a> ParseErrorsReporter<'a> {
 
     fn check_fn(&mut self, f: &Fn) {
         let Fn {
+            extern_decl,
             fn_keyword,
             name,
             params_decl,
@@ -613,8 +614,9 @@ impl<'a> ParseErrorsReporter<'a> {
         let missing_params = params_decl.is_err();
         let no_return_type = return_type.is_none();
         let missing_body = body.is_err();
+        let is_extern = extern_decl.is_some();
 
-        if missing_name && missing_params && no_return_type && missing_body {
+        if missing_name && missing_params && no_return_type && (missing_body || is_extern) {
             self.report(
                 "لم يتم تعريف الدالة".to_string(),
                 fn_keyword.span,
@@ -692,6 +694,14 @@ impl<'a> ParseErrorsReporter<'a> {
         }
 
         match body {
+            Ok(body) if is_extern => {
+                let msg = "ربط الدوال يجب أن يكون بلا محتوى للدالة".into();
+                let span = body.open_curly.span;
+                let primary_label = "قُم بإزالة محتوى الدالة".into();
+                let secondary_labels =
+                    vec![(extern_decl.as_ref().unwrap().extern_keyword.span, vec![])];
+                self.report(msg, span, primary_label, secondary_labels);
+            }
             Ok(body) => {
                 let Some(lambda_arrow) = &body.lambda_arrow else {
                     self.check_block(body);
@@ -746,10 +756,24 @@ impl<'a> ParseErrorsReporter<'a> {
                     vec![],
                 );
             }
-            Err(err) if !missing_params || !no_return_type => {
+            Err(err) if (!missing_params || !no_return_type) && !is_extern => {
                 self.report_expected("محتوى الدالة", err, vec![]);
             }
             _ => {}
+        }
+
+        if let Some(extern_decl) = extern_decl {
+            if let Some(link_name) = &extern_decl.link_name {
+                if let LiteralKind::Str(_) = link_name.data {
+                    // REVIEW: Do we need to check for invalid names
+                } else {
+                    let msg = format!("يُتوقّع `نص` لاسم الدالة المربوطة");
+                    let span = link_name.span;
+                    let primary_label = "رمز غير متوقع".into();
+                    let secondary_labels = vec![(extern_decl.extern_keyword.span, vec![])];
+                    self.report(msg, span, primary_label, secondary_labels);
+                }
+            }
         }
     }
 

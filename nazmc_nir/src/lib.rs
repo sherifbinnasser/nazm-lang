@@ -65,7 +65,15 @@ pub struct Fn {
     pub args: TiVec<ArgKey, Arg>,
     pub fn_ptr_type: TypeKey,
     pub return_type: TypeKey,
-    pub cfg: CFG,
+    pub linkage: FnLinkage,
+}
+
+#[derive(Default)]
+pub enum FnLinkage {
+    #[default]
+    ExternWithSameId,
+    Extern(StrKey),
+    Local(Box<CFG>),
 }
 
 impl BasicBlockKey {
