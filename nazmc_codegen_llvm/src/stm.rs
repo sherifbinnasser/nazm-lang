@@ -82,20 +82,10 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         let ptr = if let LValueKind::Temp(temp_key) = cfg.lvalues[lhs].kind {
             let llvm_ty = self.lower_type(typ);
             let name = format!("tmp{}", temp_key.0);
-
-            let temp_ptr = if let AnyTypeEnum::ArrayType(array_ty) = llvm_ty {
-                let len = self
-                    .context
-                    .i64_type()
-                    .const_int(array_ty.len() as u64, false);
-                self.builder
-                    .build_array_alloca(array_ty, len, &name)
-                    .unwrap()
-            } else {
-                self.builder
-                    .build_alloca(any_type_enum_to_basic_type_enum(llvm_ty), &name)
-                    .unwrap()
-            };
+            let temp_ptr = self
+                .builder
+                .build_alloca(any_type_enum_to_basic_type_enum(llvm_ty), &name)
+                .unwrap();
             let temp = temp_ptr.as_any_value_enum();
             self.temps.borrow_mut().insert(temp_key, temp);
             temp_ptr

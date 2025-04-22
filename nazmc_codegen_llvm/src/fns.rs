@@ -199,13 +199,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             let llvm_ty = self.lower_type(binding.typ);
             let name = format!("loc{}", key.0);
             let ptr_value = match llvm_ty {
-                AnyTypeEnum::ArrayType(array_type) => self.builder.build_array_alloca(
-                    array_type.get_element_type(),
-                    self.context
-                        .i64_type()
-                        .const_int(array_type.len() as u64, false),
-                    &name,
-                ),
+                AnyTypeEnum::ArrayType(array_type) => self.builder.build_alloca(array_type, &name),
                 AnyTypeEnum::FloatType(float_type) => self.builder.build_alloca(float_type, &name),
                 AnyTypeEnum::IntType(int_type) => self.builder.build_alloca(int_type, &name),
                 AnyTypeEnum::PointerType(ptr_type) => self.builder.build_alloca(ptr_type, &name),

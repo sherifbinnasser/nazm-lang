@@ -114,12 +114,15 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             let ty_size = self.context.i64_type().const_int(size as u64, false);
 
             for (i, element) in elements.enumerate() {
+                let zero_index = self.context.i64_type().const_int(0, false);
+                let index = self.context.i64_type().const_int(i as u64, false);
+
                 let element_ptr = unsafe {
                     self.builder
                         .build_gep(
                             any_type_enum_to_basic_type_enum(llvm_array_ty),
                             dest_ptr,
-                            &[self.context.i64_type().const_int(i as u64, false)],
+                            &[zero_index, index],
                             "",
                         )
                         .unwrap()
@@ -137,12 +140,15 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             }
         } else {
             for (i, element) in elements.enumerate() {
+                let zero_index = self.context.i64_type().const_int(0, false);
+                let index = self.context.i64_type().const_int(i as u64, false);
+
                 let element_ptr = unsafe {
                     self.builder
                         .build_gep(
                             any_type_enum_to_basic_type_enum(llvm_array_ty),
                             dest_ptr,
-                            &[self.context.i64_type().const_int(i as u64, false)],
+                            &[zero_index, index],
                             "",
                         )
                         .unwrap()
