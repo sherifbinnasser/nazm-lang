@@ -743,17 +743,28 @@ impl<'a> SemanticsAnalyzer<'a> {
                     unreachable!()
                 };
 
-                let Type::Struct(struct_key) = self.nir_builder.nir.types[on_typ] else {
-                    unreachable!()
+                let idx = match self.nir_builder.nir.types[on_typ] {
+                    Type::Struct(struct_key) => {
+                        // REVIEW: Should we cache fields indecies
+                        self.nir_builder.nir.structs[struct_key]
+                            .fields
+                            .iter()
+                            .find_position(|f| f.id == field_expr.name.id)
+                            .unwrap()
+                            .0 as u32
+                    }
+                    Type::Slice(_) | Type::MutSlice(_)
+                        if field_expr.name.id == IdKey::SLICE_PTR_FIELD =>
+                    {
+                        0
+                    }
+                    Type::Slice(_) | Type::MutSlice(_)
+                        if field_expr.name.id == IdKey::SLICE_LEN_FIELD =>
+                    {
+                        1
+                    }
+                    _ => unreachable!(),
                 };
-
-                // REVIEW: Should we cache fields indecies
-                let idx = self.nir_builder.nir.structs[struct_key]
-                    .fields
-                    .iter()
-                    .find_position(|f| f.id == field_expr.name.id)
-                    .unwrap()
-                    .0 as u32;
 
                 let lvalue = if self.is_mut_lvalue(lvalue_key) {
                     LValueKind::MutField {
