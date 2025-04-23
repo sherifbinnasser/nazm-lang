@@ -1,7 +1,3 @@
-use std::borrow::Borrow;
-
-use nazmc_diagnostics::span::SpanCursor;
-
 use crate::{
     type_infer::{CompositeType, ConcreteType, NumberConstraints},
     typed_ast::{FieldInfo, LambdaParams},
@@ -503,6 +499,16 @@ impl<'a> SemanticsAnalyzer<'a> {
             Type::Concrete(ConcreteType::Composite(CompositeType::Slice(ref inner_ty))) => {
                 if name.id == IdKey::SLICE_PTR_FIELD {
                     Type::ptr(*inner_ty.clone())
+                } else if name.id == IdKey::SLICE_LEN_FIELD {
+                    Type::u()
+                } else {
+                    self.add_unknown_field_for_slice_err(&on_expr_ty, name.id, name.span);
+                    self.type_inf_ctx.new_never_ty_var()
+                }
+            }
+            Type::Concrete(ConcreteType::Composite(CompositeType::SliceMut(ref inner_ty))) => {
+                if name.id == IdKey::SLICE_PTR_FIELD {
+                    Type::ptr_mut(*inner_ty.clone())
                 } else if name.id == IdKey::SLICE_LEN_FIELD {
                     Type::u()
                 } else {

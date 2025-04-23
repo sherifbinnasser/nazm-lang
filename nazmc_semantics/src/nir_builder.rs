@@ -35,6 +35,12 @@ impl<'a> NIRBuilder<'a> {
                     };
                     Type::Slice(self.get_unique_type(underlying_typ))
                 }
+                crate::CompositeType::SliceMut(underlying_typ) => {
+                    let crate::Type::Concrete(underlying_typ) = &**underlying_typ else {
+                        unreachable!()
+                    };
+                    Type::MutSlice(self.get_unique_type(underlying_typ))
+                }
                 crate::CompositeType::Ptr(underlying_typ) => {
                     let crate::Type::Concrete(underlying_typ) = &**underlying_typ else {
                         unreachable!()
@@ -590,9 +596,11 @@ impl<'a> SemanticsAnalyzer<'a> {
 
         let kind = match expr_kind {
             nazmc_ast::ExprKind::Unit => OperandKind::Const(Const::Unit),
-            nazmc_ast::ExprKind::Literal(literal_expr) => {
+            nazmc_ast::ExprKind::Literal(literal_expr) => 'label: {
                 let const_opernad = match literal_expr {
-                    nazmc_ast::LiteralExpr::Str(str_key) => Const::Str(str_key),
+                    nazmc_ast::LiteralExpr::Str(str_key) => {
+                        break 'label self.add_new_temp_assign_stm(typ, RValue::Str(str_key))
+                    }
                     nazmc_ast::LiteralExpr::Char(ch) => Const::Char(ch),
                     nazmc_ast::LiteralExpr::Bool(b) => Const::Bool(b),
                     nazmc_ast::LiteralExpr::Num(num_kind) => match num_kind {

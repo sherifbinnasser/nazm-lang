@@ -19,6 +19,7 @@ pub(crate) struct PtrType {
 #[derive(NazmcParse, Debug)]
 pub(crate) struct SliceType {
     pub(crate) open_bracket: OpenSquareBracketSymbol,
+    pub(crate) mut_keyword: Option<MutKeyword>,
     pub(crate) typ: ParseResult<Type>,
     pub(crate) array_size: Option<ArraySizeExpr>,
     pub(crate) close_bracket: ParseResult<CloseSquareBracketSymbol>,

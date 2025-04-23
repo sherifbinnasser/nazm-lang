@@ -95,6 +95,12 @@ impl<'a> SemanticsAnalyzer<'a> {
                 let type_key = self.analyze_type_expr(underlying_typ);
                 Type::slice(type_key)
             }
+            TypeExpr::SliceMut(slice_mut_type_expr_key) => {
+                let underlying_typ =
+                    self.ast.types_exprs.slices_mut[*slice_mut_type_expr_key].underlying_typ;
+                let type_key = self.analyze_type_expr(underlying_typ);
+                Type::slice_mut(type_key)
+            }
             TypeExpr::Ptr(ptr_type_expr_key) => {
                 let underlying_typ = self.ast.types_exprs.ptrs[*ptr_type_expr_key].underlying_typ;
                 let underlying_type_key = self.analyze_type_expr(underlying_typ);

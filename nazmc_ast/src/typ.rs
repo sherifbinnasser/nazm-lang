@@ -6,6 +6,7 @@ pub struct TypesExprs {
     pub paths: TiVec<PathTypeExprKey, ItemPath>,
     pub parens: TiVec<ParenTypeExprKey, ParenTypeExpr>,
     pub slices: TiVec<SliceTypeExprKey, SliceTypeExpr>,
+    pub slices_mut: TiVec<SliceMutTypeExprKey, SliceMutTypeExpr>,
     pub ptrs: TiVec<PtrTypeExprKey, PtrTypeExpr>,
     pub ptrs_mut: TiVec<PtrMutTypeExprKey, PtrMutTypeExpr>,
     pub fn_ptrs: TiVec<FnPtrTypeExprKey, FnPtrTypeExpr>,
@@ -19,6 +20,7 @@ pub enum TypeExpr {
     Path(PathTypeExprKey),
     Paren(ParenTypeExprKey),
     Slice(SliceTypeExprKey),
+    SliceMut(SliceMutTypeExprKey),
     Ptr(PtrTypeExprKey),
     PtrMut(PtrMutTypeExprKey),
     FnPtr(FnPtrTypeExprKey),
@@ -36,6 +38,13 @@ pub struct ParenTypeExpr {
 
 #[derive(Clone)]
 pub struct SliceTypeExpr {
+    pub underlying_typ: TypeExprKey,
+    pub file_key: FileKey,
+    pub span: Span,
+}
+
+#[derive(Clone)]
+pub struct SliceMutTypeExpr {
     pub underlying_typ: TypeExprKey,
     pub file_key: FileKey,
     pub span: Span,

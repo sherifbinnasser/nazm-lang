@@ -19,6 +19,7 @@ new_data_pool_key! { TypeExprKey }
 new_data_pool_key! { PathTypeExprKey }
 new_data_pool_key! { ParenTypeExprKey }
 new_data_pool_key! { SliceTypeExprKey }
+new_data_pool_key! { SliceMutTypeExprKey }
 new_data_pool_key! { PtrTypeExprKey }
 new_data_pool_key! { PtrMutTypeExprKey }
 new_data_pool_key! { FnPtrTypeExprKey }

@@ -790,7 +790,19 @@ impl<'a> ParseErrorsReporter<'a> {
             Type::Ptr(ptr_type) => self.check_type_result(&ptr_type.typ),
             Type::Slice(slice_type) => {
                 self.check_type_result(&slice_type.typ);
-                if let Some(ArraySizeExpr { semicolon: _, expr }) = &slice_type.array_size {
+                if let Some(ArraySizeExpr { semicolon, expr }) = &slice_type.array_size {
+                    if let Some(mut_keyword) = &slice_type.mut_keyword {
+                        self.report(
+                            "الكلمة المفتاحية `متغير` غير مسموح بها في تعريف تعبير من نوع مصفوفة"
+                                .into(),
+                            mut_keyword.span,
+                            "قُم بإزالة الكلمة المفتاحية".into(),
+                            vec![(
+                                semicolon.span,
+                                vec!["علامة `؛` تُستخدم في التعريف بتعبير من نوع مصفوفة".into()],
+                            )],
+                        );
+                    }
                     self.check_expr_result(expr);
                 }
                 if slice_type.close_bracket.is_err() {

@@ -60,6 +60,7 @@ impl<'a> SemanticsAnalyzer<'a> {
     pub(crate) fn fmt_comp_ty(&self, comp_ty: &CompositeType) -> String {
         match comp_ty {
             CompositeType::Slice(inner) => format!("[{}]", self.fmt_ty(&inner)),
+            CompositeType::SliceMut(inner) => format!("[متغير {}]", self.fmt_ty(&inner)),
             CompositeType::Ptr(inner) => format!("*{}", self.fmt_ty(&inner)),
             CompositeType::PtrMut(inner) => format!("*متغير {}", self.fmt_ty(&inner)),
             CompositeType::Array {
@@ -129,6 +130,9 @@ impl<'a> SemanticsAnalyzer<'a> {
             }
             TypeExpr::Slice(slice_type_expr_key) => {
                 self.ast.types_exprs.slices[*slice_type_expr_key].span
+            }
+            TypeExpr::SliceMut(slice_mut_type_expr_key) => {
+                self.ast.types_exprs.slices_mut[*slice_mut_type_expr_key].span
             }
             TypeExpr::Ptr(ptr_type_expr_key) => {
                 let expr = &self.ast.types_exprs.ptrs[*ptr_type_expr_key];

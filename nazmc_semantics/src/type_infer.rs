@@ -48,6 +48,7 @@ pub enum ConcreteType {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CompositeType {
     Slice(Box<Type>),
+    SliceMut(Box<Type>),
     Ptr(Box<Type>),
     PtrMut(Box<Type>),
     Array {
@@ -157,6 +158,7 @@ impl CompositeType {
     pub fn occurs_check(&self, of: TypeVarKey) -> bool {
         match self {
             CompositeType::Slice(underlying_typ)
+            | CompositeType::SliceMut(underlying_typ)
             | CompositeType::Ptr(underlying_typ)
             | CompositeType::PtrMut(underlying_typ)
             | CompositeType::Array {
@@ -197,6 +199,11 @@ impl Type {
     /// Create a `Slice` type.
     pub fn slice(inner: Type) -> Self {
         Self::composite(CompositeType::Slice(Box::new(inner)))
+    }
+
+    /// Create a `SliceMut` type.
+    pub fn slice_mut(inner: Type) -> Self {
+        Self::composite(CompositeType::SliceMut(Box::new(inner)))
     }
 
     /// Create a `Ptr` type.
@@ -381,9 +388,8 @@ impl TypeInferenceCtx {
     pub(crate) fn apply_on_composite(&self, composite_type: &CompositeType) -> CompositeType {
         match composite_type {
             // Recursively apply substitutions to concrete types
-            CompositeType::Slice(inner) => {
-                CompositeType::Slice(Box::new(self.apply(inner.as_ref())))
-            }
+            CompositeType::Slice(inner) => CompositeType::Slice(Box::new(self.apply(inner))),
+            CompositeType::SliceMut(inner) => CompositeType::SliceMut(Box::new(self.apply(inner))),
             CompositeType::Ptr(inner) => CompositeType::Ptr(Box::new(self.apply(inner))),
             CompositeType::PtrMut(inner) => CompositeType::PtrMut(Box::new(self.apply(inner))),
             CompositeType::Array {
@@ -528,6 +534,7 @@ impl TypeInferenceCtx {
     ) -> Result<(), ()> {
         match (c1, c2) {
             (CompositeType::Slice(t1), CompositeType::Slice(t2))
+            | (CompositeType::SliceMut(t1), CompositeType::SliceMut(t2))
             | (CompositeType::Ptr(t1), CompositeType::Ptr(t2))
             | (CompositeType::PtrMut(t1), CompositeType::PtrMut(t2)) => self.unify(&t1, &t2),
 
