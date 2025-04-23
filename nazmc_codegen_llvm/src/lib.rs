@@ -22,7 +22,7 @@ use inkwell::{
     basic_block::BasicBlock,
     builder::Builder,
     context::Context,
-    module::Module,
+    module::{Linkage, Module},
     passes::PassBuilderOptions,
     targets::{
         CodeModel, InitializationConfig, RelocMode, Target, TargetData, TargetMachine, TargetTriple,
@@ -227,6 +227,10 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                 self.module
                     .add_global(const_str.get_type(), None, &format!(".str{}", str_key.0));
             global.set_initializer(&const_str);
+            global.set_constant(true);
+            global.set_unnamed_addr(true);
+            global.set_linkage(Linkage::Private);
+            global.set_alignment(1);
 
             let global_slice = self.module.add_global(
                 self.slice_type(),
@@ -237,6 +241,9 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                 .context
                 .const_struct(&[global.as_pointer_value().into(), str_len.into()], false);
             global_slice.set_initializer(&slice);
+            global.set_constant(true);
+            global_slice.set_unnamed_addr(true);
+            global_slice.set_linkage(Linkage::Private);
 
             self.llvm_str_pool.push(global_slice.as_pointer_value());
         }
