@@ -52,9 +52,6 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             OperandKind::Const(Const::F8(n)) => {
                 AnyValueEnum::FloatValue(self.context.f64_type().const_float(n as f64))
             }
-            OperandKind::Const(Const::Str(str_key)) => {
-                AnyValueEnum::PointerValue(self.llvm_str_pool[str_key])
-            }
             OperandKind::Const(Const::Fn(fn_key)) => {
                 AnyValueEnum::FunctionValue(self.llvm_fns[fn_key])
             }

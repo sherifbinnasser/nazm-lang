@@ -23,10 +23,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                     .builder
                     .build_memcpy(dest_ptr, align, src_ptr, align, size);
             }
-            RValue::Use(Operand {
-                kind: OperandKind::Const(Const::Str(str_key)),
-                ..
-            }) => {
+            RValue::Str(str_key) => {
                 let src_ptr = self.llvm_str_pool[*str_key];
                 let _ = self
                     .builder
