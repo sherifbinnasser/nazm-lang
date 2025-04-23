@@ -599,6 +599,33 @@ impl<'a> SemanticsAnalyzer<'a> {
         self.diagnostics.push(diagnostic);
     }
 
+    pub(crate) fn add_unknown_field_for_slice_err(
+        &mut self,
+        ty: &Type,
+        field_id_key: IdKey,
+        field_id_expr_span: Span,
+    ) {
+        let ty = self.fmt_ty(ty);
+        let field_name = self.id_pool[field_id_key].clone();
+
+        let msg = format!("الحقل `{}` غير معروف للنوع `{}`", field_name, ty);
+
+        let mut code_window = CodeWindow::new(
+            &self.files_infos[self.current_file_key],
+            field_id_expr_span.start,
+        );
+
+        code_window.mark_error(field_id_expr_span, vec![]);
+
+        let mut diagnostic = Diagnostic::error(msg, vec![code_window]);
+
+        let help_msg = format!("النوع `{}` لديه حقلان: `مؤشر`، و `طول`", ty);
+        let help = Diagnostic::help(help_msg, vec![]);
+
+        diagnostic.chain(help);
+        self.diagnostics.push(diagnostic);
+    }
+
     pub(crate) fn add_field_type_mismatch_err(
         &mut self,
         expected_ty: &Type,
