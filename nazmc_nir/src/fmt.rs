@@ -214,7 +214,6 @@ impl<'a> NIR<'a> {
                 Const::F8(n) => format!("{n}"),
                 Const::Bool(n) => format!("{n}"),
                 Const::Char(n) => format!("'{n}'"),
-                Const::Str(str_key) => format!("\"{}\"", &self.str_pool[*str_key]),
                 Const::Fn(fn_key) => {
                     let item_info = self.fns[*fn_key].info;
                     self.fmt_item_name(item_info)
@@ -254,6 +253,7 @@ impl<'a> NIR<'a> {
     pub fn fmt_rvalue(&self, cfg: &CFG, rvalue: &RValue) -> String {
         match rvalue {
             RValue::Use(operand) => format!("{}", self.fmt_operand(cfg, operand)),
+            RValue::Str(str_key) => format!("\\\"{}\\\"", &self.str_pool[*str_key]),
             RValue::Ref(lvalue_key) => format!("&{}", self.fmt_lvalue(cfg, *lvalue_key)),
             RValue::RefMut(lvalue_key) => format!("&mut {}", self.fmt_lvalue(cfg, *lvalue_key)),
             RValue::Tuple(operands) => format!(

@@ -22,7 +22,7 @@ use inkwell::{
     basic_block::BasicBlock,
     builder::Builder,
     context::Context,
-    module::Module,
+    module::{Linkage, Module},
     passes::PassBuilderOptions,
     targets::{
         CodeModel, InitializationConfig, RelocMode, Target, TargetData, TargetMachine, TargetTriple,
@@ -219,12 +219,33 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
 
     fn lower_string_consts(&mut self) {
         let strs = std::mem::take(&mut self.nir.str_pool);
+
         for (str_key, _str) in strs.into_iter_enumerated() {
+            let str_len = self.isize_type().const_int(_str.len() as u64, false);
             let const_str = self.context.const_string(&_str.into_bytes(), true);
             let global =
                 self.module
                     .add_global(const_str.get_type(), None, &format!(".str{}", str_key.0));
-            self.llvm_str_pool.push(global.as_pointer_value());
+            global.set_initializer(&const_str);
+            global.set_constant(true);
+            global.set_unnamed_addr(true);
+            global.set_linkage(Linkage::Private);
+            global.set_alignment(1);
+
+            let global_slice = self.module.add_global(
+                self.slice_type(),
+                None,
+                &format!(".str_slice{}", str_key.0),
+            );
+            let slice = self
+                .context
+                .const_struct(&[global.as_pointer_value().into(), str_len.into()], false);
+            global_slice.set_initializer(&slice);
+            global.set_constant(true);
+            global_slice.set_unnamed_addr(true);
+            global_slice.set_linkage(Linkage::Private);
+
+            self.llvm_str_pool.push(global_slice.as_pointer_value());
         }
     }
 

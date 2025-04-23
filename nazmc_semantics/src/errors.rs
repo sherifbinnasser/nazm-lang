@@ -60,6 +60,7 @@ impl<'a> SemanticsAnalyzer<'a> {
     pub(crate) fn fmt_comp_ty(&self, comp_ty: &CompositeType) -> String {
         match comp_ty {
             CompositeType::Slice(inner) => format!("[{}]", self.fmt_ty(&inner)),
+            CompositeType::SliceMut(inner) => format!("[متغير {}]", self.fmt_ty(&inner)),
             CompositeType::Ptr(inner) => format!("*{}", self.fmt_ty(&inner)),
             CompositeType::PtrMut(inner) => format!("*متغير {}", self.fmt_ty(&inner)),
             CompositeType::Array {
@@ -129,6 +130,9 @@ impl<'a> SemanticsAnalyzer<'a> {
             }
             TypeExpr::Slice(slice_type_expr_key) => {
                 self.ast.types_exprs.slices[*slice_type_expr_key].span
+            }
+            TypeExpr::SliceMut(slice_mut_type_expr_key) => {
+                self.ast.types_exprs.slices_mut[*slice_mut_type_expr_key].span
             }
             TypeExpr::Ptr(ptr_type_expr_key) => {
                 let expr = &self.ast.types_exprs.ptrs[*ptr_type_expr_key];
@@ -596,6 +600,33 @@ impl<'a> SemanticsAnalyzer<'a> {
         let note = Diagnostic::note(note_msg, vec![note_code_window]);
 
         diagnostic.chain(note);
+        self.diagnostics.push(diagnostic);
+    }
+
+    pub(crate) fn add_unknown_field_for_slice_err(
+        &mut self,
+        ty: &Type,
+        field_id_key: IdKey,
+        field_id_expr_span: Span,
+    ) {
+        let ty = self.fmt_ty(ty);
+        let field_name = self.id_pool[field_id_key].clone();
+
+        let msg = format!("الحقل `{}` غير معروف للنوع `{}`", field_name, ty);
+
+        let mut code_window = CodeWindow::new(
+            &self.files_infos[self.current_file_key],
+            field_id_expr_span.start,
+        );
+
+        code_window.mark_error(field_id_expr_span, vec![]);
+
+        let mut diagnostic = Diagnostic::error(msg, vec![code_window]);
+
+        let help_msg = format!("النوع `{}` لديه حقلان: `مؤشر`، و `طول`", ty);
+        let help = Diagnostic::help(help_msg, vec![]);
+
+        diagnostic.chain(help);
         self.diagnostics.push(diagnostic);
     }
 

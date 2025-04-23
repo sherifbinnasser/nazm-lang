@@ -6,7 +6,6 @@ use nazmc_diagnostics::file_info::FileInfo;
 use nazmc_diagnostics::span::Span;
 use std::collections::HashMap;
 use thin_vec::ThinVec;
-pub mod codegen;
 pub mod fmt;
 pub mod nir_analyzer;
 
@@ -275,6 +274,7 @@ pub enum LValueKind {
 #[derive(Debug)]
 pub enum RValue {
     Use(Operand),
+    Str(StrKey),
     Ref(LValueKey),
     RefMut(LValueKey),
     Tuple(ThinVec<Operand>),
@@ -323,7 +323,6 @@ pub enum Const {
     F8(f64),
     Bool(bool),
     Char(char),
-    Str(StrKey),
     Fn(FnKey),
 }
 
@@ -347,7 +346,6 @@ impl PartialEq for Const {
             (F8(a), F8(b)) => a.to_bits() == b.to_bits(),
             (Bool(a), Bool(b)) => a == b,
             (Char(a), Char(b)) => a == b,
-            (Str(a), Str(b)) => a == b,
             (Fn(a), Fn(b)) => a == b,
             _ => false,
         }

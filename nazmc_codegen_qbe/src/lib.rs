@@ -475,6 +475,7 @@ impl<'a> QbeCodegen<'a> {
     fn lower_rvalue(&mut self, rvalue: &RValue, cfg: &CFG, qbe_bb: &mut qbe::Block) -> qbe::Instr {
         match rvalue {
             RValue::Use(operand) => qbe::Instr::Copy(self.lower_operand(operand, cfg, qbe_bb)),
+            RValue::Str(str_key) => qbe::Instr::Copy(self.strs[*str_key].clone()),
             RValue::Ref(lvalue_key) | RValue::RefMut(lvalue_key) => {
                 qbe::Instr::Copy(self.lower_lvalue_to_ptr(*lvalue_key, cfg, qbe_bb))
             }
@@ -705,7 +706,6 @@ impl<'a> QbeCodegen<'a> {
                 Const::F8(n) => qbe::Value::Double(n),
                 Const::Bool(n) => qbe::Value::UConst(n as u64),
                 Const::Char(n) => qbe::Value::UConst(n as u64),
-                Const::Str(str_key) => self.strs[str_key].clone(),
                 Const::Fn(fn_key) => qbe::Value::Global(self.get_fn_name(fn_key)),
             },
         }

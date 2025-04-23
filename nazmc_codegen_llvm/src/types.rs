@@ -10,6 +10,11 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             .ptr_sized_int_type(&self.machine.get_target_data(), None)
     }
 
+    pub(crate) fn slice_type(&self) -> StructType<'ctx> {
+        self.context
+            .struct_type(&[self.ptr_type().into(), self.isize_type().into()], false)
+    }
+
     pub(crate) fn get_type_size(&self, type_key: TypeKey) -> u32 {
         match self.nir.types[type_key] {
             Type::Unit => 0,
@@ -77,18 +82,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             Type::FnPtr(fn_ptr_ty_key) => self.lower_fn_ptr_type(fn_ptr_ty_key).as_any_type_enum(),
             Type::Tuple(tuple_type_key) => self.lower_tuple_type(tuple_type_key).as_any_type_enum(),
             Type::Array(array_type_key) => self.lower_array_type(array_type_key).as_any_type_enum(),
-            Type::Slice(_) | Type::MutSlice(_) => self
-                .context
-                .struct_type(
-                    &[
-                        self.ptr_type().into(),
-                        self.context
-                            .ptr_sized_int_type(&self.machine.get_target_data(), None)
-                            .into(),
-                    ],
-                    false,
-                )
-                .as_any_type_enum(),
+            Type::Slice(_) | Type::MutSlice(_) => self.slice_type().as_any_type_enum(),
             Type::Lambda(lambda_type_key) => todo!(),
         }
     }

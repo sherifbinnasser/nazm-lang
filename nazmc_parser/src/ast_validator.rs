@@ -563,6 +563,16 @@ impl<'a> ASTValidator<'a> {
                         );
 
                         nazmc_ast::TypeExpr::Array(key)
+                    } else if slice_type.mut_keyword.is_some() {
+                        let key = self.ast.types_exprs.slices_mut.push_and_get_key(
+                            nazmc_ast::SliceMutTypeExpr {
+                                underlying_typ,
+                                file_key: self.file_key,
+                                span,
+                            },
+                        );
+
+                        nazmc_ast::TypeExpr::SliceMut(key)
                     } else {
                         let key = self.ast.types_exprs.slices.push_and_get_key(
                             nazmc_ast::SliceTypeExpr {

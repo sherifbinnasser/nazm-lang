@@ -35,6 +35,12 @@ impl<'a> NIRBuilder<'a> {
                     };
                     Type::Slice(self.get_unique_type(underlying_typ))
                 }
+                crate::CompositeType::SliceMut(underlying_typ) => {
+                    let crate::Type::Concrete(underlying_typ) = &**underlying_typ else {
+                        unreachable!()
+                    };
+                    Type::MutSlice(self.get_unique_type(underlying_typ))
+                }
                 crate::CompositeType::Ptr(underlying_typ) => {
                     let crate::Type::Concrete(underlying_typ) = &**underlying_typ else {
                         unreachable!()
@@ -590,9 +596,11 @@ impl<'a> SemanticsAnalyzer<'a> {
 
         let kind = match expr_kind {
             nazmc_ast::ExprKind::Unit => OperandKind::Const(Const::Unit),
-            nazmc_ast::ExprKind::Literal(literal_expr) => {
+            nazmc_ast::ExprKind::Literal(literal_expr) => 'label: {
                 let const_opernad = match literal_expr {
-                    nazmc_ast::LiteralExpr::Str(str_key) => Const::Str(str_key),
+                    nazmc_ast::LiteralExpr::Str(str_key) => {
+                        break 'label self.add_new_temp_assign_stm(typ, RValue::Str(str_key))
+                    }
                     nazmc_ast::LiteralExpr::Char(ch) => Const::Char(ch),
                     nazmc_ast::LiteralExpr::Bool(b) => Const::Bool(b),
                     nazmc_ast::LiteralExpr::Num(num_kind) => match num_kind {
@@ -743,17 +751,28 @@ impl<'a> SemanticsAnalyzer<'a> {
                     unreachable!()
                 };
 
-                let Type::Struct(struct_key) = self.nir_builder.nir.types[on_typ] else {
-                    unreachable!()
+                let idx = match self.nir_builder.nir.types[on_typ] {
+                    Type::Struct(struct_key) => {
+                        // REVIEW: Should we cache fields indecies
+                        self.nir_builder.nir.structs[struct_key]
+                            .fields
+                            .iter()
+                            .find_position(|f| f.id == field_expr.name.id)
+                            .unwrap()
+                            .0 as u32
+                    }
+                    Type::Slice(_) | Type::MutSlice(_)
+                        if field_expr.name.id == IdKey::SLICE_PTR_FIELD =>
+                    {
+                        0
+                    }
+                    Type::Slice(_) | Type::MutSlice(_)
+                        if field_expr.name.id == IdKey::SLICE_LEN_FIELD =>
+                    {
+                        1
+                    }
+                    _ => unreachable!(),
                 };
-
-                // REVIEW: Should we cache fields indecies
-                let idx = self.nir_builder.nir.structs[struct_key]
-                    .fields
-                    .iter()
-                    .find_position(|f| f.id == field_expr.name.id)
-                    .unwrap()
-                    .0 as u32;
 
                 let lvalue = if self.is_mut_lvalue(lvalue_key) {
                     LValueKind::MutField {

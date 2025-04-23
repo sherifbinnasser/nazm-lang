@@ -23,6 +23,12 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                     .builder
                     .build_memcpy(dest_ptr, align, src_ptr, align, size);
             }
+            RValue::Str(str_key) => {
+                let src_ptr = self.llvm_str_pool[*str_key];
+                let _ = self
+                    .builder
+                    .build_memcpy(dest_ptr, align, src_ptr, align, size);
+            }
             RValue::Call { on, args } => self.lower_call_rvalue_agg_type(dest_ptr, on, &args, cfg),
             RValue::ArrayRepeated { repeated, size } => {
                 struct OperandIter<'a> {
