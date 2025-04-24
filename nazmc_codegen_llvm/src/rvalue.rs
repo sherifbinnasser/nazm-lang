@@ -225,12 +225,12 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         let fn_type = self.fn_ptr_types.borrow()[&fn_ptr_type_key].fn_type;
         let args_layout = &self.fn_ptr_types.borrow()[&fn_ptr_type_key].args_layout;
         let has_ret_ptr = matches!(args_layout.first(), Some(ArgLayout::RetPtr));
-        let mut args_layout_iter = args_layout.iter().enumerate();
-        let mut llvm_params_types_iter = fn_type.get_param_types().into_iter().enumerate();
+        let mut args_layout_iter = args_layout.iter().copied().enumerate();
+        let mut llvm_params_types_iter = fn_type.get_param_types().into_iter();
         let mut llvm_args;
         if has_ret_ptr {
             llvm_params_types_iter.next();
-            args_layout_iter = args_layout[1..].iter().enumerate();
+            args_layout_iter = args_layout[1..].iter().copied().enumerate();
             llvm_args = Vec::with_capacity(args.len() + 1);
             llvm_args.push(BasicMetadataValueEnum::PointerValue(dest_ptr));
         } else {
@@ -244,6 +244,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             args,
             llvm_args,
             args_layout_iter,
+            args_layout.len(),
             llvm_params_types_iter,
             cfg,
         );
@@ -435,8 +436,8 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
 
         let fn_type = self.fn_ptr_types.borrow()[&fn_ptr_type_key].fn_type;
         let args_layout = &self.fn_ptr_types.borrow()[&fn_ptr_type_key].args_layout;
-        let args_layout_iter = args_layout.iter().enumerate();
-        let llvm_params_types_iter = fn_type.get_param_types().into_iter().enumerate();
+        let args_layout_iter = args_layout.iter().copied().enumerate();
+        let llvm_params_types_iter = fn_type.get_param_types().into_iter();
         let llvm_args = Vec::with_capacity(args.len());
 
         self.lower_call_args(
@@ -446,27 +447,57 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             args,
             llvm_args,
             args_layout_iter,
+            args_layout.len(),
             llvm_params_types_iter,
             cfg,
         )
     }
 
-    pub(crate) fn lower_call_args<'a>(
+    pub(crate) fn lower_call_args(
         &self,
         llvm_on: AnyValueEnum<'ctx>,
         fn_ptr_type_key: FnPtrTypeKey,
         fn_type: FunctionType<'ctx>,
         args: &[Operand],
         mut llvm_args: Vec<BasicMetadataValueEnum<'ctx>>,
-        args_layout_iter: impl Iterator<Item = (usize, &'a ArgLayout)>,
-        mut llvm_params_types_iter: impl Iterator<Item = (usize, BasicTypeEnum<'ctx>)>,
+        args_layout_iter: impl Iterator<Item = (usize, ArgLayout)>,
+        args_layout_len: usize,
+        llvm_params_types_iter: impl Iterator<Item = BasicTypeEnum<'ctx>>,
         cfg: &CFG,
     ) -> AnyValueEnum<'ctx> {
+        let varargs_len = args.len() - args_layout_len;
+        let mut vararg_args_layout = Vec::with_capacity(varargs_len);
+        let mut vararg_llvm_params_types = Vec::with_capacity(varargs_len);
+        let mut vararg_attributes = Vec::with_capacity(varargs_len);
+
+        if varargs_len > 0 {
+            self.lower_fn_params_types(
+                args[args_layout_len..].iter().map(|arg| &arg.typ),
+                &mut vararg_args_layout,
+                &mut vararg_llvm_params_types,
+                &mut vararg_attributes,
+            );
+        }
+
+        let vararg_args_layout_iter = vararg_args_layout
+            .into_iter()
+            .enumerate()
+            .map(|(i, arg_layout)| (i + varargs_len, arg_layout));
+
+        let vararg_llvm_params_types_iter = vararg_llvm_params_types
+            .into_iter()
+            .map(basic_metadata_type_enum_to_basic_type_enum);
+
+        let args_layout_iter = args_layout_iter.chain(vararg_args_layout_iter);
+
+        let mut llvm_params_types_iter =
+            llvm_params_types_iter.chain(vararg_llvm_params_types_iter);
+
         for (i, arg_layout) in args_layout_iter {
             match arg_layout {
                 ArgLayout::RetPtr => unreachable!(),
                 ArgLayout::ByvalPtr | ArgLayout::IntStruct | ArgLayout::BinaryStruct => {
-                    let (_, llvm_lowered_ty) = llvm_params_types_iter.next().unwrap();
+                    let llvm_lowered_ty = llvm_params_types_iter.next().unwrap();
                     let Operand {
                         kind: OperandKind::LValue(arg_lvalue),
                         typ: arg_typ,

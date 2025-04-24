@@ -113,10 +113,16 @@ pub(crate) struct Fn {
 }
 
 #[derive(NazmcParse, Debug)]
-pub(crate) struct FnParam {
+pub(crate) struct RealFnParam {
     pub(crate) mut_keyword: Option<MutKeyword>,
     pub(crate) name: Id,
     pub(crate) typ: ParseResult<ColonWithType>,
+}
+
+#[derive(NazmcParse, Debug)]
+pub(crate) enum FnParam {
+    Varag(VarargSymbol),
+    Real(RealFnParam),
 }
 
 generatePunctuatedItem!(FnParam);

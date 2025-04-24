@@ -90,15 +90,21 @@ impl<'a> SemanticsAnalyzer<'a> {
             CompositeType::FnPtr {
                 params_types,
                 return_type,
-            } => format!(
-                "دالة({}) -> {}",
-                params_types
+                is_vararg,
+            } => {
+                let mut params = params_types
                     .iter()
                     .map(|param_ty| self.fmt_ty(&param_ty))
                     .collect::<Vec<_>>()
-                    .join("، "),
-                self.fmt_ty(&return_type)
-            ),
+                    .join("، ");
+                if *is_vararg {
+                    if !params_types.is_empty() {
+                        params.push_str("، ");
+                    }
+                    params.push_str("...");
+                }
+                format!("دالة({}) -> {}", params, self.fmt_ty(&return_type))
+            }
         }
     }
 

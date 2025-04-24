@@ -151,6 +151,9 @@ pub(crate) struct DoubleColonsSymbolToken;
 pub(crate) struct RArrowSymbolToken;
 
 #[derive(Debug)]
+pub(crate) struct VarargSymbolToken;
+
+#[derive(Debug)]
 /// The parse method is written by hand to avoid backtracking
 pub(crate) enum BinOpToken {
     LOr,
@@ -214,6 +217,7 @@ pub(crate) struct EOFToken;
 impl private::Sealed for IdToken {}
 impl private::Sealed for DoubleColonsSymbolToken {}
 impl private::Sealed for RArrowSymbolToken {}
+impl private::Sealed for VarargSymbolToken {}
 impl private::Sealed for BinOpToken {}
 impl private::Sealed for UnaryOpToken {}
 impl private::Sealed for LiteralKind {}
@@ -224,6 +228,7 @@ impl private::Sealed for usize {}
 impl TerminalGuard for IdToken {}
 impl TerminalGuard for DoubleColonsSymbolToken {}
 impl TerminalGuard for RArrowSymbolToken {}
+impl TerminalGuard for VarargSymbolToken {}
 impl TerminalGuard for BinOpToken {}
 impl TerminalGuard for UnaryOpToken {}
 impl TerminalGuard for LiteralKind {}
@@ -234,6 +239,7 @@ impl TerminalGuard for usize {}
 pub(crate) type Id = Terminal<IdToken>;
 pub(crate) type DoubleColonsSymbol = Terminal<DoubleColonsSymbolToken>;
 pub(crate) type RArrowSymbol = Terminal<RArrowSymbolToken>;
+pub(crate) type VarargSymbol = Terminal<VarargSymbolToken>;
 pub(crate) type BinOp = Terminal<BinOpToken>;
 pub(crate) type UnaryOp = Terminal<UnaryOpToken>;
 pub(crate) type LiteralExpr = Terminal<LiteralKind>;
@@ -329,6 +335,32 @@ impl NazmcParse for ParseResult<RArrowSymbol> {
                 Ok(Terminal {
                     span,
                     data: RArrowSymbolToken,
+                })
+            }
+            Some(_) => Err(ParseErr {
+                found_token_index: iter.peek_idx - 1,
+            }),
+            None => ParseErr::eof(),
+        }
+    }
+}
+
+impl NazmcParse for ParseResult<VarargSymbol> {
+    fn parse(iter: &mut TokensIter) -> Self {
+        match iter.recent() {
+            Some(
+                token @ Token {
+                    kind: TokenKind::Symbol(SymbolKind::Dot),
+                    ..
+                },
+            ) if match_peek_symbols!(iter, Dot, Dot) => {
+                let mut span = token.span;
+                span.end.col += 2;
+                iter.peek_idx += 2; // Eat next '..'
+                iter.next_non_space_or_comment();
+                Ok(Terminal {
+                    span,
+                    data: VarargSymbolToken,
                 })
             }
             Some(_) => Err(ParseErr {

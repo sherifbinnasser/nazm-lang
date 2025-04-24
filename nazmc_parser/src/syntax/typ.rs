@@ -34,7 +34,7 @@ pub(crate) struct ArraySizeExpr {
 #[derive(NazmcParse, Debug)]
 pub(crate) struct FnPtrType {
     pub(crate) fn_keyword: FnKeyword,
-    pub(crate) params_types: ParseResult<TupleType>,
+    pub(crate) params: ParseResult<FnPtrParams>,
     pub(crate) return_type: ParseResult<LambdaType>,
 }
 
@@ -50,11 +50,26 @@ pub(crate) struct LambdaType {
     pub(crate) typ: ParseResult<Type>,
 }
 
+#[derive(NazmcParse, Debug)]
+pub(crate) enum FnPtrParam {
+    Varag(VarargSymbol),
+    Real(Type),
+}
+
 generatePunctuatedItem!(Type);
+
+generatePunctuatedItem!(FnPtrParam);
 
 generateDelimitedPunctuated!(
     TupleType,
     OpenParenthesisSymbol,
     Type,
+    CloseParenthesisSymbol
+);
+
+generateDelimitedPunctuated!(
+    FnPtrParams,
+    OpenParenthesisSymbol,
+    FnPtrParam,
     CloseParenthesisSymbol
 );

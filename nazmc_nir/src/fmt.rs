@@ -174,16 +174,26 @@ impl<'a> NIR<'a> {
                     .join(", "),
                 self.fmt_typ(self.lambda_types[lambda_type_key].return_type)
             ),
-            Type::FnPtr(fn_ptr_type_key) => format!(
-                "fn({}) -> {}",
-                self.fn_ptr_types[fn_ptr_type_key]
+            Type::FnPtr(fn_ptr_type_key) => {
+                let mut params = self.fn_ptr_types[fn_ptr_type_key]
                     .params_types
                     .iter()
                     .map(|&ty| self.fmt_typ(ty))
                     .collect::<Vec<_>>()
-                    .join(", "),
-                self.fmt_typ(self.fn_ptr_types[fn_ptr_type_key].return_type)
-            ),
+                    .join(", ");
+
+                if self.fn_ptr_types[fn_ptr_type_key].is_vararg {
+                    if !self.fn_ptr_types[fn_ptr_type_key].params_types.is_empty() {
+                        params.push_str(", ");
+                    }
+                    params.push_str("...");
+                }
+                format!(
+                    "fn({}) -> {}",
+                    params,
+                    self.fmt_typ(self.fn_ptr_types[fn_ptr_type_key].return_type)
+                )
+            }
         }
     }
 

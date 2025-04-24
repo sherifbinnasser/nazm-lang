@@ -123,6 +123,7 @@ impl<'a> NIRBuilder<'a> {
                 crate::CompositeType::FnPtr {
                     params_types,
                     return_type,
+                    is_vararg,
                 } => {
                     let params_types = params_types
                         .into_iter()
@@ -144,6 +145,7 @@ impl<'a> NIRBuilder<'a> {
                     let fn_ptr_type = FnPtrType {
                         params_types,
                         return_type,
+                        is_vararg: *is_vararg,
                     };
 
                     let fn_ptr_type_key = self.all_fn_ptr_types.get_key(&fn_ptr_type);

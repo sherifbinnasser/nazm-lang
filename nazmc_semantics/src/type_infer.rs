@@ -65,6 +65,7 @@ pub enum CompositeType {
     FnPtr {
         params_types: ThinVec<Type>,
         return_type: Box<Type>,
+        is_vararg: bool,
     },
 }
 
@@ -173,6 +174,7 @@ impl CompositeType {
             | CompositeType::FnPtr {
                 params_types,
                 return_type,
+                ..
             } => params_types.iter().any(|ty| ty.occurs_check(of)) || return_type.occurs_check(of),
         }
     }
@@ -240,10 +242,15 @@ impl Type {
     }
 
     /// Create a `FnPtr` type.
-    pub fn fn_ptr(params: impl IntoIterator<Item = Type>, return_type: Type) -> Self {
+    pub fn fn_ptr(
+        params: impl IntoIterator<Item = Type>,
+        return_type: Type,
+        is_vararg: bool,
+    ) -> Self {
         Self::composite(CompositeType::FnPtr {
             params_types: params.into_iter().collect(),
             return_type: Box::new(return_type),
+            is_vararg,
         })
     }
 
@@ -415,9 +422,11 @@ impl TypeInferenceCtx {
             CompositeType::FnPtr {
                 params_types,
                 return_type,
+                is_vararg,
             } => CompositeType::FnPtr {
                 params_types: params_types.iter().map(|param| self.apply(param)).collect(),
                 return_type: Box::new(self.apply(return_type)),
+                is_vararg: *is_vararg,
             },
         }
     }
@@ -567,17 +576,25 @@ impl TypeInferenceCtx {
                     params_types: params_types2,
                     return_type: return_type2,
                 },
-            )
-            | (
+            ) if params_types1.len() == params_types2.len() => {
+                for (t1, t2) in params_types1.iter().zip(params_types2.iter()) {
+                    self.unify(t1, t2)?;
+                }
+                self.unify(return_type1, return_type2)?;
+                Ok(())
+            }
+            (
                 CompositeType::FnPtr {
                     params_types: params_types1,
                     return_type: return_type1,
+                    is_vararg: is_vararg1,
                 },
                 CompositeType::FnPtr {
                     params_types: params_types2,
                     return_type: return_type2,
+                    is_vararg: is_vararg2,
                 },
-            ) if params_types1.len() == params_types2.len() => {
+            ) if params_types1.len() == params_types2.len() && is_vararg1 == is_vararg2 => {
                 for (t1, t2) in params_types1.iter().zip(params_types2.iter()) {
                     self.unify(t1, t2)?;
                 }

@@ -66,6 +66,20 @@ pub(crate) fn any_type_enum_to_basic_type_enum(ty: AnyTypeEnum) -> BasicTypeEnum
     }
 }
 
+pub(crate) fn basic_metadata_type_enum_to_basic_type_enum(
+    ty: BasicMetadataTypeEnum,
+) -> BasicTypeEnum {
+    match ty {
+        BasicMetadataTypeEnum::ArrayType(array_type) => array_type.as_basic_type_enum(),
+        BasicMetadataTypeEnum::FloatType(float_type) => float_type.as_basic_type_enum(),
+        BasicMetadataTypeEnum::IntType(int_type) => int_type.as_basic_type_enum(),
+        BasicMetadataTypeEnum::PointerType(pointer_type) => pointer_type.as_basic_type_enum(),
+        BasicMetadataTypeEnum::StructType(struct_type) => struct_type.as_basic_type_enum(),
+        BasicMetadataTypeEnum::VectorType(vector_type) => vector_type.as_basic_type_enum(),
+        BasicMetadataTypeEnum::MetadataType(metadata_type) => unreachable!(),
+    }
+}
+
 pub(crate) fn fn_type_from_any_type_enum<'a>(
     ty: AnyTypeEnum<'a>,
     param_types: &[BasicMetadataTypeEnum<'a>],
