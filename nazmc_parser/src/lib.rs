@@ -635,6 +635,9 @@ impl<'a> ParseErrorsReporter<'a> {
             );
         }
 
+        let mut first_vararg_span = None;
+        let mut no_params_after_vararg_err_reported = false;
+
         match params_decl {
             Ok(FnParams {
                 open_delim,
@@ -648,12 +651,15 @@ impl<'a> ParseErrorsReporter<'a> {
                 }) = items
                 {
                     match first_item {
-                        Ok(param) => match &param.typ {
+                        Ok(FnParam::Real(param)) => match &param.typ {
                             Ok(node) => self.check_type_result(&node.typ),
                             Err(err) => {
                                 self.report_expected("`:` ثم نوع مُعامِل الدالة", err, vec![])
                             }
                         },
+                        Ok(FnParam::Varag(varag_symbol)) => {
+                            first_vararg_span = Some(varag_symbol.span)
+                        }
                         Err(err) => self.report_expected("مُعامِل دالة", err, vec![]),
                     }
 
@@ -661,8 +667,27 @@ impl<'a> ParseErrorsReporter<'a> {
 
                     for param in rest_items {
                         match param {
-                            Ok(node) => {
-                                match &node.item.typ {
+                            Ok(node)
+                                if first_vararg_span.is_some()
+                                    && !no_params_after_vararg_err_reported =>
+                            {
+                                let span = match &node.item {
+                                    FnParam::Varag(terminal) => terminal.span,
+                                    FnParam::Real(real_fn_param) => real_fn_param.name.span,
+                                };
+                                let msg = "يجب ألّا يوجد مُعاملات بعد المُعامل العديد".into();
+                                let secondary_labels = vec![(
+                                    first_vararg_span.unwrap(),
+                                    vec!["المُعامل العديد يجب أن يكون في الآخر".into()],
+                                )];
+                                self.report(msg, span, "".into(), secondary_labels);
+                                no_params_after_vararg_err_reported = true;
+                            }
+                            Ok(CommaWithFnParam {
+                                comma: _,
+                                item: FnParam::Real(param),
+                            }) => {
+                                match &param.typ {
                                     Ok(node) => self.check_type_result(&node.typ),
                                     Err(err) => {
                                         self.report_expected("نوع لمُعامِل الدالة", err, vec![])
@@ -670,6 +695,10 @@ impl<'a> ParseErrorsReporter<'a> {
                                 };
                                 last_was_ok = true;
                             }
+                            Ok(CommaWithFnParam {
+                                comma: _,
+                                item: FnParam::Varag(vararg_symbol),
+                            }) => first_vararg_span = Some(vararg_symbol.span),
                             Err(err) if last_was_ok => {
                                 self.report_expected_comma_or_item("مُعامِل دالة", err, vec![]);
                                 last_was_ok = false;
@@ -691,6 +720,24 @@ impl<'a> ParseErrorsReporter<'a> {
 
         if let Some(node) = return_type {
             self.check_type_result(&node.typ);
+        }
+
+        if let Some(extern_decl) = extern_decl {
+            if let Some(link_name) = &extern_decl.link_name {
+                if let LiteralKind::Str(_) = link_name.data {
+                    // REVIEW: Do we need to check for invalid names
+                } else {
+                    let msg = format!("يُتوقّع `نص` لاسم الدالة المعلنة بالربط الخارجي");
+                    let span = link_name.span;
+                    let primary_label = "رمز غير متوقع".into();
+                    let secondary_labels = vec![(extern_decl.extern_keyword.span, vec![])];
+                    self.report(msg, span, primary_label, secondary_labels);
+                }
+            }
+        } else if let Some(vararg_symbol_span) = first_vararg_span {
+            let msg = format!("المُعامل العديد يتم استعماله فقط مع الدوال المعلنة بالربط الخارجي");
+            let secondary_labels = vec![(f.fn_keyword.span, vec!["الدالة بلا ربط خارجي".into()])];
+            self.report(msg, vararg_symbol_span, "".into(), secondary_labels);
         }
 
         match body {
@@ -761,20 +808,6 @@ impl<'a> ParseErrorsReporter<'a> {
             }
             _ => {}
         }
-
-        if let Some(extern_decl) = extern_decl {
-            if let Some(link_name) = &extern_decl.link_name {
-                if let LiteralKind::Str(_) = link_name.data {
-                    // REVIEW: Do we need to check for invalid names
-                } else {
-                    let msg = format!("يُتوقّع `نص` لاسم الدالة المربوطة");
-                    let span = link_name.span;
-                    let primary_label = "رمز غير متوقع".into();
-                    let secondary_labels = vec![(extern_decl.extern_keyword.span, vec![])];
-                    self.report(msg, span, primary_label, secondary_labels);
-                }
-            }
-        }
     }
 
     fn check_type_result(&mut self, typ: &ParseResult<Type>) {
@@ -810,8 +843,8 @@ impl<'a> ParseErrorsReporter<'a> {
                 }
             }
             Type::FnPtr(fn_ptr_type) => {
-                match &fn_ptr_type.params_types {
-                    Ok(tuple) => self.check_tuple_type(tuple),
+                match &fn_ptr_type.params {
+                    Ok(params) => self.check_fn_ptr_params(params),
                     Err(err) => {
                         self.report_expected(
                             "`(`",
@@ -844,6 +877,55 @@ impl<'a> ParseErrorsReporter<'a> {
                     self.check_type_result(typ);
                 }
             }
+        }
+    }
+
+    fn check_fn_ptr_params(&mut self, fn_ptr_params: &FnPtrParams) {
+        let mut first_vararg_span = None;
+        let mut no_params_after_vararg_err_reported = false;
+
+        if let Some(PunctuatedFnPtrParam {
+            first_item,
+            rest_items,
+            trailing_comma: _,
+        }) = &fn_ptr_params.items
+        {
+            match first_item {
+                Ok(FnPtrParam::Real(param)) => self.check_type(param),
+                Ok(FnPtrParam::Varag(vararg_symbol)) => {
+                    first_vararg_span = Some(vararg_symbol.span)
+                }
+                Err(err) => self.report_expected("نوع", err, vec![]),
+            }
+
+            for param in rest_items {
+                match param {
+                    Ok(_)
+                        if first_vararg_span.is_some() && !no_params_after_vararg_err_reported =>
+                    {
+                        self.report(
+                            "يجب ألّا يوجد مُعاملات بعد المُعامل العديد".into(),
+                            first_vararg_span.unwrap(),
+                            "المُعامل العديد يجب أن يكون في الآخر".into(),
+                            vec![],
+                        );
+                        no_params_after_vararg_err_reported = true;
+                    }
+                    Ok(CommaWithFnPtrParam {
+                        comma: _,
+                        item: FnPtrParam::Real(param),
+                    }) => self.check_type(param),
+                    Ok(CommaWithFnPtrParam {
+                        comma: _,
+                        item: FnPtrParam::Varag(vararg_symbol),
+                    }) => first_vararg_span = Some(vararg_symbol.span),
+                    Err(err) => self.report_expected_comma_or_item("نوع", err, vec![]),
+                }
+            }
+        }
+
+        if fn_ptr_params.close_delim.is_err() {
+            self.report_unclosed_delimiter(fn_ptr_params.open_delim.span);
         }
     }
 

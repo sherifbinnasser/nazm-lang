@@ -145,6 +145,7 @@ impl<'a> SemanticsAnalyzer<'a> {
                 | CompositeType::FnPtr {
                     params_types,
                     return_type,
+                    is_vararg: _,
                 } => {
                     params_types.iter().for_each(|ty| {
                         self.ty_check(base_ty, ty, span, possible_new_err_msg_idx, is_expr)

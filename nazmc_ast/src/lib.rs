@@ -242,12 +242,17 @@ pub struct Fn {
     pub return_type: Option<TypeExprKey>,
     pub linkage: FnLinkage,
 }
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub enum FnLinkage {
-    #[default]
-    ExternWithSameId,
-    Extern(StrKey),
+    ExternWithSameId { is_vararg: bool },
+    Extern { name: StrKey, is_vararg: bool },
     Local(ScopeKey),
+}
+
+impl Default for FnLinkage {
+    fn default() -> Self {
+        Self::ExternWithSameId { is_vararg: false }
+    }
 }
 
 #[derive(Clone, Copy, Default)]

@@ -117,13 +117,18 @@ impl<'a> SemanticsAnalyzer<'a> {
             Item::FnParam { idx, fn_key: _ } => {
                 let Type::Concrete(ConcreteType::Composite(CompositeType::FnPtr {
                     params_types,
-                    return_type: _,
+                    is_vararg,
+                    ..
                 })) = &self.typed_ast.fns_signatures[&self.current_fn_key]
                 else {
                     unreachable!()
                 };
 
-                return params_types[idx as usize].clone();
+                return if *is_vararg {
+                    self.type_inf_ctx.new_ty_var()
+                } else {
+                    params_types[idx as usize].clone()
+                };
             }
             Item::LambdaParam { id, scope_key } => self
                 .typed_ast
@@ -166,15 +171,16 @@ impl<'a> SemanticsAnalyzer<'a> {
         let on_expr_ty = self.infer(on);
         let on_expr_ty = self.type_inf_ctx.apply(&on_expr_ty);
 
-        let (params_types, return_type, is_fn) = match on_expr_ty {
+        let (params_types, return_type, is_fn, is_vararg) = match on_expr_ty {
             Type::Concrete(ConcreteType::Composite(CompositeType::FnPtr {
                 params_types,
                 return_type,
-            })) => (params_types, return_type, true),
+                is_vararg,
+            })) => (params_types, return_type, true, is_vararg),
             Type::Concrete(ConcreteType::Composite(CompositeType::Lambda {
                 params_types,
                 return_type,
-            })) => (params_types, return_type, false),
+            })) => (params_types, return_type, false, false),
             Type::TypeVar(key) if self.type_inf_ctx.make_ty_var_error(key) => {
                 // Infer more types to collect more errors
                 for arg in args {
@@ -223,7 +229,9 @@ impl<'a> SemanticsAnalyzer<'a> {
                 }
             }
 
-            self.add_incorrect_fn_args_len_err(parens_span, on, true);
+            if !is_vararg {
+                self.add_incorrect_fn_args_len_err(parens_span, on, true);
+            }
         }
 
         *return_type

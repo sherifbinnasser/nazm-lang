@@ -186,6 +186,7 @@ pub struct LambdaType {
 pub struct FnPtrType {
     pub params_types: ThinVec<TypeKey>,
     pub return_type: TypeKey,
+    pub is_vararg: bool,
 }
 
 pub enum Stm {

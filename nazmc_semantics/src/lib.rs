@@ -221,6 +221,7 @@ impl<'a> SemanticsAnalyzer<'a> {
             let nazmc_nir::FnPtrType {
                 params_types,
                 return_type,
+                is_vararg,
             } = &self.nir_builder.nir.fn_ptr_types[*fn_ptr_type_key];
 
             let return_type = *return_type;
@@ -245,8 +246,8 @@ impl<'a> SemanticsAnalyzer<'a> {
             });
 
             let linkage = match _fn.linkage {
-                FnLinkage::ExternWithSameId => nazmc_nir::FnLinkage::ExternWithSameId,
-                FnLinkage::Extern(str_key) => nazmc_nir::FnLinkage::Extern(str_key),
+                FnLinkage::ExternWithSameId { .. } => nazmc_nir::FnLinkage::ExternWithSameId,
+                FnLinkage::Extern { name, .. } => nazmc_nir::FnLinkage::Extern(name),
                 FnLinkage::Local(scope_key) => {
                     self.lower_fn_scope(scope_key);
                     let cfg = self.cfg_builder.build();
@@ -282,9 +283,15 @@ impl<'a> SemanticsAnalyzer<'a> {
                 |type_expr_key| self.analyze_type_expr(type_expr_key),
             );
 
+            let is_vararg = match _fn.linkage {
+                FnLinkage::ExternWithSameId { is_vararg } => is_vararg,
+                FnLinkage::Extern { name: _, is_vararg } => is_vararg,
+                FnLinkage::Local(_) => false,
+            };
+
             self.typed_ast
                 .fns_signatures
-                .insert(fn_key, Type::fn_ptr(params, return_type));
+                .insert(fn_key, Type::fn_ptr(params, return_type, is_vararg));
         }
 
         self.ast.fns = fns;
@@ -309,8 +316,8 @@ impl<'a> SemanticsAnalyzer<'a> {
 
         self.current_scope_expected_return_ty =
             if let Type::Concrete(ConcreteType::Composite(CompositeType::FnPtr {
-                params_types: _,
                 return_type,
+                ..
             })) = &self.typed_ast.fns_signatures[&fn_key]
             {
                 return_type.as_ref().clone()

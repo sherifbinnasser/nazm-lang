@@ -69,6 +69,7 @@ pub struct FnPtrTypeExpr {
     pub fn_keyword_span: Span,
     pub params_types: ThinVec<TypeExprKey>,
     pub return_type: TypeExprKey,
+    pub is_vararg: bool,
 }
 
 #[derive(Clone)]

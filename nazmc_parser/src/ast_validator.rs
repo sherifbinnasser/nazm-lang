@@ -354,6 +354,8 @@ impl<'a> ASTValidator<'a> {
 
                     let mut params = ThinVec::new();
 
+                    let mut is_vararg = false;
+
                     if let Some(PunctuatedFnParam {
                         first_item,
                         rest_items,
@@ -361,23 +363,32 @@ impl<'a> ASTValidator<'a> {
                     }) = f.params_decl.unwrap().items
                     {
                         let first = self.lower_fn_param(first_item.unwrap());
-                        self.params_names_in_current_fn
-                            .insert(first.ast_id.id, first.ast_id.span);
-                        params.push(first);
 
-                        for r in rest_items {
-                            let param = self.lower_fn_param(r.unwrap().item);
+                        if let Some(first) = first {
+                            self.params_names_in_current_fn
+                                .insert(first.ast_id.id, first.ast_id.span);
+                            params.push(first);
 
-                            if let Some(span_of_param_with_same_name) =
-                                self.params_names_in_current_fn.get(&param.ast_id.id)
-                            {
-                                self.fn_params_conflicts_in_files
-                                    .entry((param.ast_id.id, self.file_key, name.span))
-                                    .or_insert_with(|| vec![*span_of_param_with_same_name])
-                                    .push(param.ast_id.span);
+                            for r in rest_items {
+                                let param = self.lower_fn_param(r.unwrap().item);
+
+                                if let Some(param) = param {
+                                    if let Some(span_of_param_with_same_name) =
+                                        self.params_names_in_current_fn.get(&param.ast_id.id)
+                                    {
+                                        self.fn_params_conflicts_in_files
+                                            .entry((param.ast_id.id, self.file_key, name.span))
+                                            .or_insert_with(|| vec![*span_of_param_with_same_name])
+                                            .push(param.ast_id.span);
+                                    }
+
+                                    params.push(param);
+                                } else {
+                                    is_vararg = true;
+                                }
                             }
-
-                            params.push(param);
+                        } else {
+                            is_vararg = true
                         }
                     }
 
@@ -394,9 +405,12 @@ impl<'a> ASTValidator<'a> {
                             let LiteralKind::Str(str_key) = link_name.data else {
                                 unreachable!()
                             };
-                            FnLinkage::Extern(str_key)
+                            FnLinkage::Extern {
+                                name: str_key,
+                                is_vararg,
+                            }
                         } else {
-                            FnLinkage::ExternWithSameId
+                            FnLinkage::ExternWithSameId { is_vararg }
                         }
                     } else {
                         self.current_fn_scope_key = Some(ScopeKey::from(self.ast.scopes.len()));
@@ -487,7 +501,11 @@ impl<'a> ASTValidator<'a> {
         )
     }
 
-    fn lower_fn_param(&mut self, param: FnParam) -> nazmc_ast::FnParam {
+    fn lower_fn_param(&mut self, param: FnParam) -> Option<nazmc_ast::FnParam> {
+        let FnParam::Real(param) = param else {
+            return None;
+        };
+
         let ast_id = nazmc_ast::ASTId {
             span: param.name.span,
             id: param.name.data.val,
@@ -495,11 +513,11 @@ impl<'a> ASTValidator<'a> {
 
         let type_expr_key = self.lower_type(param.typ.unwrap().typ.unwrap());
 
-        nazmc_ast::FnParam {
+        Some(nazmc_ast::FnParam {
             ast_id,
             is_mut: param.mut_keyword.is_some(),
             type_expr_key,
-        }
+        })
     }
 
     fn lower_type(&mut self, typ: Type) -> nazmc_ast::TypeExprKey {
@@ -590,21 +608,31 @@ impl<'a> ASTValidator<'a> {
 
                     let mut params_types = ThinVec::new();
 
-                    let params_types_nodes = fn_ptr_type.params_types.unwrap();
+                    let params_types_nodes = fn_ptr_type.params.unwrap();
 
                     let return_type_node = fn_ptr_type.return_type.unwrap().typ.unwrap();
 
-                    if let Some(PunctuatedType {
+                    let mut is_vararg = false;
+
+                    if let Some(PunctuatedFnPtrParam {
                         first_item,
                         rest_items,
                         trailing_comma: _,
                     }) = params_types_nodes.items
                     {
-                        let first = self.lower_type(first_item.unwrap());
-                        params_types.push(first);
-                        for r in rest_items {
-                            let r = self.lower_type(r.unwrap().item);
-                            params_types.push(r);
+                        if let FnPtrParam::Real(first_item) = first_item.unwrap() {
+                            let first = self.lower_type(first_item);
+                            params_types.push(first);
+                            for r in rest_items {
+                                if let FnPtrParam::Real(item) = r.unwrap().item {
+                                    let r = self.lower_type(item);
+                                    params_types.push(r);
+                                } else {
+                                    is_vararg = true;
+                                }
+                            }
+                        } else {
+                            is_vararg = true;
                         }
                     }
 
@@ -618,6 +646,7 @@ impl<'a> ASTValidator<'a> {
                                 fn_keyword_span,
                                 params_types,
                                 return_type,
+                                is_vararg,
                             });
 
                     nazmc_ast::TypeExpr::FnPtr(key)

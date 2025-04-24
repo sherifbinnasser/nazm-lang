@@ -115,6 +115,8 @@ impl<'a> SemanticsAnalyzer<'a> {
             TypeExpr::FnPtr(fn_ptr_type_expr_key) => {
                 let fn_ptr_type_expr_key = *fn_ptr_type_expr_key;
 
+                let is_vararg = self.ast.types_exprs.fn_ptrs[fn_ptr_type_expr_key].is_vararg;
+
                 let return_type = self.analyze_type_expr(
                     self.ast.types_exprs.fn_ptrs[fn_ptr_type_expr_key].return_type,
                 );
@@ -128,7 +130,7 @@ impl<'a> SemanticsAnalyzer<'a> {
                     self.analyze_type_expr(param)
                 });
 
-                Type::fn_ptr(params_types, return_type)
+                Type::fn_ptr(params_types, return_type, is_vararg)
             }
         }
     }

@@ -144,39 +144,14 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         }
     }
 
-    pub(crate) fn lower_fn_ptr_type(&self, fn_ptr_ty_key: FnPtrTypeKey) -> FunctionType<'ctx> {
-        if let Some(fn_ty) = self.fn_ptr_types.borrow().get(&fn_ptr_ty_key) {
-            return fn_ty.fn_type;
-        }
-
-        let params_len = self.nir.fn_ptr_types[fn_ptr_ty_key].params_types.len();
-        let return_type = self.nir.fn_ptr_types[fn_ptr_ty_key].return_type;
-        let (mut llvm_return_ty, return_arg_layout) = self.lower_param_type(return_type);
-
-        let mut params_types;
-        let mut args_layout;
-        let mut attributes = Vec::new();
-
-        if let ArgLayout::ByvalPtr = return_arg_layout {
-            params_types = Vec::with_capacity(params_len + 1);
-            args_layout = Vec::with_capacity(params_len + 1);
-            params_types.push(any_type_enum_to_basic_metadata_type_enum(llvm_return_ty));
-            args_layout.push(ArgLayout::RetPtr);
-            llvm_return_ty = AnyTypeEnum::VoidType(self.context.void_type());
-            let noalias_id = Attribute::get_named_enum_kind_id("noalias");
-            let sret_id = Attribute::get_named_enum_kind_id("sret");
-            let noalias = self.context.create_enum_attribute(noalias_id, 0);
-            let sret = self
-                .context
-                .create_type_attribute(sret_id, self.lower_type(return_type));
-            attributes.push((AttributeLoc::Param(0), noalias));
-            attributes.push((AttributeLoc::Param(0), sret));
-        } else {
-            params_types = Vec::with_capacity(params_len);
-            args_layout = Vec::with_capacity(params_len);
-        }
-
-        for &ty in &self.nir.fn_ptr_types[fn_ptr_ty_key].params_types {
+    pub(crate) fn lower_fn_params_types<'a>(
+        &self,
+        types_iter: impl Iterator<Item = &'a TypeKey>,
+        args_layout: &mut Vec<ArgLayout>,
+        params_types: &mut Vec<BasicMetadataTypeEnum<'ctx>>,
+        attributes: &mut Vec<(AttributeLoc, Attribute)>,
+    ) {
+        for &ty in types_iter {
             let (llvm_ty, arg_layout) = self.lower_param_type(ty);
 
             args_layout.push(arg_layout);
@@ -209,8 +184,49 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             let llvm_ty = any_type_enum_to_basic_metadata_type_enum(llvm_ty);
             params_types.push(llvm_ty);
         }
+    }
 
-        let fn_type = fn_type_from_any_type_enum(llvm_return_ty, &params_types, false);
+    pub(crate) fn lower_fn_ptr_type(&self, fn_ptr_ty_key: FnPtrTypeKey) -> FunctionType<'ctx> {
+        if let Some(fn_ty) = self.fn_ptr_types.borrow().get(&fn_ptr_ty_key) {
+            return fn_ty.fn_type;
+        }
+
+        let params_len = self.nir.fn_ptr_types[fn_ptr_ty_key].params_types.len();
+        let is_vararg = self.nir.fn_ptr_types[fn_ptr_ty_key].is_vararg;
+        let return_type = self.nir.fn_ptr_types[fn_ptr_ty_key].return_type;
+        let (mut llvm_return_ty, return_arg_layout) = self.lower_param_type(return_type);
+
+        let mut params_types;
+        let mut args_layout;
+        let mut attributes = Vec::new();
+
+        if let ArgLayout::ByvalPtr = return_arg_layout {
+            params_types = Vec::with_capacity(params_len + 1);
+            args_layout = Vec::with_capacity(params_len + 1);
+            params_types.push(any_type_enum_to_basic_metadata_type_enum(llvm_return_ty));
+            args_layout.push(ArgLayout::RetPtr);
+            llvm_return_ty = AnyTypeEnum::VoidType(self.context.void_type());
+            let noalias_id = Attribute::get_named_enum_kind_id("noalias");
+            let sret_id = Attribute::get_named_enum_kind_id("sret");
+            let noalias = self.context.create_enum_attribute(noalias_id, 0);
+            let sret = self
+                .context
+                .create_type_attribute(sret_id, self.lower_type(return_type));
+            attributes.push((AttributeLoc::Param(0), noalias));
+            attributes.push((AttributeLoc::Param(0), sret));
+        } else {
+            params_types = Vec::with_capacity(params_len);
+            args_layout = Vec::with_capacity(params_len);
+        }
+
+        self.lower_fn_params_types(
+            self.nir.fn_ptr_types[fn_ptr_ty_key].params_types.iter(),
+            &mut args_layout,
+            &mut params_types,
+            &mut attributes,
+        );
+
+        let fn_type = fn_type_from_any_type_enum(llvm_return_ty, &params_types, is_vararg);
         self.fn_ptr_types.borrow_mut().insert(
             fn_ptr_ty_key,
             FnPtrLayout {
