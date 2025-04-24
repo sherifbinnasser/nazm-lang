@@ -911,6 +911,11 @@ impl<'a> SemanticsAnalyzer<'a> {
                                         unary_op_expr.op_span,
                                         self.get_expr_span(unary_op_expr.expr),
                                     );
+                                } else if !self.is_mut_lvalue(lvalue_key) {
+                                    self.add_cannot_take_mutable_ref_for_immutable_lvalue(
+                                        unary_op_expr.op_span,
+                                        self.get_expr_span(unary_op_expr.expr),
+                                    );
                                 }
                                 RValue::RefMut(lvalue_key)
                             }

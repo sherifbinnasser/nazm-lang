@@ -1036,4 +1036,22 @@ impl<'a> SemanticsAnalyzer<'a> {
         let diagnostic = Diagnostic::error(msg, vec![code_window]);
         self.diagnostics.push(diagnostic);
     }
+
+    pub(crate) fn add_cannot_take_mutable_ref_for_immutable_lvalue(
+        &mut self,
+        borrow_op_span: Span,
+        lvalue_span: Span,
+    ) {
+        // TODO: Add help for the bindings
+        let msg = "لا يمكن تطبيق مؤثر الإشارة المتغيرة على قيمة غير متغيرة".into();
+        let mut code_window =
+            CodeWindow::new(&self.files_infos[self.current_file_key], lvalue_span.start);
+        code_window.mark_secondary(
+            borrow_op_span,
+            vec!["لا يمكن تطبيق المؤثر على قيمة غير متغيرة".into()],
+        );
+        code_window.mark_error(lvalue_span, vec![]);
+        let diagnostic = Diagnostic::error(msg, vec![code_window]);
+        self.diagnostics.push(diagnostic);
+    }
 }
