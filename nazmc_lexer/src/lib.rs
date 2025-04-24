@@ -177,10 +177,6 @@ impl<'a> LexerIter<'a> {
                 self.next_cursor();
                 TokenKind::Symbol(SymbolKind::Equal)
             }
-            '#' => {
-                self.next_cursor();
-                TokenKind::Symbol(SymbolKind::Hash)
-            }
             '\n' => {
                 self.next_cursor();
                 TokenKind::Eol

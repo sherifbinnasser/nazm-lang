@@ -110,8 +110,6 @@ pub enum SymbolKind {
     Colon,
     /// =
     Equal,
-    /// #
-    Hash,
 }
 
 #[derive(DocumentedVariants, Debug, Clone, PartialEq, EnumIter)]

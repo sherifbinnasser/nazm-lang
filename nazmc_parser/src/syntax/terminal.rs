@@ -137,7 +137,6 @@ create_symbol_parser!(Xor);
 create_symbol_parser!(ExclamationMark);
 create_symbol_parser!(Colon);
 create_symbol_parser!(Equal);
-create_symbol_parser!(Hash);
 
 #[derive(Debug)]
 pub(crate) struct IdToken {
@@ -520,7 +519,7 @@ impl NazmcParse for ParseResult<UnaryOp> {
                     }
                     SymbolKind::BitNot if !match_peek_symbols!(iter, Equal) => UnaryOpToken::BNot,
                     SymbolKind::Star if !match_peek_symbols!(iter, Equal) => UnaryOpToken::Deref,
-                    SymbolKind::Hash => {
+                    SymbolKind::Xor => {
                         let peek_idx = iter.peek_idx;
                         iter.next_non_space_or_comment();
                         if let Some(Token {
