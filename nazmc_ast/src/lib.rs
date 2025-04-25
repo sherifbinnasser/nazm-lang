@@ -306,6 +306,7 @@ pub struct Expr {
 pub enum ExprKind {
     #[default]
     Unit,
+    Null,
     Literal(LiteralExpr),
     PathNoPkg(PathNoPkgKey),
     PathInPkg(PathWithPkgKey),

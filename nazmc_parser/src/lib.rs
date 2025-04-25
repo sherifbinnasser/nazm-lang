@@ -1178,6 +1178,7 @@ impl<'a> ParseErrorsReporter<'a> {
         match expr {
             AtomicExpr::Literal(_)
             | AtomicExpr::On(_)
+            | AtomicExpr::Null(_)
             | AtomicExpr::Continue(_)
             | AtomicExpr::Break(_) => {}
             AtomicExpr::Paren(paren_expr) => self.check_paren_expr(paren_expr),

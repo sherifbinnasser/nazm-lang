@@ -598,6 +598,7 @@ impl<'a> SemanticsAnalyzer<'a> {
 
         let kind = match expr_kind {
             nazmc_ast::ExprKind::Unit => OperandKind::Const(Const::Unit),
+            nazmc_ast::ExprKind::Null => OperandKind::Const(Const::Null),
             nazmc_ast::ExprKind::Literal(literal_expr) => 'label: {
                 let const_opernad = match literal_expr {
                     nazmc_ast::LiteralExpr::Str(str_key) => {

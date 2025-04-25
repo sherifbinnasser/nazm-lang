@@ -691,7 +691,7 @@ impl<'a> QbeCodegen<'a> {
         match opernad_kind {
             OperandKind::LValue(lvalue_key) => self.lower_lvalue(lvalue_key, cfg, qbe_bb),
             OperandKind::Const(c) => match c {
-                Const::Unit => qbe::Value::UConst(0),
+                Const::Unit | Const::Null => qbe::Value::UConst(0),
                 Const::I(n) => qbe::Value::Const(n as i64),
                 Const::I1(n) => qbe::Value::Const(n as i64),
                 Const::I2(n) => qbe::Value::Const(n as i64),

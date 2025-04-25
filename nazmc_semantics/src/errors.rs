@@ -999,6 +999,23 @@ impl<'a> SemanticsAnalyzer<'a> {
         self.diagnostics.push(diagnostic);
     }
 
+    pub(crate) fn add_null_is_assigned_only_for_ptr_values(
+        &mut self,
+        found_ty: &Type,
+        null_span: Span,
+    ) {
+        let msg = "الكلمة المفتاحية `صفر` يتم تخصيصها فقط للمؤشرات".into();
+        let label = format!(
+            "تم تخصيصها هنا لقيمة من نوع `{}` وليست من نوع `مؤشر`",
+            self.fmt_ty(found_ty)
+        );
+        let mut code_window =
+            CodeWindow::new(&self.files_infos[self.current_file_key], null_span.start);
+        code_window.mark_error(null_span, vec![label]);
+        let diagnostic = Diagnostic::error(msg, vec![code_window]);
+        self.diagnostics.push(diagnostic);
+    }
+
     pub(crate) fn add_cannot_borrow_rvalue(&mut self, borrow_op_span: Span, rvalue_span: Span) {
         let msg = "لا يمكن استعارة قيمة مؤقتة".into();
         let label1 = "القيمة مؤقتة".into();

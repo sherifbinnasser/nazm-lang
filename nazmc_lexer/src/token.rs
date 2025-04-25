@@ -154,4 +154,6 @@ pub enum KeywordKind {
     Import,
     /// ربط
     Extern,
+    /// صفر
+    Null,
 }

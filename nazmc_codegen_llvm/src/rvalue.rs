@@ -324,6 +324,23 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                 BinOp::Mod => build!(build_float_rem),
                 _ => unreachable!(),
             };
+        } else if let AnyValueEnum::PointerValue(lhs) = llvm_lhs {
+            let rhs = self.lower_operand(rhs, cfg).into_pointer_value();
+
+            macro_rules! build_cmp {
+                ($build_op: ident) => {
+                    builder
+                        .build_int_compare(IntPredicate::$build_op, lhs, rhs, name)
+                        .unwrap()
+                        .as_any_value_enum()
+                };
+            }
+
+            return match op {
+                BinOp::EqualEqual => build_cmp!(EQ),
+                BinOp::NotEqual => build_cmp!(NE),
+                _ => unreachable!(),
+            };
         }
 
         let is_unsigned = matches!(

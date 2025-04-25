@@ -112,6 +112,7 @@ create_keyword_parser!(Continue);
 create_keyword_parser!(Return);
 create_keyword_parser!(Import);
 create_keyword_parser!(Extern);
+create_keyword_parser!(Null);
 
 create_symbol_parser!(Comma);
 create_symbol_parser!(Semicolon);

@@ -1326,6 +1326,7 @@ impl<'a> ASTValidator<'a> {
                 )
             }
             AtomicExpr::On(on) => self.new_expr(on.span, nazmc_ast::ExprKind::On),
+            AtomicExpr::Null(null) => self.new_expr(null.span, nazmc_ast::ExprKind::Null),
         }
     }
 

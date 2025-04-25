@@ -394,6 +394,30 @@ impl<'a> SemanticsAnalyzer<'a> {
                 self.check_unspecified_float(expr_key, self.get_expr_span(expr_key), f);
                 return;
             }
+            ExprKind::Null => {
+                let Some(ty) = self.typed_ast.exprs.remove(&expr_key) else {
+                    unreachable!();
+                };
+
+                let span = self.get_expr_span(expr_key);
+
+                let ty = self.ty_var_check(&ty, span, true);
+
+                if let Type::Concrete(con_ty) = ty.clone() {
+                    if !matches!(
+                        con_ty,
+                        ConcreteType::Composite(CompositeType::Ptr(_) | CompositeType::PtrMut(_),)
+                    ) {
+                        self.add_null_is_assigned_only_for_ptr_values(&ty, span);
+                    }
+                }
+
+                self.typed_ast.exprs.insert(expr_key, ty);
+
+                self.ast.exprs[expr_key].kind = ExprKind::Null;
+
+                return;
+            }
             ExprKind::ArrayRepeated(_) => todo!(),
             ExprKind::On => todo!(),
             kind @ _ => kind,

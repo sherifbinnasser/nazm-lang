@@ -310,6 +310,7 @@ pub enum RValue {
 #[derive(Clone, Debug, Copy)]
 pub enum Const {
     Unit,
+    Null,
     I(isize),
     I1(i8),
     I2(i16),

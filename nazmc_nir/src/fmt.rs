@@ -210,6 +210,7 @@ impl<'a> NIR<'a> {
             OperandKind::LValue(lvalue_key) => self.fmt_lvalue(cfg, *lvalue_key),
             OperandKind::Const(c) => match c {
                 Const::Unit => format!("()"),
+                Const::Null => format!("صفر"),
                 Const::I(n) => format!("{n}"),
                 Const::I1(n) => format!("{n}"),
                 Const::I2(n) => format!("{n}"),

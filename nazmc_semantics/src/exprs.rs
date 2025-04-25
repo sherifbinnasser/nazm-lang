@@ -9,6 +9,7 @@ impl<'a> SemanticsAnalyzer<'a> {
         let kind = std::mem::take(&mut self.ast.exprs[expr_key].kind);
         let (ty, kind) = match kind {
             ExprKind::Unit => (Type::unit(), ExprKind::Unit),
+            ExprKind::Null => (self.type_inf_ctx.new_ty_var(), ExprKind::Null),
             ExprKind::Literal(lit_expr) => {
                 (self.infer_lit_expr(lit_expr), ExprKind::Literal(lit_expr))
             }

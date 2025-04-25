@@ -81,6 +81,7 @@ pub(crate) enum AtomicExpr {
     Path(SimplePath),
     Literal(LiteralExpr),
     On(OnKeyword),
+    Null(NullKeyword),
     Lambda(LambdaExpr),
     Break(BreakKeyword),
     Continue(ContinueKeyword),

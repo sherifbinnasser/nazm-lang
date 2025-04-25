@@ -10,51 +10,76 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         match kind {
             OperandKind::LValue(lvalue_key) => self.lower_lvalue(lvalue_key, cfg),
             OperandKind::Const(Const::Unit) => unreachable!(),
-            OperandKind::Const(Const::I(n)) => {
-                AnyValueEnum::IntValue(self.isize_type().const_int(n as u64, true))
-            }
-            OperandKind::Const(Const::I1(n)) => {
-                AnyValueEnum::IntValue(self.context.i8_type().const_int(n as u64, true))
-            }
-            OperandKind::Const(Const::I2(n)) => {
-                AnyValueEnum::IntValue(self.context.i16_type().const_int(n as u64, true))
-            }
-            OperandKind::Const(Const::I4(n)) => {
-                AnyValueEnum::IntValue(self.context.i32_type().const_int(n as u64, true))
-            }
-            OperandKind::Const(Const::I8(n)) => {
-                AnyValueEnum::IntValue(self.context.i64_type().const_int(n as u64, true))
-            }
-            OperandKind::Const(Const::U(n)) => {
-                AnyValueEnum::IntValue(self.isize_type().const_int(n as u64, false))
-            }
-            OperandKind::Const(Const::U1(n)) => {
-                AnyValueEnum::IntValue(self.context.i8_type().const_int(n as u64, false))
-            }
-            OperandKind::Const(Const::U2(n)) => {
-                AnyValueEnum::IntValue(self.context.i16_type().const_int(n as u64, false))
-            }
-            OperandKind::Const(Const::U4(n)) => {
-                AnyValueEnum::IntValue(self.context.i32_type().const_int(n as u64, false))
-            }
-            OperandKind::Const(Const::U8(n)) => {
-                AnyValueEnum::IntValue(self.context.i64_type().const_int(n as u64, false))
-            }
-            OperandKind::Const(Const::Bool(n)) => {
-                AnyValueEnum::IntValue(self.context.i8_type().const_int(n as u64, false))
-            }
-            OperandKind::Const(Const::Char(n)) => {
-                AnyValueEnum::IntValue(self.context.i32_type().const_int(n as u64, false))
-            }
-            OperandKind::Const(Const::F4(n)) => {
-                AnyValueEnum::FloatValue(self.context.f32_type().const_float(n as f64))
-            }
-            OperandKind::Const(Const::F8(n)) => {
-                AnyValueEnum::FloatValue(self.context.f64_type().const_float(n as f64))
-            }
-            OperandKind::Const(Const::Fn(fn_key)) => {
-                AnyValueEnum::FunctionValue(self.llvm_fns[fn_key])
-            }
+            OperandKind::Const(Const::Null) => self.ptr_type().const_null().as_any_value_enum(),
+            OperandKind::Const(Const::I(n)) => self
+                .isize_type()
+                .const_int(n as u64, true)
+                .as_any_value_enum(),
+            OperandKind::Const(Const::I1(n)) => self
+                .context
+                .i8_type()
+                .const_int(n as u64, true)
+                .as_any_value_enum(),
+            OperandKind::Const(Const::I2(n)) => self
+                .context
+                .i16_type()
+                .const_int(n as u64, true)
+                .as_any_value_enum(),
+            OperandKind::Const(Const::I4(n)) => self
+                .context
+                .i32_type()
+                .const_int(n as u64, true)
+                .as_any_value_enum(),
+            OperandKind::Const(Const::I8(n)) => self
+                .context
+                .i64_type()
+                .const_int(n as u64, true)
+                .as_any_value_enum(),
+            OperandKind::Const(Const::U(n)) => self
+                .isize_type()
+                .const_int(n as u64, false)
+                .as_any_value_enum(),
+            OperandKind::Const(Const::U1(n)) => self
+                .context
+                .i8_type()
+                .const_int(n as u64, false)
+                .as_any_value_enum(),
+            OperandKind::Const(Const::U2(n)) => self
+                .context
+                .i16_type()
+                .const_int(n as u64, false)
+                .as_any_value_enum(),
+            OperandKind::Const(Const::U4(n)) => self
+                .context
+                .i32_type()
+                .const_int(n as u64, false)
+                .as_any_value_enum(),
+            OperandKind::Const(Const::U8(n)) => self
+                .context
+                .i64_type()
+                .const_int(n as u64, false)
+                .as_any_value_enum(),
+            OperandKind::Const(Const::Bool(n)) => self
+                .context
+                .i8_type()
+                .const_int(n as u64, false)
+                .as_any_value_enum(),
+            OperandKind::Const(Const::Char(n)) => self
+                .context
+                .i32_type()
+                .const_int(n as u64, false)
+                .as_any_value_enum(),
+            OperandKind::Const(Const::F4(n)) => self
+                .context
+                .f32_type()
+                .const_float(n as f64)
+                .as_any_value_enum(),
+            OperandKind::Const(Const::F8(n)) => self
+                .context
+                .f64_type()
+                .const_float(n as f64)
+                .as_any_value_enum(),
+            OperandKind::Const(Const::Fn(fn_key)) => self.llvm_fns[fn_key].as_any_value_enum(),
         }
     }
 

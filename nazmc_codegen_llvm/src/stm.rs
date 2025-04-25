@@ -15,6 +15,9 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             }
             Stm::Assign { lhs, rhs, typ: _ } => self.lower_assign_stm(*lhs, rhs, cfg),
             Stm::Phi { lhs, cases, typ } => {
+                if self.get_type_size(*typ) == 0 {
+                    return;
+                }
                 let LValueKind::Temp(temp_key) = cfg.lvalues[*lhs].kind else {
                     unreachable!()
                 };
