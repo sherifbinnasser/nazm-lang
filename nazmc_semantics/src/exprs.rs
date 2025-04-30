@@ -774,6 +774,14 @@ impl<'a> SemanticsAnalyzer<'a> {
                 if let Some(inner_ptr_ty) = self.is_ptr(&left_ty) {
                     let right_ty = self.infer(*right);
                     self.unify_with_ptr(&inner_ptr_ty, &right_ty, *right, &op_span);
+                } else if self.is_any_ty_var(&left_ty) {
+                    let right_ty = self.infer(*right);
+                    if let Some(inner_ptr_ty) = self.is_ptr(&right_ty) {
+                        self.unify_with_ptr(&inner_ptr_ty, &left_ty, *left, &op_span);
+                    } else {
+                        self.unify_with_num(&left_ty, *left, &op_span);
+                        self.unify_with_check(&left_ty, &right_ty, *right, &op_span);
+                    }
                 } else if self.unify_with_num(&left_ty, *left, &op_span) {
                     let right_ty = self.infer(*right);
                     self.unify_with_check(&left_ty, &right_ty, *right, &op_span);
@@ -787,6 +795,13 @@ impl<'a> SemanticsAnalyzer<'a> {
                 if let Some(inner_ptr_ty) = self.is_ptr(&left_ty) {
                     let right_ty = self.infer(*right);
                     self.unify_with_ptr(&inner_ptr_ty, &right_ty, *right, &op_span);
+                } else if self.is_any_ty_var(&left_ty) {
+                    let right_ty = self.infer(*right);
+                    if let Some(inner_ptr_ty) = self.is_ptr(&right_ty) {
+                        self.unify_with_ptr(&inner_ptr_ty, &left_ty, *left, &op_span);
+                    } else {
+                        self.unify_with_check(&left_ty, &right_ty, *right, &op_span);
+                    }
                 } else {
                     let right_ty = self.infer(*right);
                     self.unify_with_check(&left_ty, &right_ty, *right, &op_span);
@@ -851,6 +866,17 @@ impl<'a> SemanticsAnalyzer<'a> {
                 Type::unit()
             }
         }
+    }
+
+    fn is_any_ty_var(&self, ty: &Type) -> bool {
+        let Type::TypeVar(ty_var_key) = self.type_inf_ctx.apply(ty) else {
+            return false;
+        };
+
+        matches!(
+            self.type_inf_ctx.ty_vars[ty_var_key],
+            type_infer::TypeVarSubstitution::Any
+        )
     }
 
     fn is_ptr(&self, ty: &Type) -> Option<Type> {
