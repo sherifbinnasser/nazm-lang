@@ -125,6 +125,12 @@ impl<'a> SemanticsAnalyzer<'a> {
             exit(1);
         }
 
+        // This will initialize bool type to TypeKey(0)
+        // So we can use it for if conditions and loops
+        // as we need to get the bool type in nir_builder when the condition type is a pointer
+        self.nir_builder
+            .get_unique_type(&ConcreteType::Primitive(type_infer::PrimitiveType::Bool));
+
         self.ast
             .exprs
             .iter_enumerated()
@@ -431,6 +437,7 @@ impl<'a> SemanticsAnalyzer<'a> {
 
                     let while_cond_ty = self.infer(while_cond_expr_key);
 
+                    if self.is_ptr(&while_cond_ty).is_some() {}
                     if let Err(err) = self.type_inf_ctx.unify(&Type::boolean(), &while_cond_ty) {
                         self.add_branch_stm_condition_type_mismatch_err(
                             &while_cond_ty,

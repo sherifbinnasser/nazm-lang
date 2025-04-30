@@ -431,7 +431,8 @@ impl<'a> SemanticsAnalyzer<'a> {
     ) -> Type {
         let if_cond_ty = self.infer(*if_cond_expr_key);
 
-        if let Err(err) = self.type_inf_ctx.unify(&Type::boolean(), &if_cond_ty) {
+        if self.is_ptr(&if_cond_ty).is_some() {
+        } else if let Err(err) = self.type_inf_ctx.unify(&Type::boolean(), &if_cond_ty) {
             self.add_branch_stm_condition_type_mismatch_err(
                 &if_cond_ty,
                 "لو",
@@ -445,7 +446,8 @@ impl<'a> SemanticsAnalyzer<'a> {
         for (else_if_keyword_span, else_if_cond_expr_key, else_if_scope_key) in else_ifs {
             let else_if_cond_ty = self.infer(*else_if_cond_expr_key);
 
-            if let Err(err) = self.type_inf_ctx.unify(&Type::boolean(), &else_if_cond_ty) {
+            if self.is_ptr(&else_if_cond_ty).is_some() {
+            } else if let Err(err) = self.type_inf_ctx.unify(&Type::boolean(), &else_if_cond_ty) {
                 self.add_branch_stm_condition_type_mismatch_err(
                     &else_if_cond_ty,
                     "وإلا لو",
@@ -904,7 +906,7 @@ impl<'a> SemanticsAnalyzer<'a> {
         )
     }
 
-    fn is_ptr(&self, ty: &Type) -> Option<Type> {
+    pub(crate) fn is_ptr(&self, ty: &Type) -> Option<Type> {
         if let Type::Concrete(ConcreteType::Composite(
             CompositeType::Ptr(inner) | CompositeType::PtrMut(inner),
         )) = self.type_inf_ctx.apply(ty)
