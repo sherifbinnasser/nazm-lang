@@ -339,6 +339,10 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             return match op {
                 BinOp::EqualEqual => build_cmp!(EQ),
                 BinOp::NotEqual => build_cmp!(NE),
+                BinOp::GE => build_cmp!(UGE),
+                BinOp::GT => build_cmp!(UGT),
+                BinOp::LE => build_cmp!(ULE),
+                BinOp::LT => build_cmp!(ULT),
                 _ => unreachable!(),
             };
         }

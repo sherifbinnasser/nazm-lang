@@ -771,7 +771,10 @@ impl<'a> SemanticsAnalyzer<'a> {
                 Type::boolean()
             }
             BinOp::GE | BinOp::GT | BinOp::LE | BinOp::LT => {
-                if self.unify_with_num(&left_ty, *left, &op_span) {
+                if let Some(inner_ptr_ty) = self.is_ptr(&left_ty) {
+                    let right_ty = self.infer(*right);
+                    self.unify_with_ptr(&inner_ptr_ty, &right_ty, *right, &op_span);
+                } else if self.unify_with_num(&left_ty, *left, &op_span) {
                     let right_ty = self.infer(*right);
                     self.unify_with_check(&left_ty, &right_ty, *right, &op_span);
                 } else {
@@ -781,8 +784,13 @@ impl<'a> SemanticsAnalyzer<'a> {
                 Type::boolean()
             }
             BinOp::EqualEqual | BinOp::NotEqual => {
-                let right_ty = self.infer(*right);
-                self.unify_with_check(&left_ty, &right_ty, *right, &op_span);
+                if let Some(inner_ptr_ty) = self.is_ptr(&left_ty) {
+                    let right_ty = self.infer(*right);
+                    self.unify_with_ptr(&inner_ptr_ty, &right_ty, *right, &op_span);
+                } else {
+                    let right_ty = self.infer(*right);
+                    self.unify_with_check(&left_ty, &right_ty, *right, &op_span);
+                }
                 Type::boolean()
             }
             BinOp::Assign => {
@@ -843,6 +851,46 @@ impl<'a> SemanticsAnalyzer<'a> {
                 Type::unit()
             }
         }
+    }
+
+    fn is_ptr(&self, ty: &Type) -> Option<Type> {
+        if let Type::Concrete(ConcreteType::Composite(
+            CompositeType::Ptr(inner) | CompositeType::PtrMut(inner),
+        )) = self.type_inf_ctx.apply(ty)
+        {
+            Some(*inner.clone())
+        } else {
+            None
+        }
+    }
+
+    fn unify_with_ptr(
+        &mut self,
+        inner_ptr_ty: &Type,
+        found_ty: &Type,
+        expr_key: ExprKey,
+        op_span: &Span,
+    ) {
+        let Err(err) = self
+            .type_inf_ctx
+            .unify(&Type::ptr(inner_ptr_ty.clone()), found_ty)
+        else {
+            return;
+        };
+
+        let Err(err) = self
+            .type_inf_ctx
+            .unify(&Type::ptr_mut(inner_ptr_ty.clone()), found_ty)
+        else {
+            return;
+        };
+
+        self.add_type_mismatch_in_op_err(
+            &Type::ptr(inner_ptr_ty.clone()),
+            &found_ty,
+            expr_key,
+            *op_span,
+        );
     }
 
     fn unify_with_int_num(&mut self, found_ty: &Type, expr_key: ExprKey, op_span: &Span) -> bool {
