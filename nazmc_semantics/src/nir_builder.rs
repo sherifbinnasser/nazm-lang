@@ -820,21 +820,47 @@ impl<'a> SemanticsAnalyzer<'a> {
             }
 
             nazmc_ast::ExprKind::Idx(idx_expr) => {
-                let Operand {
-                    typ: _,
+                let on_operand @ Operand {
+                    typ: lvalue_typ_key,
                     kind: OperandKind::LValue(on_lvalue_key),
                 } = self.lower_expr(idx_expr.on)
                 else {
                     unreachable!()
                 };
 
-                let Operand {
+                let lvalue_typ = self.nir_builder.nir.types[lvalue_typ_key];
+
+                let idx_operand @ Operand {
                     typ: _,
                     kind: idx_operand_kind,
                 } = self.lower_expr(idx_expr.idx);
 
                 // TODO: Support ranges indexing
-                let lvalue = if self.is_mut_lvalue(on_lvalue_key) {
+                let lvalue = if let Type::Ptr(_) = lvalue_typ {
+                    let OperandKind::LValue(temp_key) = self.add_new_temp_assign_stm(
+                        lvalue_typ_key,
+                        RValue::BinOp {
+                            op: BinOp::Plus,
+                            lhs: on_operand,
+                            rhs: idx_operand,
+                        },
+                    ) else {
+                        unreachable!()
+                    };
+                    LValueKind::Deref(temp_key)
+                } else if let Type::MutPtr(_) = lvalue_typ {
+                    let OperandKind::LValue(temp_key) = self.add_new_temp_assign_stm(
+                        lvalue_typ_key,
+                        RValue::BinOp {
+                            op: BinOp::Plus,
+                            lhs: on_operand,
+                            rhs: idx_operand,
+                        },
+                    ) else {
+                        unreachable!()
+                    };
+                    LValueKind::MutDeref(temp_key)
+                } else if self.is_mut_lvalue(on_lvalue_key) {
                     match idx_operand_kind {
                         OperandKind::LValue(idx_lvalue_key) => LValueKind::MutArrayIdx {
                             on: on_lvalue_key,

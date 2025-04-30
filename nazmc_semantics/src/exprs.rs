@@ -257,9 +257,11 @@ impl<'a> SemanticsAnalyzer<'a> {
                 underlying_typ,
                 size: _,
             })) => (*underlying_typ, true),
-            Type::Concrete(ConcreteType::Composite(CompositeType::Slice(underlying_ty))) => {
-                (*underlying_ty, false)
-            }
+            Type::Concrete(ConcreteType::Composite(
+                CompositeType::Slice(underlying_ty)
+                | CompositeType::Ptr(underlying_ty)
+                | CompositeType::PtrMut(underlying_ty),
+            )) => (*underlying_ty, false),
             Type::TypeVar(key) if self.type_inf_ctx.make_ty_var_error(key) => (on_expr_ty, true),
             _ => {
                 self.add_indexing_non_indexable_err(&on_expr_ty, on, brackets_span);
@@ -835,6 +837,7 @@ impl<'a> SemanticsAnalyzer<'a> {
                     if let Err(err) = self.type_inf_ctx.unify(&Type::u(), &right_ty) {
                         if let BinOp::Minus = op {
                             self.unify_with_ptr(&inner_ptr_ty, &right_ty, *right, &op_span);
+                            return Type::u();
                         } else {
                             self.add_type_mismatch_in_op_err(
                                 &Type::u(),
@@ -872,22 +875,11 @@ impl<'a> SemanticsAnalyzer<'a> {
             | BinOp::TimesAssign
             | BinOp::DivAssign
             | BinOp::ModAssign => {
-                if let (BinOp::PlusAssign | BinOp::MinusAssign, Some(inner_ptr_ty)) =
+                if let (BinOp::PlusAssign | BinOp::MinusAssign, Some(_)) =
                     (op, self.is_ptr(&left_ty))
                 {
                     let right_ty = self.infer(*right);
-                    if let Err(err) = self.type_inf_ctx.unify(&Type::u(), &right_ty) {
-                        if let BinOp::MinusAssign = op {
-                            self.unify_with_ptr(&inner_ptr_ty, &right_ty, *right, &op_span);
-                        } else {
-                            self.add_type_mismatch_in_op_err(
-                                &Type::u(),
-                                &right_ty,
-                                *right,
-                                op_span,
-                            );
-                        }
-                    }
+                    self.unify_with_check(&Type::u(), &right_ty, *right, &op_span);
                 }
                 if self.unify_with_num(&left_ty, *left, &op_span) {
                     let right_ty = self.infer(*right);

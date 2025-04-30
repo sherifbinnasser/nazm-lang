@@ -324,7 +324,12 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                 BinOp::Mod => build!(build_float_rem),
                 _ => unreachable!(),
             };
-        } else if let AnyValueEnum::PointerValue(lhs) = llvm_lhs {
+        } else if let AnyValueEnum::PointerValue(llvm_lhs) = llvm_lhs {
+            let (Type::Ptr(inner_ty) | Type::MutPtr(inner_ty)) = self.nir.types[lhs.typ] else {
+                unreachable!()
+            };
+            let inner_ty = any_type_enum_to_basic_type_enum(self.lower_type(inner_ty));
+            let lhs = llvm_lhs;
             let rhs = self.lower_operand(rhs, cfg);
 
             if let AnyValueEnum::IntValue(rhs) = rhs {
@@ -336,7 +341,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
 
                 return unsafe {
                     builder
-                        .build_gep(self.ptr_type(), lhs, &[rhs], name)
+                        .build_gep(inner_ty, lhs, &[rhs], name)
                         .unwrap()
                         .as_any_value_enum()
                 };
@@ -361,7 +366,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                 BinOp::LE => build_cmp!(ULE),
                 BinOp::LT => build_cmp!(ULT),
                 BinOp::Minus => builder
-                    .build_ptr_diff(self.ptr_type(), lhs, rhs, name)
+                    .build_ptr_diff(inner_ty, lhs, rhs, name)
                     .unwrap()
                     .as_any_value_enum(),
                 _ => unreachable!(),
