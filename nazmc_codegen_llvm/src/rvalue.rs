@@ -325,7 +325,24 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                 _ => unreachable!(),
             };
         } else if let AnyValueEnum::PointerValue(lhs) = llvm_lhs {
-            let rhs = self.lower_operand(rhs, cfg).into_pointer_value();
+            let rhs = self.lower_operand(rhs, cfg);
+
+            if let AnyValueEnum::IntValue(rhs) = rhs {
+                let rhs = if let BinOp::Minus = op {
+                    builder.build_int_neg(rhs, "").unwrap()
+                } else {
+                    rhs
+                };
+
+                return unsafe {
+                    builder
+                        .build_gep(self.ptr_type(), lhs, &[rhs], name)
+                        .unwrap()
+                        .as_any_value_enum()
+                };
+            }
+
+            let rhs = rhs.into_pointer_value();
 
             macro_rules! build_cmp {
                 ($build_op: ident) => {
@@ -343,6 +360,10 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                 BinOp::GT => build_cmp!(UGT),
                 BinOp::LE => build_cmp!(ULE),
                 BinOp::LT => build_cmp!(ULT),
+                BinOp::Minus => builder
+                    .build_ptr_diff(self.ptr_type(), lhs, rhs, name)
+                    .unwrap()
+                    .as_any_value_enum(),
                 _ => unreachable!(),
             };
         }
