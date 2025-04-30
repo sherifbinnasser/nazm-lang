@@ -257,9 +257,11 @@ impl<'a> SemanticsAnalyzer<'a> {
                 underlying_typ,
                 size: _,
             })) => (*underlying_typ, true),
-            Type::Concrete(ConcreteType::Composite(CompositeType::Slice(underlying_ty))) => {
-                (*underlying_ty, false)
-            }
+            Type::Concrete(ConcreteType::Composite(
+                CompositeType::Slice(underlying_ty)
+                | CompositeType::Ptr(underlying_ty)
+                | CompositeType::PtrMut(underlying_ty),
+            )) => (*underlying_ty, false),
             Type::TypeVar(key) if self.type_inf_ctx.make_ty_var_error(key) => (on_expr_ty, true),
             _ => {
                 self.add_indexing_non_indexable_err(&on_expr_ty, on, brackets_span);
@@ -429,7 +431,8 @@ impl<'a> SemanticsAnalyzer<'a> {
     ) -> Type {
         let if_cond_ty = self.infer(*if_cond_expr_key);
 
-        if let Err(err) = self.type_inf_ctx.unify(&Type::boolean(), &if_cond_ty) {
+        if self.is_ptr(&if_cond_ty).is_some() {
+        } else if let Err(err) = self.type_inf_ctx.unify(&Type::boolean(), &if_cond_ty) {
             self.add_branch_stm_condition_type_mismatch_err(
                 &if_cond_ty,
                 "لو",
@@ -443,7 +446,8 @@ impl<'a> SemanticsAnalyzer<'a> {
         for (else_if_keyword_span, else_if_cond_expr_key, else_if_scope_key) in else_ifs {
             let else_if_cond_ty = self.infer(*else_if_cond_expr_key);
 
-            if let Err(err) = self.type_inf_ctx.unify(&Type::boolean(), &else_if_cond_ty) {
+            if self.is_ptr(&else_if_cond_ty).is_some() {
+            } else if let Err(err) = self.type_inf_ctx.unify(&Type::boolean(), &else_if_cond_ty) {
                 self.add_branch_stm_condition_type_mismatch_err(
                     &else_if_cond_ty,
                     "وإلا لو",
@@ -771,7 +775,18 @@ impl<'a> SemanticsAnalyzer<'a> {
                 Type::boolean()
             }
             BinOp::GE | BinOp::GT | BinOp::LE | BinOp::LT => {
-                if self.unify_with_num(&left_ty, *left, &op_span) {
+                if let Some(inner_ptr_ty) = self.is_ptr(&left_ty) {
+                    let right_ty = self.infer(*right);
+                    self.unify_with_ptr(&inner_ptr_ty, &right_ty, *right, &op_span);
+                } else if self.is_any_ty_var(&left_ty) {
+                    let right_ty = self.infer(*right);
+                    if let Some(inner_ptr_ty) = self.is_ptr(&right_ty) {
+                        self.unify_with_ptr(&inner_ptr_ty, &left_ty, *left, &op_span);
+                    } else {
+                        self.unify_with_num(&left_ty, *left, &op_span);
+                        self.unify_with_check(&left_ty, &right_ty, *right, &op_span);
+                    }
+                } else if self.unify_with_num(&left_ty, *left, &op_span) {
                     let right_ty = self.infer(*right);
                     self.unify_with_check(&left_ty, &right_ty, *right, &op_span);
                 } else {
@@ -781,8 +796,20 @@ impl<'a> SemanticsAnalyzer<'a> {
                 Type::boolean()
             }
             BinOp::EqualEqual | BinOp::NotEqual => {
-                let right_ty = self.infer(*right);
-                self.unify_with_check(&left_ty, &right_ty, *right, &op_span);
+                if let Some(inner_ptr_ty) = self.is_ptr(&left_ty) {
+                    let right_ty = self.infer(*right);
+                    self.unify_with_ptr(&inner_ptr_ty, &right_ty, *right, &op_span);
+                } else if self.is_any_ty_var(&left_ty) {
+                    let right_ty = self.infer(*right);
+                    if let Some(inner_ptr_ty) = self.is_ptr(&right_ty) {
+                        self.unify_with_ptr(&inner_ptr_ty, &left_ty, *left, &op_span);
+                    } else {
+                        self.unify_with_check(&left_ty, &right_ty, *right, &op_span);
+                    }
+                } else {
+                    let right_ty = self.infer(*right);
+                    self.unify_with_check(&left_ty, &right_ty, *right, &op_span);
+                }
                 Type::boolean()
             }
             BinOp::Assign => {
@@ -805,7 +832,24 @@ impl<'a> SemanticsAnalyzer<'a> {
                 left_ty
             }
             BinOp::Plus | BinOp::Minus | BinOp::Times | BinOp::Div | BinOp::Mod => {
-                if self.unify_with_num(&left_ty, *left, &op_span) {
+                if let (BinOp::Plus | BinOp::Minus, Some(inner_ptr_ty)) =
+                    (op, self.is_ptr(&left_ty))
+                {
+                    let right_ty = self.infer(*right);
+                    if let Err(err) = self.type_inf_ctx.unify(&Type::u(), &right_ty) {
+                        if let BinOp::Minus = op {
+                            self.unify_with_ptr(&inner_ptr_ty, &right_ty, *right, &op_span);
+                            return Type::u();
+                        } else {
+                            self.add_type_mismatch_in_op_err(
+                                &Type::u(),
+                                &right_ty,
+                                *right,
+                                op_span,
+                            );
+                        }
+                    }
+                } else if self.unify_with_num(&left_ty, *left, &op_span) {
                     let right_ty = self.infer(*right);
                     self.unify_with_check(&left_ty, &right_ty, *right, &op_span);
                 } else {
@@ -833,6 +877,12 @@ impl<'a> SemanticsAnalyzer<'a> {
             | BinOp::TimesAssign
             | BinOp::DivAssign
             | BinOp::ModAssign => {
+                if let (BinOp::PlusAssign | BinOp::MinusAssign, Some(_)) =
+                    (op, self.is_ptr(&left_ty))
+                {
+                    let right_ty = self.infer(*right);
+                    self.unify_with_check(&Type::u(), &right_ty, *right, &op_span);
+                }
                 if self.unify_with_num(&left_ty, *left, &op_span) {
                     let right_ty = self.infer(*right);
                     self.unify_with_check(&left_ty, &right_ty, *right, &op_span);
@@ -843,6 +893,57 @@ impl<'a> SemanticsAnalyzer<'a> {
                 Type::unit()
             }
         }
+    }
+
+    fn is_any_ty_var(&self, ty: &Type) -> bool {
+        let Type::TypeVar(ty_var_key) = self.type_inf_ctx.apply(ty) else {
+            return false;
+        };
+
+        matches!(
+            self.type_inf_ctx.ty_vars[ty_var_key],
+            type_infer::TypeVarSubstitution::Any
+        )
+    }
+
+    pub(crate) fn is_ptr(&self, ty: &Type) -> Option<Type> {
+        if let Type::Concrete(ConcreteType::Composite(
+            CompositeType::Ptr(inner) | CompositeType::PtrMut(inner),
+        )) = self.type_inf_ctx.apply(ty)
+        {
+            Some(*inner.clone())
+        } else {
+            None
+        }
+    }
+
+    fn unify_with_ptr(
+        &mut self,
+        inner_ptr_ty: &Type,
+        found_ty: &Type,
+        expr_key: ExprKey,
+        op_span: &Span,
+    ) {
+        let Err(err) = self
+            .type_inf_ctx
+            .unify(&Type::ptr(inner_ptr_ty.clone()), found_ty)
+        else {
+            return;
+        };
+
+        let Err(err) = self
+            .type_inf_ctx
+            .unify(&Type::ptr_mut(inner_ptr_ty.clone()), found_ty)
+        else {
+            return;
+        };
+
+        self.add_type_mismatch_in_op_err(
+            &Type::ptr(inner_ptr_ty.clone()),
+            &found_ty,
+            expr_key,
+            *op_span,
+        );
     }
 
     fn unify_with_int_num(&mut self, found_ty: &Type, expr_key: ExprKey, op_span: &Span) -> bool {

@@ -324,8 +324,30 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                 BinOp::Mod => build!(build_float_rem),
                 _ => unreachable!(),
             };
-        } else if let AnyValueEnum::PointerValue(lhs) = llvm_lhs {
-            let rhs = self.lower_operand(rhs, cfg).into_pointer_value();
+        } else if let AnyValueEnum::PointerValue(llvm_lhs) = llvm_lhs {
+            let (Type::Ptr(inner_ty) | Type::MutPtr(inner_ty)) = self.nir.types[lhs.typ] else {
+                unreachable!()
+            };
+            let inner_ty = any_type_enum_to_basic_type_enum(self.lower_type(inner_ty));
+            let lhs = llvm_lhs;
+            let rhs = self.lower_operand(rhs, cfg);
+
+            if let AnyValueEnum::IntValue(rhs) = rhs {
+                let rhs = if let BinOp::Minus = op {
+                    builder.build_int_neg(rhs, "").unwrap()
+                } else {
+                    rhs
+                };
+
+                return unsafe {
+                    builder
+                        .build_gep(inner_ty, lhs, &[rhs], name)
+                        .unwrap()
+                        .as_any_value_enum()
+                };
+            }
+
+            let rhs = rhs.into_pointer_value();
 
             macro_rules! build_cmp {
                 ($build_op: ident) => {
@@ -339,6 +361,14 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             return match op {
                 BinOp::EqualEqual => build_cmp!(EQ),
                 BinOp::NotEqual => build_cmp!(NE),
+                BinOp::GE => build_cmp!(UGE),
+                BinOp::GT => build_cmp!(UGT),
+                BinOp::LE => build_cmp!(ULE),
+                BinOp::LT => build_cmp!(ULT),
+                BinOp::Minus => builder
+                    .build_ptr_diff(inner_ty, lhs, rhs, name)
+                    .unwrap()
+                    .as_any_value_enum(),
                 _ => unreachable!(),
             };
         }
