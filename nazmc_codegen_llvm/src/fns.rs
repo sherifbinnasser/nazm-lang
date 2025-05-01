@@ -236,7 +236,16 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                 return;
             }
 
-            let condition = self.lower_operand(&operand, &cfg).into_int_value();
+            let mut condition = self.lower_operand(&operand, &cfg).into_int_value();
+
+            // Truncate condition to i1 if it's i8
+            let condition_type = condition.get_type();
+            if condition_type.get_bit_width() == 8 {
+                condition = self
+                    .builder
+                    .build_int_truncate(condition, self.context.bool_type(), "")
+                    .unwrap();
+            }
 
             let then_bb = self.basic_blocks.borrow()[&branch.to];
             let else_bb = self.basic_blocks.borrow()[&else_branch.to];

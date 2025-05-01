@@ -725,7 +725,7 @@ impl<'a> SemanticsAnalyzer<'a> {
                 }
             }
             UnaryOp::LNot => {
-                self.unify_with_int_num(&Type::boolean(), *expr, &op_span);
+                self.unify_with_check(&Type::boolean(), &inner, *expr, &op_span);
                 Type::boolean()
             }
             UnaryOp::BNot => {
