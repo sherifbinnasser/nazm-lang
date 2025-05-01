@@ -435,7 +435,7 @@ impl<'a> SemanticsAnalyzer<'a> {
                         scope_key: while_scope_key,
                     } = **while_stm;
 
-                    let while_cond_ty = self.infer(while_cond_expr_key);
+                    let while_cond_ty = self.infer_cond_expr(while_cond_expr_key);
 
                     if self.is_ptr(&while_cond_ty).is_some() {}
                     if let Err(err) = self.type_inf_ctx.unify(&Type::boolean(), &while_cond_ty) {

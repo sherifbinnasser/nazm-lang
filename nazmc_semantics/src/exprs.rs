@@ -421,6 +421,31 @@ impl<'a> SemanticsAnalyzer<'a> {
         }
     }
 
+    pub(crate) fn infer_cond_expr(&mut self, cond_expr_key: ExprKey) -> Type {
+        let ExprKind::UnaryOp(unary_op_expr) = self.ast.exprs[cond_expr_key].kind.clone() else {
+            return self.infer(cond_expr_key);
+        };
+
+        let UnaryOp::LNot = unary_op_expr.op else {
+            return self.infer(cond_expr_key);
+        };
+
+        let inner_ty = self.infer(unary_op_expr.expr);
+
+        if self.is_ptr(&inner_ty).is_none() {
+            self.unify_with_check(
+                &Type::boolean(),
+                &inner_ty,
+                unary_op_expr.expr,
+                &unary_op_expr.op_span,
+            );
+        }
+
+        self.typed_ast.exprs.insert(cond_expr_key, Type::boolean());
+
+        Type::boolean()
+    }
+
     pub(crate) fn infer_if_expr(
         &mut self,
         IfExpr {
@@ -429,7 +454,7 @@ impl<'a> SemanticsAnalyzer<'a> {
             else_,
         }: &IfExpr,
     ) -> Type {
-        let if_cond_ty = self.infer(*if_cond_expr_key);
+        let if_cond_ty = self.infer_cond_expr(*if_cond_expr_key);
 
         if self.is_ptr(&if_cond_ty).is_some() {
         } else if let Err(err) = self.type_inf_ctx.unify(&Type::boolean(), &if_cond_ty) {
@@ -444,7 +469,7 @@ impl<'a> SemanticsAnalyzer<'a> {
         let if_ty = self.infer_scope(*if_scope_key);
 
         for (else_if_keyword_span, else_if_cond_expr_key, else_if_scope_key) in else_ifs {
-            let else_if_cond_ty = self.infer(*else_if_cond_expr_key);
+            let else_if_cond_ty = self.infer_cond_expr(*else_if_cond_expr_key);
 
             if self.is_ptr(&else_if_cond_ty).is_some() {
             } else if let Err(err) = self.type_inf_ctx.unify(&Type::boolean(), &else_if_cond_ty) {

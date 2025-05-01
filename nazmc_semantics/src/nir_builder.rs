@@ -542,7 +542,44 @@ impl<'a> SemanticsAnalyzer<'a> {
         then_scope_key: ScopeKey,
         else_basic_block_start: BasicBlockKey,
     ) -> (BasicBlockKey, OperandKind) {
-        let mut cond_operand = self.lower_expr(cond_expr_key);
+        let mut cond_operand = 'label: {
+            let nazmc_ast::ExprKind::UnaryOp(unary_op_expr) =
+                self.ast.exprs[cond_expr_key].kind.clone()
+            else {
+                break 'label self.lower_expr(cond_expr_key);
+            };
+
+            let nazmc_ast::UnaryOp::LNot = unary_op_expr.op else {
+                break 'label self.lower_expr(cond_expr_key);
+            };
+
+            let (Type::Ptr(_) | Type::MutPtr(_)) =
+                self.nir_builder.nir.types[self.nir_builder.exprs_types[unary_op_expr.expr]]
+            else {
+                break 'label self.lower_expr(cond_expr_key);
+            };
+
+            let ptr_expr_operand = self.lower_expr(unary_op_expr.expr);
+            let bool_type_key = TypeKey::from(0u32);
+
+            let temp_operand_kind = self.add_new_temp_assign_stm(
+                bool_type_key,
+                RValue::BinOp {
+                    op: BinOp::EqualEqual,
+                    rhs: Operand {
+                        typ: ptr_expr_operand.typ,
+                        kind: OperandKind::Const(Const::Null),
+                    },
+                    lhs: ptr_expr_operand,
+                },
+            );
+
+            Operand {
+                typ: bool_type_key,
+                kind: temp_operand_kind,
+            }
+        };
+
         if let Type::Ptr(_) | Type::MutPtr(_) =
             self.nir_builder.nir.types[self.nir_builder.exprs_types[cond_expr_key]]
         {
@@ -565,6 +602,7 @@ impl<'a> SemanticsAnalyzer<'a> {
                 kind: temp_operand_kind,
             };
         }
+
         let current_basic_block = self.cfg_builder.current_basic_block_key;
         let then_basic_block_start = self.cfg_builder.new_current_basic_block();
 
