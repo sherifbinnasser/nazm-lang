@@ -322,6 +322,7 @@ pub enum ExprKind {
     Lambda(Box<LambdaExpr>),
     UnaryOp(Box<UnaryOpExpr>),
     BinaryOp(Box<BinaryOpExpr>),
+    Cast(Box<CastExpr>),
     Return(Box<ReturnExpr>),
     Break(ScopeKey),
     Continue(ScopeKey),
@@ -473,4 +474,11 @@ pub enum BinOp {
     BAndAssign,
     ShrAssign,
     ShlAssign,
+}
+
+#[derive(Clone, Debug)]
+pub struct CastExpr {
+    pub expr: ExprKey,
+    pub as_span_cursor: SpanCursor,
+    pub typ: Option<TypeExprKey>,
 }

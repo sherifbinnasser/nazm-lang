@@ -1211,6 +1211,7 @@ impl<'a> SemanticsAnalyzer<'a> {
                     }
                 }
             }
+            nazmc_ast::ExprKind::Cast(cast_expr) => todo!(),
             nazmc_ast::ExprKind::If(if_expr) => {
                 let IfExpr {
                     if_,

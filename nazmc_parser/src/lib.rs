@@ -1121,10 +1121,13 @@ impl<'a> ParseErrorsReporter<'a> {
 
     fn check_expr(&mut self, expr: &Expr) {
         self.check_primary_expr(&expr.left);
-        for bin_expr in &expr.bin {
-            match &bin_expr.right {
-                Ok(expr) => self.check_primary_expr(expr),
-                Err(err) => self.report_expected("تعبير برمجي", err, vec![]),
+        for bin_expr in &expr.rights {
+            match bin_expr {
+                BinExpr::Cast(cast_expr) => self.check_type_result(&cast_expr.typ),
+                BinExpr::Normal(normal_bin_expr) => match &normal_bin_expr.right {
+                    Ok(expr) => self.check_primary_expr(expr),
+                    Err(err) => self.report_expected("تعبير برمجي", err, vec![]),
+                },
             }
         }
     }
