@@ -60,7 +60,14 @@ impl<'a> SemanticsAnalyzer<'a> {
                 self.infer_bin_op_expr(&binary_op_expr),
                 ExprKind::BinaryOp(binary_op_expr),
             ),
-            ExprKind::Cast(cast_expr) => todo!(),
+            ExprKind::Cast(cast_expr) => {
+                self.infer(cast_expr.expr); // Check inner expr
+                let ty = match cast_expr.typ {
+                    Some(type_expr_key) => self.analyze_type_expr(type_expr_key),
+                    None => self.type_inf_ctx.new_ty_var(),
+                };
+                (ty, ExprKind::Cast(cast_expr))
+            }
             kind @ (ExprKind::Break(_) | ExprKind::Continue(_)) => {
                 (self.type_inf_ctx.new_never_ty_var(), kind)
             }
