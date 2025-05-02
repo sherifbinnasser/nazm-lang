@@ -354,6 +354,10 @@ impl<'a> SemanticsAnalyzer<'a> {
                 self.check_expr_ty_vars(binary_op_expr.right);
                 ExprKind::BinaryOp(binary_op_expr)
             }
+            ExprKind::Cast(cast_expr) => {
+                self.check_expr_ty_vars(cast_expr.expr);
+                ExprKind::Cast(cast_expr)
+            }
             ExprKind::Struct(fields_struct) => {
                 for (_field_id, field_expr_key) in &fields_struct.fields {
                     self.check_expr_ty_vars(*field_expr_key)
