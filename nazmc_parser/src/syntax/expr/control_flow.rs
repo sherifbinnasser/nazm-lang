@@ -48,7 +48,7 @@ impl NazmcParse for ParseResult<ConditionalBlock> {
 
         let len = condition.bin.len();
 
-        let last_primary_ex = if len == 0 {
+        let mut last_primary_ex = if len == 0 {
             &mut condition.left
         } else {
             match &mut condition.bin[len - 1] {
@@ -66,6 +66,15 @@ impl NazmcParse for ParseResult<ConditionalBlock> {
                 }
             }
         };
+
+        loop {
+            match &mut last_primary_ex.kind {
+                PrimaryExprKind::Unary(unary_expr) => {
+                    last_primary_ex = unary_expr.expr.as_mut().unwrap();
+                }
+                PrimaryExprKind::Atomic(atomic_expr) => break,
+            }
+        }
 
         let len = last_primary_ex.inner_access.len();
 
