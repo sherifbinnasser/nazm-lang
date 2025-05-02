@@ -92,6 +92,8 @@
       <keyword>أرجع</keyword>
       <keyword>على</keyword>
       <keyword>استيراد</keyword>
+      <keyword>ربط</keyword>
+      <keyword>كـ</keyword>
     </context>
 
     <!--context id="variance-annotation">
@@ -105,6 +107,7 @@
     <context id="expression" style-ref="keyword">
       <keyword>فاسد</keyword>
       <keyword>صحيح</keyword>
+      <keyword>صفر</keyword>
     </context>
 
     <context id="literal-identifier">
