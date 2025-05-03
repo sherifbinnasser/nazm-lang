@@ -106,6 +106,49 @@ impl AST<Unresolved> {
             ..Default::default()
         }
     }
+
+    pub fn get_type_expr_span(&self, type_expr_key: TypeExprKey) -> Span {
+        match &self.types_exprs.all[type_expr_key] {
+            TypeExpr::Path(path_type_expr_key) => {
+                self.types_exprs.paths[*path_type_expr_key].get_span()
+            }
+            TypeExpr::Paren(paren_type_expr_key) => {
+                self.types_exprs.parens[*paren_type_expr_key].span
+            }
+            TypeExpr::Slice(slice_type_expr_key) => {
+                self.types_exprs.slices[*slice_type_expr_key].span
+            }
+            TypeExpr::SliceMut(slice_mut_type_expr_key) => {
+                self.types_exprs.slices_mut[*slice_mut_type_expr_key].span
+            }
+            TypeExpr::Ptr(ptr_type_expr_key) => {
+                let expr = &self.types_exprs.ptrs[*ptr_type_expr_key];
+                expr.span
+                    .merged_with(&self.get_type_expr_span(expr.underlying_typ))
+            }
+            TypeExpr::PtrMut(ptr_mut_type_expr_key) => {
+                let expr = &self.types_exprs.ptrs_mut[*ptr_mut_type_expr_key];
+                expr.span
+                    .merged_with(&self.get_type_expr_span(expr.underlying_typ))
+            }
+            TypeExpr::FnPtr(fn_ptr_type_expr_key) => {
+                let expr = &self.types_exprs.fn_ptrs[*fn_ptr_type_expr_key];
+                expr.fn_keyword_span
+                    .merged_with(&self.get_type_expr_span(expr.return_type))
+            }
+            TypeExpr::Tuple(tuple_type_expr_key) => {
+                self.types_exprs.tuples[*tuple_type_expr_key].span
+            }
+            TypeExpr::Array(array_type_expr_key) => {
+                self.types_exprs.arrays[*array_type_expr_key].span
+            }
+            TypeExpr::Lambda(lambda_type_expr_key) => {
+                let expr = &self.types_exprs.lambdas[*lambda_type_expr_key];
+                expr.params_span
+                    .merged_with(&self.get_type_expr_span(expr.return_type))
+            }
+        }
+    }
 }
 
 #[derive(Default)]
@@ -479,6 +522,5 @@ pub enum BinOp {
 #[derive(Clone, Debug)]
 pub struct CastExpr {
     pub expr: ExprKey,
-    pub as_span_cursor: SpanCursor,
     pub typ: Option<TypeExprKey>,
 }

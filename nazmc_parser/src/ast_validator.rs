@@ -1033,7 +1033,7 @@ impl<'a> ASTValidator<'a> {
                             && simple_path.top.data.val == IdKey::UNDERSCORE
                             && simple_path.inners.is_empty()
                         {
-                            IntermediateExpr::InferredType
+                            IntermediateExpr::InferredType(simple_path.top.span)
                         } else {
                             IntermediateExpr::Type(self.lower_type(typ))
                         }
@@ -1103,18 +1103,17 @@ impl<'a> ASTValidator<'a> {
         right_expr: IntermediateExpr,
     ) -> nazmc_ast::ExprKey {
         match right_expr {
-            IntermediateExpr::InferredType => self.new_expr(
-                self.get_expr_span(left_expr),
+            IntermediateExpr::InferredType(span) => self.new_expr(
+                self.get_expr_span(left_expr).merged_with(&span),
                 nazmc_ast::ExprKind::Cast(Box::new(nazmc_ast::CastExpr {
-                    as_span_cursor: last_op_span_cursor,
                     expr: left_expr,
                     typ: None,
                 })),
             ),
             IntermediateExpr::Type(type_expr_key) => self.new_expr(
-                self.get_expr_span(left_expr),
+                self.get_expr_span(left_expr)
+                    .merged_with(&self.ast.get_type_expr_span(type_expr_key)),
                 nazmc_ast::ExprKind::Cast(Box::new(nazmc_ast::CastExpr {
-                    as_span_cursor: last_op_span_cursor,
                     expr: left_expr,
                     typ: Some(type_expr_key),
                 })),
@@ -1961,7 +1960,7 @@ enum IntermediateBinOp {
 }
 
 enum IntermediateExpr {
-    InferredType,
+    InferredType(Span),
     Type(nazmc_ast::TypeExprKey),
     Normal(nazmc_ast::ExprKey),
 }

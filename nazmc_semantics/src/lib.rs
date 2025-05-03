@@ -354,7 +354,6 @@ impl<'a> SemanticsAnalyzer<'a> {
         self.check_scope_ty_vars(fn_scope_key);
 
         for (unknown_ty, span, first_used_span) in &self.unknown_type_errors {
-            println!("Span: {:?}", span);
             let mut code_window =
                 CodeWindow::new(&self.files_infos[self.current_file_key], span.start);
 
