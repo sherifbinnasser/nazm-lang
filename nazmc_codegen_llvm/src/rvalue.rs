@@ -96,7 +96,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             RValue::Ref(lvalue_key) | RValue::RefMut(lvalue_key) => self
                 .lower_lvalue_to_ptr(*lvalue_key, cfg)
                 .as_any_value_enum(),
-            RValue::Cast { val, to } => todo!(),
+            RValue::Cast { val, kind: to } => todo!(),
             RValue::BinOp { op, lhs, rhs } => self.lower_bin_op_rvalue(*op, lhs, rhs, name, cfg),
             RValue::UnaryOp { op, operand } => self.lower_unary_op_rvalue(*op, operand, name, cfg),
             RValue::Call { on, args } => self.lower_call_rvalue(on, &args, cfg),

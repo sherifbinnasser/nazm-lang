@@ -1071,4 +1071,22 @@ impl<'a> SemanticsAnalyzer<'a> {
         let diagnostic = Diagnostic::error(msg, vec![code_window]);
         self.diagnostics.push(diagnostic);
     }
+
+    /// Type names are got from the NIR
+    pub(crate) fn add_cannot_perfrom_type_cast(
+        &mut self,
+        from_ty: String,
+        to_ty: String,
+        expr_span: Span,
+    ) {
+        let msg = format!(
+            "لا يمكن التحويل من النوع `{}` إلى النوع `{}`",
+            from_ty, to_ty
+        );
+        let mut code_window =
+            CodeWindow::new(&self.files_infos[self.current_file_key], expr_span.start);
+        code_window.mark_error(expr_span, vec![]);
+        let diagnostic = Diagnostic::error(msg, vec![code_window]);
+        self.diagnostics.push(diagnostic);
+    }
 }

@@ -128,30 +128,30 @@ impl<'a> NIR<'a> {
     pub fn fmt_typ(&self, type_key: TypeKey) -> String {
         match self.types[type_key] {
             Type::Unit => format!("()"),
-            Type::I => format!("i"),
-            Type::I1 => format!("i1"),
-            Type::I2 => format!("i2"),
-            Type::I4 => format!("i4"),
-            Type::I8 => format!("i8"),
-            Type::U => format!("u"),
-            Type::U1 => format!("u1"),
-            Type::U2 => format!("u2"),
-            Type::U4 => format!("u4"),
-            Type::U8 => format!("u8"),
-            Type::F4 => format!("f4"),
-            Type::F8 => format!("f8"),
-            Type::Bool => format!("bool"),
-            Type::Char => format!("char"),
+            Type::I => format!("ص"),
+            Type::I1 => format!("ص1"),
+            Type::I2 => format!("ص2"),
+            Type::I4 => format!("ص4"),
+            Type::I8 => format!("ص8"),
+            Type::U => format!("ط"),
+            Type::U1 => format!("ط1"),
+            Type::U2 => format!("ط2"),
+            Type::U4 => format!("ط4"),
+            Type::U8 => format!("ط8"),
+            Type::F4 => format!("ع4"),
+            Type::F8 => format!("ع8"),
+            Type::Bool => format!("شرط"),
+            Type::Char => format!("حرف"),
             Type::Struct(struct_key) => {
                 let item_info = self.structs[struct_key].info;
                 self.fmt_item_name(item_info)
             }
             Type::Slice(type_key) => format!("[{}]", self.fmt_typ(type_key)),
-            Type::MutSlice(type_key) => format!("[mut {}]", self.fmt_typ(type_key)),
+            Type::MutSlice(type_key) => format!("[متغير {}]", self.fmt_typ(type_key)),
             Type::Ptr(type_key) => format!("*{}", self.fmt_typ(type_key)),
-            Type::MutPtr(type_key) => format!("*mut {}", self.fmt_typ(type_key)),
+            Type::MutPtr(type_key) => format!("*متغير {}", self.fmt_typ(type_key)),
             Type::Array(array_type_key) => format!(
-                "[{}; {}]",
+                "[{}؛ {}]",
                 self.fmt_typ(self.array_types[array_type_key].underlying_typ),
                 self.array_types[array_type_key].size
             ),
@@ -162,7 +162,7 @@ impl<'a> NIR<'a> {
                     .iter()
                     .map(|&ty| self.fmt_typ(ty))
                     .collect::<Vec<_>>()
-                    .join(", ")
+                    .join("، ")
             ),
             Type::Lambda(lambda_type_key) => format!(
                 "({}) -> {}",
@@ -171,7 +171,7 @@ impl<'a> NIR<'a> {
                     .iter()
                     .map(|&ty| self.fmt_typ(ty))
                     .collect::<Vec<_>>()
-                    .join(", "),
+                    .join("، "),
                 self.fmt_typ(self.lambda_types[lambda_type_key].return_type)
             ),
             Type::FnPtr(fn_ptr_type_key) => {
@@ -180,16 +180,16 @@ impl<'a> NIR<'a> {
                     .iter()
                     .map(|&ty| self.fmt_typ(ty))
                     .collect::<Vec<_>>()
-                    .join(", ");
+                    .join("، ");
 
                 if self.fn_ptr_types[fn_ptr_type_key].is_vararg {
                     if !self.fn_ptr_types[fn_ptr_type_key].params_types.is_empty() {
-                        params.push_str(", ");
+                        params.push_str("، ");
                     }
                     params.push_str("...");
                 }
                 format!(
-                    "fn({}) -> {}",
+                    "دالة({}) -> {}",
                     params,
                     self.fmt_typ(self.fn_ptr_types[fn_ptr_type_key].return_type)
                 )
@@ -295,8 +295,8 @@ impl<'a> NIR<'a> {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
-            RValue::Cast { val, to } => {
-                format!("{} as {}", self.fmt_operand(cfg, val), self.fmt_typ(*to))
+            RValue::Cast { val, kind: to } => {
+                format!("cast {}", self.fmt_operand(cfg, val))
             }
             RValue::BinOp { op, lhs, rhs } => format!(
                 "{:?} {}, {}",
