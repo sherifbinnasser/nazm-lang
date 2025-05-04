@@ -483,7 +483,7 @@ impl<'a> QbeCodegen<'a> {
             RValue::ArrayElements(thin_vec) => todo!(),
             RValue::ArrayRepeated { repeated, size } => todo!(),
             RValue::Struct { struct_key, fields } => todo!(),
-            RValue::Cast { val, to } => todo!(),
+            RValue::Cast { val, kind: to } => todo!(),
             RValue::BinOp { op, lhs, rhs } => {
                 let qbe_lhs = self.lower_operand(lhs, cfg, qbe_bb);
                 let qbe_rhs = self.lower_operand(rhs, cfg, qbe_bb);

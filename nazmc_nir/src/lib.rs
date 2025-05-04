@@ -290,7 +290,7 @@ pub enum RValue {
     },
     Cast {
         val: Operand,
-        to: TypeKey,
+        kind: CastKind,
     },
     BinOp {
         op: BinOp,
@@ -381,4 +381,94 @@ pub enum UnaryOp {
     LNot,
     BNot,
     Minus,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum CastKind {
+    U1ToChar,
+    F4ToF8,
+    F8ToF4,
+    /// Must have same inner type
+    ArrayToSlice {
+        len: u32,
+    },
+
+    // Pointers and addresses
+    /// This is like no-op.
+    ///
+    /// It is used when casting a slice of pointers to another slice of pointers, or array of pointers to another array (same length) of pointers
+    PtrToPtr,
+    /// Cast only from unsigned ptr-sized integers
+    UIntToPtr {
+        int_size: Size,
+    },
+    /// Cast only to unsigned ptr-sized integers
+    PtrToUInt {
+        int_size: Size,
+    },
+
+    // Primtives to integers
+    F4ToInt {
+        int_size: Size,
+    },
+    F4ToUInt {
+        int_size: Size,
+    },
+    F8ToInt {
+        int_size: Size,
+    },
+    F8ToUInt {
+        int_size: Size,
+    },
+    BoolToInt {
+        int_size: Size,
+    },
+    BoolToUInt {
+        int_size: Size,
+    },
+    CharToInt {
+        int_size: Size,
+    },
+    CharToUInt {
+        int_size: Size,
+    },
+
+    // Integers to primitves
+    IntToInt {
+        int1_size: Size,
+        int2_size: Size,
+    },
+    IntToUInt {
+        int1_size: Size,
+        int2_size: Size,
+    },
+    IntToF4 {
+        int_size: Size,
+    },
+    IntToF8 {
+        int_size: Size,
+    },
+    UIntToInt {
+        int1_size: Size,
+        int2_size: Size,
+    },
+    UIntToUInt {
+        int1_size: Size,
+        int2_size: Size,
+    },
+    UIntToF4 {
+        int_size: Size,
+    },
+    UIntToF8 {
+        int_size: Size,
+    },
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Size {
+    Ptr = 0,
+    Byte = 1,
+    Word = 2,
+    DWord = 4,
+    QWord = 8,
 }

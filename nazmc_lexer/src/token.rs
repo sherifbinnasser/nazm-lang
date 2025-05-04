@@ -156,4 +156,6 @@ pub enum KeywordKind {
     Extern,
     /// صفر
     Null,
+    /// كـ
+    As,
 }

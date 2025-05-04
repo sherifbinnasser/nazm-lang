@@ -46,22 +46,36 @@ impl NazmcParse for ParseResult<ConditionalBlock> {
     fn parse(iter: &mut TokensIter) -> Self {
         let mut condition = ParseResult::<Expr>::parse(iter)?;
 
-        let len = condition.bin.len();
+        let len = condition.rights.len();
 
         let mut last_primary_ex = if len == 0 {
             &mut condition.left
         } else {
-            match &mut condition.bin[len - 1] {
-                BinExpr {
+            match &mut condition.rights[len - 1] {
+                BinExpr::Normal(NormalBinExpr {
                     right: Ok(ref mut node),
                     ..
-                } => node,
-                BinExpr {
+                }) => node,
+                BinExpr::Normal(NormalBinExpr {
                     right: Err(err), ..
-                } => {
+                }) => {
                     return Ok(ConditionalBlock {
                         block: Err(err.clone()), // No expressions found after the bin op (so no lambda block is found after the op) so clone the error
                         condition: Ok(condition),
+                    });
+                }
+                BinExpr::Cast(_) => {
+                    // No block is found after type casting
+                    let parse_err = match iter.recent() {
+                        Some(_) => Err(ParseErr {
+                            found_token_index: iter.peek_idx - 1,
+                        }),
+                        None => ParseErr::eof(),
+                    };
+
+                    return Ok(ConditionalBlock {
+                        condition: Ok(condition),
+                        block: parse_err,
                     });
                 }
             }

@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 
 use iter_tools::Itertools;
-use nazmc_ast::{ASTId, BinaryOpExpr, ExprKey, IfExpr, LetStmKey, ScopeKey};
+use nazmc_ast::{ASTId, BinaryOpExpr, CastExpr, ExprKey, IfExpr, LetStmKey, ScopeKey};
 use nazmc_data_pool::{typed_index_collections::TiVec, DataPoolBuilder, IdKey};
 use nazmc_nir::{
     ArgKey, ArrayType, ArrayTypeKey, BasicBlock, BasicBlockKey, BinOp, Binding, BindingKey, Branch,
-    BranchKey, Const, FnKey, FnPtrType, FnPtrTypeKey, LValue, LValueKey, LValueKind, LambdaType,
-    LambdaTypeKey, Operand, OperandKind, RValue, StaticKey, Stm, StructKey, Temp, TupleType,
-    TupleTypeKey, Type, TypeKey, CFG, NIR,
+    BranchKey, CastKind, Const, FnKey, FnPtrType, FnPtrTypeKey, LValue, LValueKey, LValueKind,
+    LambdaType, LambdaTypeKey, Operand, OperandKind, RValue, StaticKey, Stm, StructKey, Temp,
+    TupleType, TupleTypeKey, Type, TypeKey, CFG, NIR,
 };
 use thin_vec::ThinVec;
 
@@ -1211,6 +1211,25 @@ impl<'a> SemanticsAnalyzer<'a> {
                     }
                 }
             }
+            nazmc_ast::ExprKind::Cast(cast_expr) => {
+                let from_typ = self.nir_builder.exprs_types[cast_expr.expr];
+                let val = self.lower_expr(cast_expr.expr);
+
+                let kind = if from_typ == typ {
+                    return val;
+                } else if let Some(kind) = self.get_cast_kind(from_typ, typ) {
+                    kind
+                } else {
+                    self.add_cannot_perfrom_type_cast(
+                        self.nir_builder.nir.fmt_typ(from_typ),
+                        self.nir_builder.nir.fmt_typ(typ),
+                        self.get_expr_span(expr_key),
+                    );
+                    CastKind::PtrToPtr
+                };
+
+                self.add_new_temp_assign_stm(typ, RValue::Cast { val, kind })
+            }
             nazmc_ast::ExprKind::If(if_expr) => {
                 let IfExpr {
                     if_,
@@ -1293,5 +1312,141 @@ impl<'a> SemanticsAnalyzer<'a> {
         };
 
         Operand { typ, kind }
+    }
+
+    fn get_cast_kind(&mut self, from: TypeKey, to: TypeKey) -> Option<CastKind> {
+        let from = &self.nir_builder.nir.types[from];
+        let to = &self.nir_builder.nir.types[to];
+        use nazmc_nir::Size::*;
+        use CastKind::*;
+        use Type::*;
+
+        fn get_int_size(i: &Type) -> nazmc_nir::Size {
+            match i {
+                I | U => nazmc_nir::Size::Ptr,
+                I1 | U1 => Byte,
+                I2 | U2 => Word,
+                I4 | U4 => DWord,
+                I8 | U8 => QWord,
+                _ => unreachable!(),
+            }
+        }
+
+        macro_rules! int_matches {
+            () => {
+                I | I1 | I2 | I4 | I8
+            };
+        }
+
+        macro_rules! uint_matches {
+            () => {
+                U | U1 | U2 | U4 | U8
+            };
+        }
+
+        macro_rules! ptr_matches {
+            () => {
+                Type::Ptr(_) | MutPtr(_)
+            };
+            ($type_key: expr) => {
+                matches!(self.nir_builder.nir.types[$type_key], ptr_matches!())
+            };
+        }
+
+        match (from, to) {
+            (U1, Char) => Some(U1ToChar),
+            (F4, F8) => Some(F4ToF8),
+            (F8, F4) => Some(F8ToF4),
+            // Primtives to integers
+            (F4, i @ int_matches!()) => Some(F4ToInt {
+                int_size: get_int_size(i),
+            }),
+            (F4, i @ uint_matches!()) => Some(F4ToUInt {
+                int_size: get_int_size(i),
+            }),
+            (F8, i @ int_matches!()) => Some(F8ToInt {
+                int_size: get_int_size(i),
+            }),
+            (F8, i @ uint_matches!()) => Some(F8ToUInt {
+                int_size: get_int_size(i),
+            }),
+            (Bool, i @ int_matches!()) => Some(BoolToInt {
+                int_size: get_int_size(i),
+            }),
+            (Bool, i @ uint_matches!()) => Some(BoolToUInt {
+                int_size: get_int_size(i),
+            }),
+            (Char, i @ int_matches!()) => Some(CharToInt {
+                int_size: get_int_size(i),
+            }),
+            (Char, i @ uint_matches!()) => Some(CharToUInt {
+                int_size: get_int_size(i),
+            }),
+            // Integers to primitves
+            (i1 @ int_matches!(), t2) => match t2 {
+                int_matches!() => Some(IntToInt {
+                    int1_size: get_int_size(i1),
+                    int2_size: get_int_size(t2),
+                }),
+                uint_matches!() => Some(IntToUInt {
+                    int1_size: get_int_size(i1),
+                    int2_size: get_int_size(t2),
+                }),
+                F4 => Some(IntToF4 {
+                    int_size: get_int_size(i1),
+                }),
+                F8 => Some(IntToF8 {
+                    int_size: get_int_size(i1),
+                }),
+                _ => None,
+            },
+            (i1 @ uint_matches!(), t2) => match t2 {
+                int_matches!() => Some(UIntToInt {
+                    int1_size: get_int_size(i1),
+                    int2_size: get_int_size(t2),
+                }),
+                uint_matches!() => Some(UIntToUInt {
+                    int1_size: get_int_size(i1),
+                    int2_size: get_int_size(t2),
+                }),
+                F4 => Some(UIntToF4 {
+                    int_size: get_int_size(i1),
+                }),
+                F8 => Some(UIntToF8 {
+                    int_size: get_int_size(i1),
+                }),
+                ptr_matches!() => Some(UIntToPtr {
+                    int_size: get_int_size(i1),
+                }),
+                _ => None,
+            },
+            (ptr_matches!(), i @ uint_matches!()) => Some(PtrToUInt {
+                int_size: get_int_size(i),
+            }),
+            (ptr_matches!(), ptr_matches!()) => Some(PtrToPtr),
+            (Slice(type_key1), Slice(type_key2))
+                if ptr_matches!(*type_key1) && ptr_matches!(*type_key2) =>
+            {
+                Some(PtrToPtr)
+            }
+            (Array(type_key1), Array(type_key2))
+                if ptr_matches!(self.nir_builder.nir.array_types[*type_key1].underlying_typ)
+                    && ptr_matches!(
+                        self.nir_builder.nir.array_types[*type_key2].underlying_typ
+                    )
+                    && self.nir_builder.nir.array_types[*type_key1].size
+                        == self.nir_builder.nir.array_types[*type_key1].size =>
+            {
+                Some(PtrToPtr)
+            }
+            (Array(type_key1), Slice(type_key2))
+                if self.nir_builder.nir.array_types[*type_key1].underlying_typ == *type_key2 =>
+            {
+                Some(ArrayToSlice {
+                    len: self.nir_builder.nir.array_types[*type_key1].size,
+                })
+            }
+            _ => None,
+        }
     }
 }

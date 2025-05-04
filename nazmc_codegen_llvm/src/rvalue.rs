@@ -81,6 +81,19 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                     cfg,
                 )
             }
+            RValue::Cast { val, kind } => {
+                // Only array to slice is allowed
+                let OperandKind::LValue(lvalue_key) = val.kind else {
+                    unreachable!()
+                };
+                let array_ptr = self
+                    .lower_lvalue_to_ptr(lvalue_key, cfg)
+                    .as_any_value_enum();
+                let casted_value = self.lower_cast(array_ptr, kind);
+                let _ = self
+                    .builder
+                    .build_store(dest_ptr, any_value_as_basic_value(casted_value).unwrap());
+            }
             _ => unreachable!(),
         };
     }
@@ -96,7 +109,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             RValue::Ref(lvalue_key) | RValue::RefMut(lvalue_key) => self
                 .lower_lvalue_to_ptr(*lvalue_key, cfg)
                 .as_any_value_enum(),
-            RValue::Cast { val, to } => todo!(),
+            RValue::Cast { val, kind } => self.lower_cast(self.lower_operand(val, cfg), kind),
             RValue::BinOp { op, lhs, rhs } => self.lower_bin_op_rvalue(*op, lhs, rhs, name, cfg),
             RValue::UnaryOp { op, operand } => self.lower_unary_op_rvalue(*op, operand, name, cfg),
             RValue::Call { on, args } => self.lower_call_rvalue(on, &args, cfg),
@@ -529,7 +542,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         let vararg_args_layout_iter = vararg_args_layout
             .into_iter()
             .enumerate()
-            .map(|(i, arg_layout)| (i + varargs_len, arg_layout));
+            .map(|(i, arg_layout)| (i + args_layout_len, arg_layout));
 
         let vararg_llvm_params_types_iter = vararg_llvm_params_types
             .into_iter()
@@ -601,10 +614,226 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         }
         .unwrap();
 
-        for &(attr_loc, attr_kind) in &self.fn_ptr_types.borrow()[&fn_ptr_type_key].attributes {
+        for &(attr_loc, attr_kind) in self.fn_ptr_types.borrow()[&fn_ptr_type_key]
+            .attributes
+            .iter()
+            .chain(vararg_attributes.iter())
+        {
             call_site_value.add_attribute(attr_loc, attr_kind);
         }
 
         call_site_value.as_any_value_enum()
+    }
+
+    fn lower_cast(&self, val: AnyValueEnum<'ctx>, kind: &CastKind) -> AnyValueEnum<'ctx> {
+        use inkwell::types::BasicTypeEnum;
+        use inkwell::values::AnyValue;
+
+        let ptr_size_bits = self.machine.get_target_data().get_pointer_byte_size(None);
+        let size_to_bits = |size: Size| -> u32 {
+            match size {
+                Size::Ptr => ptr_size_bits,
+                Size::Byte => 8,
+                Size::Word => 16,
+                Size::DWord => 32,
+                Size::QWord => 64,
+            }
+        };
+
+        match kind {
+            CastKind::U1ToChar => self
+                .builder
+                .build_int_z_extend(val.into_int_value(), self.context.i32_type(), "")
+                .unwrap()
+                .as_any_value_enum(),
+
+            // Float conversions
+            CastKind::F4ToF8 => self
+                .builder
+                .build_float_ext(val.into_float_value(), self.context.f64_type(), "")
+                .unwrap()
+                .as_any_value_enum(),
+            CastKind::F8ToF4 => self
+                .builder
+                .build_float_trunc(val.into_float_value(), self.context.f32_type(), "")
+                .unwrap()
+                .as_any_value_enum(),
+
+            // Array to slice (struct of pointer + length)
+            CastKind::ArrayToSlice { len } => {
+                let array_ptr = val.into_pointer_value();
+
+                let len_val = self.isize_type().const_int(*len as u64, false);
+
+                let undef = self.slice_type().get_undef();
+
+                let with_ptr = self
+                    .builder
+                    .build_insert_value(undef, array_ptr, 0, "")
+                    .unwrap();
+                self.builder
+                    .build_insert_value(with_ptr, len_val, 1, "")
+                    .unwrap()
+                    .as_any_value_enum()
+            }
+
+            // Pointer conversions
+            CastKind::PtrToPtr => val,
+            CastKind::UIntToPtr { .. } => self
+                .builder
+                .build_int_to_ptr(val.into_int_value(), self.ptr_type(), "")
+                .unwrap()
+                .as_any_value_enum(),
+            CastKind::PtrToUInt { int_size } => {
+                let int_bits = size_to_bits(*int_size);
+                self.builder
+                    .build_ptr_to_int(
+                        val.into_pointer_value(),
+                        self.context.custom_width_int_type(int_bits),
+                        "",
+                    )
+                    .unwrap()
+                    .as_any_value_enum()
+            }
+
+            // Float to integer conversions
+            CastKind::F4ToInt { int_size } | CastKind::F8ToInt { int_size } => {
+                let int_bits = size_to_bits(*int_size);
+                let int_type = self.context.custom_width_int_type(int_bits);
+                self.builder
+                    .build_float_to_signed_int(val.into_float_value(), int_type, "")
+                    .unwrap()
+                    .as_any_value_enum()
+            }
+            CastKind::F4ToUInt { int_size } | CastKind::F8ToUInt { int_size } => {
+                let int_bits = size_to_bits(*int_size);
+                let int_type = self.context.custom_width_int_type(int_bits);
+                self.builder
+                    .build_float_to_unsigned_int(val.into_float_value(), int_type, "")
+                    .unwrap()
+                    .as_any_value_enum()
+            }
+
+            // Boolean/char to integer
+
+            // char (i32) conversions
+            CastKind::CharToInt { int_size } | CastKind::CharToUInt { int_size } => {
+                use std::cmp::Ordering;
+                let int_bits = size_to_bits(*int_size);
+                let target_type = self.context.custom_width_int_type(int_bits);
+                let char_val = val.into_int_value();
+
+                match int_bits.cmp(&32) {
+                    Ordering::Greater => self
+                        .builder
+                        .build_int_z_extend(char_val, target_type, "")
+                        .unwrap()
+                        .as_any_value_enum(),
+                    Ordering::Less => self
+                        .builder
+                        .build_int_truncate(char_val, target_type, "")
+                        .unwrap()
+                        .as_any_value_enum(),
+                    Ordering::Equal => char_val.into(),
+                }
+            }
+
+            // bool (i1) to integers
+            CastKind::BoolToInt { int_size } | CastKind::BoolToUInt { int_size } => {
+                let int_bits = size_to_bits(*int_size);
+                let target_type = self.context.custom_width_int_type(int_bits);
+                let bool_val = val.into_int_value();
+                self.builder
+                    .build_int_z_extend(bool_val, target_type, "")
+                    .unwrap()
+                    .as_any_value_enum()
+            }
+
+            // Integer type conversions
+            CastKind::IntToInt {
+                int1_size,
+                int2_size,
+            } => self.handle_int_conversion(val, *int1_size, *int2_size, true, ptr_size_bits),
+            CastKind::UIntToUInt {
+                int1_size,
+                int2_size,
+            } => self.handle_int_conversion(val, *int1_size, *int2_size, false, ptr_size_bits),
+            CastKind::IntToUInt {
+                int1_size,
+                int2_size,
+            } => self.handle_int_conversion(val, *int1_size, *int2_size, true, ptr_size_bits),
+            CastKind::UIntToInt {
+                int1_size,
+                int2_size,
+            } => self.handle_int_conversion(val, *int1_size, *int2_size, false, ptr_size_bits),
+
+            // Integer to float
+            CastKind::IntToF4 { .. } => self
+                .builder
+                .build_signed_int_to_float(val.into_int_value(), self.context.f32_type(), "")
+                .unwrap()
+                .as_any_value_enum(),
+            CastKind::UIntToF4 { .. } => self
+                .builder
+                .build_unsigned_int_to_float(val.into_int_value(), self.context.f32_type(), "")
+                .unwrap()
+                .as_any_value_enum(),
+            CastKind::IntToF8 { .. } => self
+                .builder
+                .build_signed_int_to_float(val.into_int_value(), self.context.f64_type(), "")
+                .unwrap()
+                .as_any_value_enum(),
+            CastKind::UIntToF8 { .. } => self
+                .builder
+                .build_unsigned_int_to_float(val.into_int_value(), self.context.f64_type(), "")
+                .unwrap()
+                .as_any_value_enum(),
+        }
+    }
+
+    fn handle_int_conversion(
+        &self,
+        val: AnyValueEnum<'ctx>,
+        src_size: Size,
+        dst_size: Size,
+        signed: bool,
+        ptr_size_bits: u32,
+    ) -> AnyValueEnum<'ctx> {
+        use std::cmp::Ordering;
+        let val = val.into_int_value();
+
+        let src_bits = match src_size {
+            Size::Ptr => ptr_size_bits,
+            Size::Byte => 8,
+            Size::Word => 16,
+            Size::DWord => 32,
+            Size::QWord => 64,
+        };
+
+        let dst_bits = match dst_size {
+            Size::Ptr => ptr_size_bits,
+            Size::Byte => 8,
+            Size::Word => 16,
+            Size::DWord => 32,
+            Size::QWord => 64,
+        };
+
+        let dst_type = self.context.custom_width_int_type(dst_bits);
+
+        match dst_bits.cmp(&src_bits) {
+            Ordering::Greater => if signed {
+                self.builder.build_int_s_extend(val, dst_type, "")
+            } else {
+                self.builder.build_int_z_extend(val, dst_type, "")
+            }
+            .unwrap()
+            .as_any_value_enum(),
+            Ordering::Less => self
+                .builder
+                .build_int_truncate(val, dst_type, "")
+                .unwrap()
+                .as_any_value_enum(),
+            Ordering::Equal => val.as_any_value_enum(),
+        }
     }
 }

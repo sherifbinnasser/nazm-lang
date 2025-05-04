@@ -12,7 +12,7 @@ pub(crate) use lambda::*;
 /// The wrapper for all valid expressions syntax in the language
 pub(crate) struct Expr {
     pub(crate) left: Box<PrimaryExpr>,
-    pub(crate) bin: Vec<BinExpr>,
+    pub(crate) rights: Vec<BinExpr>,
 }
 
 /// This will parse the valid syntax of binary operators and will not parse their precedences
@@ -21,7 +21,19 @@ pub(crate) struct Expr {
 /// as we want it here to be simple
 ///
 #[derive(NazmcParse, Debug)]
-pub(crate) struct BinExpr {
+pub(crate) enum BinExpr {
+    Cast(CastExpr),
+    Normal(NormalBinExpr),
+}
+
+#[derive(NazmcParse, Debug)]
+pub(crate) struct CastExpr {
+    pub(crate) as_keyword: AsKeyword,
+    pub(crate) typ: ParseResult<Type>,
+}
+
+#[derive(NazmcParse, Debug)]
+pub(crate) struct NormalBinExpr {
     pub(crate) op: BinOp,
     pub(crate) right: ParseResult<PrimaryExpr>,
 }

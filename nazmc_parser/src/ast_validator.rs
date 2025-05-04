@@ -983,15 +983,71 @@ impl<'a> ASTValidator<'a> {
     }
 
     fn lower_expr(&mut self, expr: Expr) -> nazmc_ast::ExprKey {
+        fn get_precendence(op: &IntermediateBinOp) -> u8 {
+            match op {
+                IntermediateBinOp::Normal(op) => match op {
+                    nazmc_ast::BinOp::Assign
+                    | nazmc_ast::BinOp::PlusAssign
+                    | nazmc_ast::BinOp::MinusAssign
+                    | nazmc_ast::BinOp::TimesAssign
+                    | nazmc_ast::BinOp::DivAssign
+                    | nazmc_ast::BinOp::ModAssign
+                    | nazmc_ast::BinOp::BAndAssign
+                    | nazmc_ast::BinOp::BOrAssign
+                    | nazmc_ast::BinOp::XorAssign
+                    | nazmc_ast::BinOp::ShlAssign
+                    | nazmc_ast::BinOp::ShrAssign => 0, // Assignments have the lowest precedence
+                    nazmc_ast::BinOp::LOr => 1,
+                    nazmc_ast::BinOp::LAnd => 2,
+                    nazmc_ast::BinOp::EqualEqual | nazmc_ast::BinOp::NotEqual => 3,
+                    nazmc_ast::BinOp::GE
+                    | nazmc_ast::BinOp::GT
+                    | nazmc_ast::BinOp::LE
+                    | nazmc_ast::BinOp::LT => 4,
+                    nazmc_ast::BinOp::OpenOpenRange
+                    | nazmc_ast::BinOp::CloseOpenRange
+                    | nazmc_ast::BinOp::OpenCloseRange
+                    | nazmc_ast::BinOp::CloseCloseRange => 5,
+                    nazmc_ast::BinOp::BOr => 6,
+                    nazmc_ast::BinOp::Xor => 7,
+                    nazmc_ast::BinOp::BAnd => 8,
+                    nazmc_ast::BinOp::Shl | nazmc_ast::BinOp::Shr => 9,
+                    nazmc_ast::BinOp::Plus | nazmc_ast::BinOp::Minus => 10,
+                    nazmc_ast::BinOp::Times | nazmc_ast::BinOp::Div | nazmc_ast::BinOp::Mod => 11,
+                },
+                IntermediateBinOp::As => 12,
+            }
+        }
+
         let left = self.lower_primary_expr(*expr.left);
         let mut ops_stack = ThinVec::new();
-        let mut expr_stack = vec![left]; // Stack to keep track of expressions
+        let mut expr_stack = vec![IntermediateExpr::Normal(left)]; // Stack to keep track of expressions
 
         // Shunting-yard algorithm
-        for b in expr.bin {
-            let right = self.lower_primary_expr(b.right.unwrap());
-            let op = lower_bin_op(b.op.data);
-            let op_span_cursor = b.op.span.start;
+        for b in expr.rights {
+            let (right, op, op_span_cursor) = match b {
+                BinExpr::Cast(e) => {
+                    let typ = e.typ.unwrap();
+                    let expr = if let Type::Path(ref simple_path) = typ {
+                        if simple_path.double_colons.is_none()
+                            && simple_path.top.data.val == IdKey::UNDERSCORE
+                            && simple_path.inners.is_empty()
+                        {
+                            IntermediateExpr::InferredType(simple_path.top.span)
+                        } else {
+                            IntermediateExpr::Type(self.lower_type(typ))
+                        }
+                    } else {
+                        IntermediateExpr::Type(self.lower_type(typ))
+                    };
+                    (expr, IntermediateBinOp::As, e.as_keyword.span.start)
+                }
+                BinExpr::Normal(e) => (
+                    IntermediateExpr::Normal(self.lower_primary_expr(e.right.unwrap())),
+                    IntermediateBinOp::Normal(lower_bin_op(e.op.data)),
+                    e.op.span.start,
+                ),
+            };
 
             // Pop operators from the stack while they have higher or equal precedence
             while let Some((last_op, _)) = ops_stack.last() {
@@ -1001,20 +1057,15 @@ impl<'a> ASTValidator<'a> {
 
                 let (last_op, last_op_span_cursor) = ops_stack.pop().unwrap();
                 let right_expr = expr_stack.pop().unwrap();
-                let left_expr = expr_stack.pop().unwrap();
+                let IntermediateExpr::Normal(left_expr) = expr_stack.pop().unwrap() else {
+                    unreachable!()
+                };
 
                 // Combine left and right expressions using the last operator
-                let combined_expr = self.new_expr(
-                    self.get_expr_merged_span(left_expr, right_expr),
-                    nazmc_ast::ExprKind::BinaryOp(Box::new(nazmc_ast::BinaryOpExpr {
-                        op: last_op,
-                        op_span_cursor: last_op_span_cursor,
-                        left: left_expr,
-                        right: right_expr,
-                    })),
-                );
+                let combined_expr =
+                    self.combine_exprs(last_op, last_op_span_cursor, left_expr, right_expr);
 
-                expr_stack.push(combined_expr);
+                expr_stack.push(IntermediateExpr::Normal(combined_expr));
             }
 
             // Push the current operator and the right-hand expression onto the stacks
@@ -1025,24 +1076,63 @@ impl<'a> ASTValidator<'a> {
         // Apply remaining operators in the stack
         while let Some((last_op, last_op_span_cursor)) = ops_stack.pop() {
             let right_expr = expr_stack.pop().unwrap();
-            let left_expr = expr_stack.pop().unwrap();
 
-            // Combine left and right expressions using the remaining operators
-            let combined_expr = self.new_expr(
-                self.get_expr_merged_span(left_expr, right_expr),
-                nazmc_ast::ExprKind::BinaryOp(Box::new(nazmc_ast::BinaryOpExpr {
-                    op: last_op,
-                    op_span_cursor: last_op_span_cursor,
-                    left: left_expr,
-                    right: right_expr,
-                })),
-            );
+            let IntermediateExpr::Normal(left_expr) = expr_stack.pop().unwrap() else {
+                unreachable!()
+            };
 
-            expr_stack.push(combined_expr);
+            // Combine left and right expressions using the last operator
+            let combined_expr =
+                self.combine_exprs(last_op, last_op_span_cursor, left_expr, right_expr);
+
+            expr_stack.push(IntermediateExpr::Normal(combined_expr));
         }
 
         // Return the final expression
-        expr_stack.pop().unwrap()
+        match expr_stack.pop().unwrap() {
+            IntermediateExpr::Normal(expr_key) => expr_key,
+            _ => unreachable!(),
+        }
+    }
+
+    fn combine_exprs(
+        &mut self,
+        last_op: IntermediateBinOp,
+        last_op_span_cursor: SpanCursor,
+        left_expr: nazmc_ast::ExprKey,
+        right_expr: IntermediateExpr,
+    ) -> nazmc_ast::ExprKey {
+        match right_expr {
+            IntermediateExpr::InferredType(span) => self.new_expr(
+                self.get_expr_span(left_expr).merged_with(&span),
+                nazmc_ast::ExprKind::Cast(Box::new(nazmc_ast::CastExpr {
+                    expr: left_expr,
+                    typ: None,
+                })),
+            ),
+            IntermediateExpr::Type(type_expr_key) => self.new_expr(
+                self.get_expr_span(left_expr)
+                    .merged_with(&self.ast.get_type_expr_span(type_expr_key)),
+                nazmc_ast::ExprKind::Cast(Box::new(nazmc_ast::CastExpr {
+                    expr: left_expr,
+                    typ: Some(type_expr_key),
+                })),
+            ),
+            IntermediateExpr::Normal(right_expr) => {
+                let IntermediateBinOp::Normal(op) = last_op else {
+                    unreachable!()
+                };
+                self.new_expr(
+                    self.get_expr_merged_span(left_expr, right_expr),
+                    nazmc_ast::ExprKind::BinaryOp(Box::new(nazmc_ast::BinaryOpExpr {
+                        op,
+                        op_span_cursor: last_op_span_cursor,
+                        left: left_expr,
+                        right: right_expr,
+                    })),
+                )
+            }
+        }
     }
 
     fn lower_primary_expr(&mut self, primary_expr: PrimaryExpr) -> nazmc_ast::ExprKey {
@@ -1740,40 +1830,6 @@ impl<'a> ASTValidator<'a> {
 }
 
 #[inline]
-fn get_precendence(op: &nazmc_ast::BinOp) -> u8 {
-    match op {
-        nazmc_ast::BinOp::Assign
-        | nazmc_ast::BinOp::PlusAssign
-        | nazmc_ast::BinOp::MinusAssign
-        | nazmc_ast::BinOp::TimesAssign
-        | nazmc_ast::BinOp::DivAssign
-        | nazmc_ast::BinOp::ModAssign
-        | nazmc_ast::BinOp::BAndAssign
-        | nazmc_ast::BinOp::BOrAssign
-        | nazmc_ast::BinOp::XorAssign
-        | nazmc_ast::BinOp::ShlAssign
-        | nazmc_ast::BinOp::ShrAssign => 0, // Assignments have the lowest precedence
-        nazmc_ast::BinOp::LOr => 1,
-        nazmc_ast::BinOp::LAnd => 2,
-        nazmc_ast::BinOp::EqualEqual | nazmc_ast::BinOp::NotEqual => 3,
-        nazmc_ast::BinOp::GE
-        | nazmc_ast::BinOp::GT
-        | nazmc_ast::BinOp::LE
-        | nazmc_ast::BinOp::LT => 4,
-        nazmc_ast::BinOp::OpenOpenRange
-        | nazmc_ast::BinOp::CloseOpenRange
-        | nazmc_ast::BinOp::OpenCloseRange
-        | nazmc_ast::BinOp::CloseCloseRange => 5,
-        nazmc_ast::BinOp::BOr => 6,
-        nazmc_ast::BinOp::Xor => 7,
-        nazmc_ast::BinOp::BAnd => 8,
-        nazmc_ast::BinOp::Shl | nazmc_ast::BinOp::Shr => 9,
-        nazmc_ast::BinOp::Plus | nazmc_ast::BinOp::Minus => 10,
-        nazmc_ast::BinOp::Times | nazmc_ast::BinOp::Div | nazmc_ast::BinOp::Mod => 11,
-    }
-}
-
-#[inline]
 fn lower_bin_op(op: BinOpToken) -> nazmc_ast::BinOp {
     match op {
         BinOpToken::LOr => nazmc_ast::BinOp::LOr,
@@ -1896,4 +1952,15 @@ fn get_if_expr_span(if_expr: &IfExpr) -> Span {
     };
 
     if_expr.if_keyword.span.merged_with(span_end)
+}
+
+enum IntermediateBinOp {
+    As,
+    Normal(nazmc_ast::BinOp),
+}
+
+enum IntermediateExpr {
+    InferredType(Span),
+    Type(nazmc_ast::TypeExprKey),
+    Normal(nazmc_ast::ExprKey),
 }

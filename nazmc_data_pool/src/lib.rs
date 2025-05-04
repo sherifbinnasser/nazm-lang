@@ -135,23 +135,24 @@ impl IdKey {
     pub const EMPTY: Self = Self(0);
     pub const UNIT: Self = Self(1); // "()"
     pub const MAIN: Self = Self(2); // "البداية"
-    pub const IMPLICIT_LAMBDA_PARAM: Self = Self(3); // "س"
-    pub const I_TYPE: Self = Self(4); // "ص"
-    pub const I1_TYPE: Self = Self(5); // "1ص"
-    pub const I2_TYPE: Self = Self(6); // "2ص"
-    pub const I4_TYPE: Self = Self(7); // "4ص"
-    pub const I8_TYPE: Self = Self(8); // "8ص"
-    pub const U_TYPE: Self = Self(9); // "ط"
-    pub const U1_TYPE: Self = Self(10); // "1ط"
-    pub const U2_TYPE: Self = Self(11); // "2ط"
-    pub const U4_TYPE: Self = Self(12); // "4ط"
-    pub const U8_TYPE: Self = Self(13); // "8ط"
-    pub const F4_TYPE: Self = Self(14); // "4ع"
-    pub const F8_TYPE: Self = Self(15); // "ع8"
-    pub const BOOL_TYPE: Self = Self(16); // "شرط"
-    pub const CHAR_TYPE: Self = Self(17); // "حرف"
-    pub const SLICE_PTR_FIELD: Self = Self(18); // "مؤشر"
-    pub const SLICE_LEN_FIELD: Self = Self(19); // "طول"
+    pub const UNDERSCORE: Self = Self(3); // "_"
+    pub const IMPLICIT_LAMBDA_PARAM: Self = Self(4); // "س"
+    pub const I_TYPE: Self = Self(5); // "ص"
+    pub const I1_TYPE: Self = Self(6); // "1ص"
+    pub const I2_TYPE: Self = Self(7); // "2ص"
+    pub const I4_TYPE: Self = Self(8); // "4ص"
+    pub const I8_TYPE: Self = Self(9); // "8ص"
+    pub const U_TYPE: Self = Self(10); // "ط"
+    pub const U1_TYPE: Self = Self(11); // "1ط"
+    pub const U2_TYPE: Self = Self(12); // "2ط"
+    pub const U4_TYPE: Self = Self(13); // "4ط"
+    pub const U8_TYPE: Self = Self(14); // "8ط"
+    pub const F4_TYPE: Self = Self(15); // "4ع"
+    pub const F8_TYPE: Self = Self(16); // "ع8"
+    pub const BOOL_TYPE: Self = Self(17); // "شرط"
+    pub const CHAR_TYPE: Self = Self(18); // "حرف"
+    pub const SLICE_PTR_FIELD: Self = Self(19); // "مؤشر"
+    pub const SLICE_LEN_FIELD: Self = Self(20); // "طول"
 }
 
 impl IdPoolBuilder {
@@ -159,6 +160,7 @@ impl IdPoolBuilder {
         self.get_key(&"".to_string());
         self.get_key(&"()".to_string());
         self.get_key(&"البداية".to_string());
+        self.get_key(&"_".to_string());
         self.get_key(&"س".to_string());
 
         self.get_key(&"ص".to_string());
