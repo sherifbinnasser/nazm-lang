@@ -31,8 +31,7 @@ pub(crate) enum PathSegInImportStm {
 
 #[derive(NazmcParse, Debug)]
 pub(crate) struct ImportAlias {
-    /// TODO: Change the keyword
-    pub(crate) on: OnKeyword,
+    pub(crate) as_keyword: AsKeyword,
     pub(crate) id: ParseResult<Id>,
 }
 

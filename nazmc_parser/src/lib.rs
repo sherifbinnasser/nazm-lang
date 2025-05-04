@@ -444,7 +444,7 @@ impl<'a> ParseErrorsReporter<'a> {
             if last_star_symbol_span.is_some() {
                 self.report(
                     "يُتوقع فاصلة منقوطة `؛`، ولكن تم العثور على `على`".to_string(),
-                    alias.on.span,
+                    alias.as_keyword.span,
                     "رمز غير متوقع".to_string(),
                     vec![],
                 );
