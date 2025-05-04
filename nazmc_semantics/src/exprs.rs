@@ -267,6 +267,7 @@ impl<'a> SemanticsAnalyzer<'a> {
             })) => (*underlying_typ, true),
             Type::Concrete(ConcreteType::Composite(
                 CompositeType::Slice(underlying_ty)
+                | CompositeType::SliceMut(underlying_ty)
                 | CompositeType::Ptr(underlying_ty)
                 | CompositeType::PtrMut(underlying_ty),
             )) => (*underlying_ty, false),

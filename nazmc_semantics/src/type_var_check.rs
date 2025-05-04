@@ -230,9 +230,41 @@ impl<'a> SemanticsAnalyzer<'a> {
                 self.check_expr_ty_vars(field_expr.on);
                 ExprKind::Field(field_expr)
             }
-            ExprKind::Idx(idx_expr) => {
+            ExprKind::Idx(mut idx_expr) => {
                 self.check_expr_ty_vars(idx_expr.on);
                 self.check_expr_ty_vars(idx_expr.idx);
+
+                if let Type::Concrete(ConcreteType::Composite(
+                    slice_ty @ (CompositeType::Slice(typ) | CompositeType::SliceMut(typ)),
+                )) = &self.typed_ast.exprs[&idx_expr.on]
+                {
+                    let on_span = self.get_expr_span(idx_expr.on);
+                    let ptr_field_expr = Box::new(FieldExpr {
+                        on: idx_expr.on,
+                        name: ASTId {
+                            span: on_span,
+                            id: IdKey::SLICE_PTR_FIELD,
+                        },
+                    });
+                    let new_on_expr = Expr {
+                        span: self.get_expr_span(idx_expr.on),
+                        kind: ExprKind::Field(ptr_field_expr),
+                    };
+                    let new_on_expr = self.ast.exprs.push_and_get_key(new_on_expr);
+                    let new_on_expr_ty = if let CompositeType::SliceMut(_) = slice_ty {
+                        CompositeType::PtrMut(typ.clone())
+                    } else {
+                        CompositeType::Ptr(typ.clone())
+                    };
+
+                    self.typed_ast.exprs.insert(
+                        new_on_expr,
+                        Type::Concrete(ConcreteType::Composite(new_on_expr_ty)),
+                    );
+
+                    idx_expr.on = new_on_expr;
+                }
+
                 ExprKind::Idx(idx_expr)
             }
             ExprKind::TupleIdx(tuple_idx_expr) => {
