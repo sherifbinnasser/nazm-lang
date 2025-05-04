@@ -1425,7 +1425,8 @@ impl<'a> SemanticsAnalyzer<'a> {
             }),
             (ptr_matches!(), ptr_matches!()) => Some(PtrToPtr),
             (Slice(type_key1) | MutSlice(type_key1), Slice(type_key2) | MutSlice(type_key2))
-                if ptr_matches!(*type_key1) && ptr_matches!(*type_key2) =>
+                if type_key1 == type_key2
+                    || ptr_matches!(*type_key1) && ptr_matches!(*type_key2) =>
             {
                 Some(PtrToPtr)
             }

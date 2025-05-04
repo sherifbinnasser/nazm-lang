@@ -42,8 +42,8 @@ impl<'a> SemanticsAnalyzer<'a> {
                 ExprKind::Struct(struct_expr),
             ),
             ExprKind::If(if_expr) => (self.infer_if_expr(&if_expr), ExprKind::If(if_expr)),
-            ExprKind::Field(field_expr) => (
-                self.infer_field_expr(&field_expr),
+            ExprKind::Field(mut field_expr) => (
+                self.infer_field_expr(&mut field_expr),
                 ExprKind::Field(field_expr),
             ),
             ExprKind::Lambda(lambda_expr) => (
@@ -524,25 +524,25 @@ impl<'a> SemanticsAnalyzer<'a> {
         if_ty
     }
 
-    fn infer_field_expr(&mut self, FieldExpr { on, name }: &FieldExpr) -> Type {
-        let on = *on;
-
-        let on_expr_ty = self.infer(on);
+    fn infer_field_expr(&mut self, FieldExpr { on, name }: &mut FieldExpr) -> Type {
+        let on_expr_ty = self.infer(*on);
         let on_expr_ty = self.type_inf_ctx.apply(&on_expr_ty);
 
-        // TODO: Support methods and the length method on slices
-        match on_expr_ty {
-            Type::Concrete(ConcreteType::Struct(struct_key)) => {
-                let struct_fields = &self.typed_ast.structs[&struct_key].fields;
-                if let Some(FieldInfo { typ, idx }) = struct_fields.get(&name.id) {
-                    let ty = typ.clone();
-                    self.check_field_is_accessible_in_current_file(struct_key, *idx, name.span);
-                    ty
-                } else {
-                    self.add_unknown_field_in_struct_expr_err(struct_key, name.id, name.span);
-                    self.type_inf_ctx.new_never_ty_var()
-                }
+        let mut check_on_struct = |struct_key: StructKey| {
+            let struct_fields = &self.typed_ast.structs[&struct_key].fields;
+            if let Some(FieldInfo { typ, idx }) = struct_fields.get(&name.id) {
+                let ty = typ.clone();
+                self.check_field_is_accessible_in_current_file(struct_key, *idx, name.span);
+                ty
+            } else {
+                self.add_unknown_field_in_struct_expr_err(struct_key, name.id, name.span);
+                self.type_inf_ctx.new_never_ty_var()
             }
+        };
+
+        // TODO: Support methods
+        match on_expr_ty {
+            Type::Concrete(ConcreteType::Struct(struct_key)) => check_on_struct(struct_key),
             Type::Concrete(ConcreteType::Composite(CompositeType::Slice(ref inner_ty))) => {
                 if name.id == IdKey::SLICE_PTR_FIELD {
                     Type::ptr(*inner_ty.clone())
@@ -563,8 +563,31 @@ impl<'a> SemanticsAnalyzer<'a> {
                     self.type_inf_ctx.new_never_ty_var()
                 }
             }
+            Type::Concrete(ConcreteType::Composite(
+                CompositeType::PtrMut(ref inner_ty) | CompositeType::Ptr(ref inner_ty),
+            )) => {
+                if let ty @ Type::Concrete(ConcreteType::Struct(struct_key)) = &**inner_ty {
+                    let field_ty = check_on_struct(*struct_key);
+                    let span = self.get_expr_span(*on);
+                    let deref_expr = ExprKind::UnaryOp(Box::new(UnaryOpExpr {
+                        op: UnaryOp::Deref,
+                        op_span: span,
+                        expr: *on,
+                    }));
+                    let deref_expr_key = self.ast.exprs.push_and_get_key(Expr {
+                        span,
+                        kind: deref_expr,
+                    });
+                    self.typed_ast.exprs.insert(deref_expr_key, ty.clone());
+                    *on = deref_expr_key;
+                    field_ty
+                } else {
+                    self.add_type_doesnt_have_fields_err(&on_expr_ty, *on, *name);
+                    self.type_inf_ctx.new_never_ty_var()
+                }
+            }
             _ => {
-                self.add_type_doesnt_have_fields_err(&on_expr_ty, on, *name);
+                self.add_type_doesnt_have_fields_err(&on_expr_ty, *on, *name);
                 self.type_inf_ctx.new_never_ty_var()
             }
         }
