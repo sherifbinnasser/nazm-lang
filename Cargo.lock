@@ -227,6 +227,7 @@ dependencies = [
  "nazmc_diagnostics",
  "nazmc_lexer",
  "nazmc_nir",
+ "nazmc_nir_interpreter",
  "nazmc_parser",
  "nazmc_resolve",
  "nazmc_semantics",
@@ -304,6 +305,13 @@ dependencies = [
  "nazmc_diagnostics",
  "qbe",
  "thin-vec",
+]
+
+[[package]]
+name = "nazmc_nir_interpreter"
+version = "0.1.0"
+dependencies = [
+ "nazmc_nir",
 ]
 
 [[package]]

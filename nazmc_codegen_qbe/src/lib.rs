@@ -465,7 +465,6 @@ impl<'a> QbeCodegen<'a> {
                 qbe_bb.add_instr(qbe::Instr::Store(qbe_typ, qbe_ptr, qbe_temp));
             }
             LValueKind::MutField { on, idx: field_id } => todo!(),
-            LValueKind::MutTupleIdx { on, idx } => todo!(),
             LValueKind::MutArrayIdx { on, idx } => todo!(),
             LValueKind::MutArrayConstIdx { on, idx } => todo!(),
             _ => unreachable!(),
@@ -596,11 +595,9 @@ impl<'a> QbeCodegen<'a> {
                 self.lower_lvalue(lvalue_key, cfg, qbe_bb)
             }
             LValueKind::Field { on, idx: field_id } => todo!(),
-            LValueKind::TupleIdx { on, idx } => todo!(),
             LValueKind::ArrayIdx { on, idx } => todo!(),
             LValueKind::ArrayConstIdx { on, idx } => todo!(),
             LValueKind::MutField { on, idx: field_id } => todo!(),
-            LValueKind::MutTupleIdx { on, idx } => todo!(),
             LValueKind::MutArrayIdx { on, idx } => todo!(),
             LValueKind::MutArrayConstIdx { on, idx } => todo!(),
         }
@@ -662,11 +659,9 @@ impl<'a> QbeCodegen<'a> {
                 self.add_load_instr(type_key, qbe_ptr, qbe_bb)
             }
             LValueKind::Field { on, idx: field_id } => todo!(),
-            LValueKind::TupleIdx { on, idx } => todo!(),
             LValueKind::ArrayIdx { on, idx } => todo!(),
             LValueKind::ArrayConstIdx { on, idx } => todo!(),
             LValueKind::MutField { on, idx: field_id } => todo!(),
-            LValueKind::MutTupleIdx { on, idx } => todo!(),
             LValueKind::MutArrayIdx { on, idx } => todo!(),
             LValueKind::MutArrayConstIdx { on, idx } => todo!(),
         }

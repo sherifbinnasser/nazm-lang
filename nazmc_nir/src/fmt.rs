@@ -245,9 +245,6 @@ impl<'a> NIR<'a> {
             LValueKind::Field { on, idx } | LValueKind::MutField { on, idx } => {
                 format!("{}.{}", self.fmt_lvalue(cfg, on), idx)
             }
-            LValueKind::TupleIdx { on, idx } | LValueKind::MutTupleIdx { on, idx } => {
-                format!("{}.{}", self.fmt_lvalue(cfg, on), idx)
-            }
             LValueKind::ArrayIdx { on, idx } | LValueKind::MutArrayIdx { on, idx } => {
                 format!(
                     "{}[{}]",

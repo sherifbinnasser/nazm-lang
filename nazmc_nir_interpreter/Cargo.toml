@@ -1,0 +1,7 @@
+[package]
+name = "nazmc_nir_interpreter"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+nazmc_nir = { path = "../nazmc_nir" }

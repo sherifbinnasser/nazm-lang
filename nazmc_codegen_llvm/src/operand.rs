@@ -107,10 +107,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                 // For dereference, we already have the pointer, just use it
                 self.lower_lvalue(lvalue_key, cfg).into_pointer_value()
             }
-            LValueKind::Field { on, idx }
-            | LValueKind::MutField { on, idx }
-            | LValueKind::TupleIdx { on, idx }
-            | LValueKind::MutTupleIdx { on, idx } => {
+            LValueKind::Field { on, idx } | LValueKind::MutField { on, idx } => {
                 let type_key = cfg.lvalues[on].typ;
                 let struct_ty = self.lower_type(type_key).into_struct_type();
                 let llvm_on_ptr = self.lower_lvalue_to_ptr(on, cfg);

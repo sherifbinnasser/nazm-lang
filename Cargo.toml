@@ -16,6 +16,7 @@ nazmc_ast = { path = "nazmc_ast" }
 nazmc_resolve = { path = "nazmc_resolve" }
 nazmc_semantics = { path = "nazmc_semantics" }
 nazmc_nir = { path = "nazmc_nir" }
+nazmc_nir_interpreter = { path = "nazmc_nir_interpreter" }
 nazmc_codegen_llvm = { path = "nazmc_codegen_llvm" }
 nazmc_codegen_qbe = { path = "nazmc_codegen_qbe" }
 serde = { version = "*", features = ["derive"] }
