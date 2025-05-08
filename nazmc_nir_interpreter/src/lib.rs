@@ -156,7 +156,6 @@ impl<'a> Interpreter<'a> {
                 Stm::Return { rvalue, typ } => {
                     let value = self.evaluate_rvalue(rvalue)?;
                     self.current_frame.current_block = BasicBlockKey::END_BASIC_BLOCK;
-                    println!("Return: {:?}", value);
                     return Ok(value);
                 }
                 Stm::Drop(lvalue) => todo!(),
@@ -206,9 +205,19 @@ impl<'a> Interpreter<'a> {
 
     fn evaluate_lvalue(&mut self, lv: LValueKey) -> Result<RcValue, String> {
         let rc_value = match self.current_cfg.unwrap().lvalues[lv].kind {
-            LValueKind::Binding(binding_key) => self.current_frame.bindings[&binding_key].clone(),
-            LValueKind::Arg(arg_key) => self.current_frame.args[&arg_key].clone(),
-            LValueKind::Temp(temp_key) => self.current_frame.temps[&temp_key].clone(),
+            LValueKind::Binding(binding_key) => self
+                .current_frame
+                .bindings
+                .entry(binding_key)
+                .or_default()
+                .clone(),
+            LValueKind::Temp(temp_key) => self
+                .current_frame
+                .temps
+                .entry(temp_key)
+                .or_default()
+                .clone(),
+            LValueKind::Arg(arg_key) => self.current_frame.args[&arg_key].clone(), // Args should be provided before any fn call, so no entry
             LValueKind::Static(static_key) => todo!(),
             LValueKind::Deref(on) | LValueKind::MutDeref(on) => {
                 let on = self.evaluate_lvalue(on)?;
