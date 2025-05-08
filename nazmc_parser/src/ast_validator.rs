@@ -793,7 +793,7 @@ impl<'a> ASTValidator<'a> {
     fn lower_lambda_stms_and_return_expr(
         &mut self,
         stms: Vec<ParseResult<Stm>>,
-        return_expr: Option<Expr>,
+        mut return_expr: Option<Expr>,
         span: Span,
         is_fn_scope: bool,
     ) -> nazmc_ast::ScopeKey {
@@ -804,8 +804,9 @@ impl<'a> ASTValidator<'a> {
         let last_scope_key = self.current_scope_key;
         self.current_scope_key = self.ast.scopes.push_and_get_key(scope);
         self.ast.state.scope_events.push(ThinVec::new());
+        let stms_len = stms.len();
 
-        for stm in stms {
+        for (i, stm) in stms.into_iter().enumerate() {
             let stm = match stm.unwrap() {
                 Stm::Semicolon(_) => continue,
                 Stm::Let(let_stm) => {
@@ -847,6 +848,17 @@ impl<'a> ASTValidator<'a> {
                     }))
                 }
                 Stm::If(if_expr) => {
+                    if return_expr.is_none() && i == stms_len - 1 {
+                        return_expr = Some(Expr {
+                            left: Box::new(PrimaryExpr {
+                                kind: PrimaryExprKind::Atomic(AtomicExpr::If(if_expr)),
+                                post_ops: Default::default(),
+                                inner_access: Default::default(),
+                            }),
+                            rights: Vec::new(),
+                        });
+                        continue;
+                    }
                     let span = get_if_expr_span(&if_expr);
                     let if_expr = Box::new(self.lower_if_expr(if_expr));
                     let expr = self.new_expr(span, nazmc_ast::ExprKind::If(if_expr));

@@ -11,6 +11,7 @@ use nazmc_data_pool::{IdPoolBuilder, StrPoolBuilder};
 use nazmc_diagnostics::file_info::FileInfo;
 use nazmc_lexer::LexerIter;
 use nazmc_nir::nir_analyzer::NIRAnalyzer;
+use nazmc_nir::FnLinkage;
 use nazmc_nir_interpreter::Interpreter;
 use nazmc_parser::parse;
 use nazmc_resolve::NameResolver;
@@ -265,29 +266,6 @@ fn main() {
     }
     .analyze();
 
-    if let Some(first_cfg) = &nir
-        .fns
-        .iter()
-        .filter_map(|_fn| {
-            if let nazmc_nir::FnLinkage::Local(cfg) = &_fn.linkage {
-                Some(cfg)
-            } else {
-                None
-            }
-        })
-        .next()
-    {
-        nir.fmt_cfg(first_cfg, "CFG.dot");
-    }
-
-    let name = الاسم.unwrap_or("out".into());
-
-    // let qbe = QbeCodegen::new(nir).lower();
-    // let _ = std::fs::write(
-    //     format!("{}.ssa", الاسم.unwrap_or("out".into())),
-    //     qbe.to_string(),
-    // );
-
     let main_fn = nir
         .fns
         .iter_enumerated()
@@ -299,6 +277,18 @@ fn main() {
             }
         })
         .unwrap();
+
+    if let FnLinkage::Local(first_cfg) = &nir.fns[main_fn].linkage {
+        nir.fmt_cfg(first_cfg, "CFG.dot");
+    }
+
+    let name = الاسم.unwrap_or("out".into());
+
+    // let qbe = QbeCodegen::new(nir).lower();
+    // let _ = std::fs::write(
+    //     format!("{}.ssa", الاسم.unwrap_or("out".into())),
+    //     qbe.to_string(),
+    // );
 
     let mut interpreter = Interpreter::new(&nir);
     let ret_result = interpreter
