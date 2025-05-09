@@ -189,6 +189,7 @@ pub struct FnPtrType {
     pub is_vararg: bool,
 }
 
+#[derive(Debug)]
 pub enum Stm {
     Assign {
         lhs: LValueKey,
@@ -236,10 +237,6 @@ pub enum LValueKind {
         on: LValueKey,
         idx: u32,
     },
-    TupleIdx {
-        on: LValueKey,
-        idx: u32,
-    },
     ArrayIdx {
         on: LValueKey,
         idx: LValueKey,
@@ -252,11 +249,6 @@ pub enum LValueKind {
     MutDeref(LValueKey),
     /// Comes from a mutable lvalue
     MutField {
-        on: LValueKey,
-        idx: u32,
-    },
-    /// Comes from a mutable lvalue
-    MutTupleIdx {
         on: LValueKey,
         idx: u32,
     },

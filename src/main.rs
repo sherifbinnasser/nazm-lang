@@ -5,16 +5,20 @@ use nazmc_codegen_llvm::LLVMCodeGen;
 use nazmc_codegen_llvm::OptimizationLevel;
 use nazmc_data_pool::typed_index_collections::TiVec;
 use nazmc_data_pool::FileKey;
+use nazmc_data_pool::IdKey;
 use nazmc_data_pool::PkgKey;
 use nazmc_data_pool::{IdPoolBuilder, StrPoolBuilder};
 use nazmc_diagnostics::file_info::FileInfo;
 use nazmc_lexer::LexerIter;
 use nazmc_nir::nir_analyzer::NIRAnalyzer;
+use nazmc_nir::FnLinkage;
+use nazmc_nir_interpreter::Interpreter;
 use nazmc_parser::parse;
 use nazmc_resolve::NameResolver;
 use owo_colors::OwoColorize;
 use serde::Deserialize;
 use serde_yaml::Value;
+use std::collections::HashMap;
 use std::io;
 use std::io::Write;
 use std::{
@@ -262,18 +266,19 @@ fn main() {
     }
     .analyze();
 
-    if let Some(first_cfg) = &nir
+    let main_fn = nir
         .fns
-        .iter()
-        .filter_map(|_fn| {
-            if let nazmc_nir::FnLinkage::Local(cfg) = &_fn.linkage {
-                Some(cfg)
+        .iter_enumerated()
+        .find_map(|(fn_key, _fn)| {
+            if _fn.info.id_key == IdKey::MAIN {
+                Some(fn_key)
             } else {
                 None
             }
         })
-        .next()
-    {
+        .unwrap();
+
+    if let FnLinkage::Local(first_cfg) = &nir.fns[main_fn].linkage {
         nir.fmt_cfg(first_cfg, "CFG.dot");
     }
 
@@ -284,6 +289,17 @@ fn main() {
     //     format!("{}.ssa", الاسم.unwrap_or("out".into())),
     //     qbe.to_string(),
     // );
+
+    let mut interpreter = Interpreter::new(&nir);
+    let ret_result = interpreter
+        .execute_function(main_fn, HashMap::new())
+        .unwrap()
+        .inner();
+    if let nazmc_nir_interpreter::Value::Int(ret_value) = ret_result {
+        println!("Interpreter returned: {ret_value}");
+    } else {
+        eprintln!("Unexpected return value of interpreter: {:?}", ret_result)
+    };
 
     let llvm_ctx = LLVMCodeGen::new_ctx();
     let mut llvm_codegen =

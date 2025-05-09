@@ -403,7 +403,7 @@ impl<'a> SemanticsAnalyzer<'a> {
 
                 bindings.iter().enumerate().for_each(|(i, binding_kind)| {
                     let typ = self.nir_builder.nir.tuple_types[tuple_type_key].types[i];
-                    let tuple_idx_lvalue = LValueKind::MutTupleIdx {
+                    let tuple_idx_lvalue = LValueKind::MutField {
                         on: temp_lvalue_key,
                         idx: i as u32,
                     };
@@ -498,14 +498,12 @@ impl<'a> SemanticsAnalyzer<'a> {
             }
             LValueKind::Deref(_)
             | LValueKind::Field { .. }
-            | LValueKind::TupleIdx { .. }
             | LValueKind::ArrayIdx { .. }
             | LValueKind::ArrayConstIdx { .. } => false,
             LValueKind::Temp(_)
             | LValueKind::Static(_)
             | LValueKind::MutDeref(_)
             | LValueKind::MutField { .. }
-            | LValueKind::MutTupleIdx { .. }
             | LValueKind::MutArrayIdx { .. }
             | LValueKind::MutArrayConstIdx { .. } => true,
         }
@@ -863,12 +861,12 @@ impl<'a> SemanticsAnalyzer<'a> {
                 };
 
                 let lvalue = if self.is_mut_lvalue(lvalue_key) {
-                    LValueKind::MutTupleIdx {
+                    LValueKind::MutField {
                         on: lvalue_key,
                         idx: tuple_idx_expr.idx,
                     }
                 } else {
-                    LValueKind::TupleIdx {
+                    LValueKind::Field {
                         on: lvalue_key,
                         idx: tuple_idx_expr.idx,
                     }

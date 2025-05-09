@@ -33,6 +33,9 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                     let op = any_value_as_basic_value(op).unwrap();
                     phi.add_incoming(&[(&op, bb)])
                 }
+                self.temps
+                    .borrow_mut()
+                    .insert(temp_key, phi.as_any_value_enum());
             }
             Stm::Return { rvalue: _, typ } if self.get_type_size(*typ) == 0 => {
                 let _ = self.builder.build_return(None);
