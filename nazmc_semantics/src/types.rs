@@ -235,7 +235,7 @@ impl<'a> SemanticsAnalyzer<'a> {
     fn analyze_array(&mut self, key: ArrayTypeExprKey) -> Type {
         let underlying_typ = self.ast.types_exprs.arrays[key].underlying_typ;
         let underlying_typ = self.analyze_type_expr(underlying_typ);
-        let size_expr_scope_key = self.ast.types_exprs.arrays[key].size_expr_scope_key;
+        let size_const = self.ast.types_exprs.arrays[key].size_const;
         todo!()
     }
 
