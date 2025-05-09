@@ -112,7 +112,10 @@ impl<'a> SemanticsAnalyzer<'a> {
         let item = self.ast.state.paths_no_pkgs_exprs[path_no_pkg_key];
 
         let typ = match item {
-            Item::Const { vis: _, key } => todo!(),
+            Item::Const { vis: _, key } => {
+                self.analyze_const(key);
+                &self.typed_ast.consts[&key].typ
+            }
             Item::Static { vis: _, key } => todo!(),
             Item::Fn { vis: _, key } => &self.typed_ast.fns_signatures[&key],
             Item::LocalVar { id, key } => self
@@ -157,7 +160,10 @@ impl<'a> SemanticsAnalyzer<'a> {
         let item = self.ast.state.paths_with_pkgs_exprs[path_with_pkg_key];
 
         let typ: &Type = match item {
-            Item::Const { vis: _, key } => todo!(),
+            Item::Const { vis: _, key } => {
+                self.analyze_const(key);
+                &self.typed_ast.consts[&key].typ
+            }
             Item::Static { vis: _, key } => todo!(),
             Item::Fn { vis: _, key } => &self.typed_ast.fns_signatures[&key],
             _ => unreachable!(),

@@ -10,7 +10,7 @@ impl<'a> SemanticsAnalyzer<'a> {
         }
     }
 
-    fn analyze_const(&mut self, const_key: ConstKey) {
+    pub(crate) fn analyze_const(&mut self, const_key: ConstKey) {
         if self.typed_ast.consts.contains_key(&const_key) {
             // The const is computed already
             return;
