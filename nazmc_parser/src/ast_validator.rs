@@ -579,7 +579,7 @@ impl<'a> ASTValidator<'a> {
                         let size_typ = self.lower_type(Type::Path(Box::new(SimplePath {
                             double_colons: None,
                             top: Terminal {
-                                span,
+                                span: size_span,
                                 data: IdToken { val: IdKey::U_TYPE },
                             },
                             inners: vec![],
@@ -1490,7 +1490,7 @@ impl<'a> ASTValidator<'a> {
             let size_typ = self.lower_type(Type::Path(Box::new(SimplePath {
                 double_colons: None,
                 top: Terminal {
-                    span,
+                    span: size_span,
                     data: IdToken { val: IdKey::U_TYPE },
                 },
                 inners: vec![],

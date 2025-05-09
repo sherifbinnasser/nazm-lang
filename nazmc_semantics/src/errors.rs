@@ -207,10 +207,9 @@ impl<'a> SemanticsAnalyzer<'a> {
         &mut self,
         expected_ty: &Type,
         found_ty: &Type,
-        expected_type_expr_key: TypeExprKey,
+        expected_span: Span,
         found_span: Span,
     ) {
-        let expected_span = self.get_type_expr_span(expected_type_expr_key);
         let expected_ty = self.fmt_ty(expected_ty);
 
         let mut code_window =

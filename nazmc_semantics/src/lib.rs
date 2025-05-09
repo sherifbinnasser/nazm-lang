@@ -114,6 +114,11 @@ impl<'a> SemanticsAnalyzer<'a> {
 
         self.analyze_consts();
 
+        if !self.diagnostics.is_empty() {
+            eprint_diagnostics(self.diagnostics);
+            exit(1);
+        }
+
         for struct_key in self.ast.structs.keys() {
             self.analyze_struct(struct_key);
         }
@@ -409,7 +414,7 @@ impl<'a> SemanticsAnalyzer<'a> {
                             self.add_type_mismatch_in_let_stm_err(
                                 &let_stm_type,
                                 &expr_ty,
-                                expected_type_expr_key,
+                                self.get_type_expr_span(expected_type_expr_key),
                                 self.get_expr_span(expr_key),
                             );
                         }

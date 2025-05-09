@@ -5,6 +5,7 @@ use crate::*;
 
 impl<'a> SemanticsAnalyzer<'a> {
     pub(crate) fn analyze_consts(&mut self) {
+        println!("consts len: {}", self.ast.consts.len());
         for const_key in self.ast.consts.keys() {
             self.analyze_const(const_key);
         }
@@ -36,12 +37,16 @@ impl<'a> SemanticsAnalyzer<'a> {
             // self.current_file_key should be set to const's file key
             let current_file_key = self.current_file_key;
             self.current_file_key = at;
-            self.add_type_mismatch_in_let_stm_err(
-                &typ,
-                &scope_type,
-                self.ast.consts[const_key].typ,
-                self.ast.scopes[expr_scope_key].span,
-            );
+
+            let expected_span = self.get_type_expr_span(self.ast.consts[const_key].typ);
+            let found_span = self.ast.scopes[expr_scope_key].span;
+
+            if expected_span == found_span {
+                // Array expressions size type has the same span of the size expression, so no need to mark the type size
+                self.add_type_mismatch_err(&typ, &scope_type, expected_span);
+            } else {
+                self.add_type_mismatch_in_let_stm_err(&typ, &scope_type, expected_span, found_span);
+            }
             self.current_file_key = current_file_key;
         }
 
