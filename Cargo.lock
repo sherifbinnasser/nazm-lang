@@ -357,6 +357,7 @@ dependencies = [
  "nazmc_data_pool",
  "nazmc_diagnostics",
  "nazmc_nir",
+ "nazmc_nir_interpreter",
  "thin-vec",
 ]
 

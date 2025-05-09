@@ -3,7 +3,7 @@ use typed_ast::Struct;
 use crate::*;
 
 impl<'a> SemanticsAnalyzer<'a> {
-    fn analyze_type_expr_checked(
+    pub(crate) fn analyze_type_expr_checked(
         &mut self,
         type_expr_key: TypeExprKey,
         at: FileKey,
@@ -183,17 +183,17 @@ impl<'a> SemanticsAnalyzer<'a> {
         if self.typed_ast.structs.contains_key(&key) {
             // It is already computed
             return;
-        } else if self.semantics_stack.fields_structs.contains_key(&key) {
+        } else if self.semantics_stack.structs.contains_key(&key) {
             self.semantics_stack.is_cycle_detected = CycleDetected::Struct(key);
 
             self.typed_ast.structs.insert(key, Default::default());
 
-            self.semantics_stack.fields_structs.remove(&key);
+            self.semantics_stack.structs.remove(&key);
 
             return;
         }
 
-        self.semantics_stack.fields_structs.insert(key, ());
+        self.semantics_stack.structs.insert(key, ());
 
         let at = self.ast.structs[key].info.file_key;
         let called_from = CycleDetected::Struct(key);
@@ -210,7 +210,7 @@ impl<'a> SemanticsAnalyzer<'a> {
             fields.insert(id, typed_ast::FieldInfo { typ, idx: i as u32 });
         }
 
-        self.semantics_stack.fields_structs.remove(&key);
+        self.semantics_stack.structs.remove(&key);
 
         self.typed_ast.structs.insert(key, Struct { fields });
     }

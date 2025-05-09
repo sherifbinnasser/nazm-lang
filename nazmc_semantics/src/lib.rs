@@ -37,7 +37,7 @@ enum CycleDetected {
 #[derive(Default)]
 struct SemanticsStack {
     consts: HashMap<ConstKey, ()>,
-    fields_structs: HashMap<StructKey, ()>,
+    structs: HashMap<StructKey, ()>,
     is_cycle_detected: CycleDetected,
 }
 
@@ -111,6 +111,8 @@ impl<'a> SemanticsAnalyzer<'a> {
         // for type_expr_key in self.ast.types_exprs.all.keys() {
         //     self.analyze_type_expr(type_expr_key);
         // }
+
+        self.analyze_consts();
 
         for struct_key in self.ast.structs.keys() {
             self.analyze_struct(struct_key);

@@ -290,6 +290,8 @@ fn main() {
     //     qbe.to_string(),
     // );
 
+    /*
+
     let mut interpreter = Interpreter::new(&nir);
     let ret_result = interpreter
         .execute_function(main_fn, HashMap::new())
@@ -307,6 +309,8 @@ fn main() {
     llvm_codegen.lower();
     // llvm_codegen.optimize_module(OptimizationLevel::Default);
     llvm_codegen.print_ir();
+
+    */
 
     // let (file_path, file_content) = cli::read_file();
 
