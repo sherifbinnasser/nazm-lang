@@ -21,7 +21,7 @@ pub(crate) struct NIRBuilder<'a> {
     pub(crate) all_tuple_types: DataPoolBuilder<TupleTypeKey, TupleType>,
     pub(crate) all_lambda_types: DataPoolBuilder<LambdaTypeKey, LambdaType>,
     pub(crate) all_fn_ptr_types: DataPoolBuilder<FnPtrTypeKey, FnPtrType>,
-    pub(crate) exprs_types: TiVec<ExprKey, TypeKey>,
+    pub(crate) exprs_types: HashMap<ExprKey, TypeKey>,
     pub(crate) bindings_types: HashMap<(LetStmKey, IdKey), TypeKey>,
 }
 
@@ -283,7 +283,7 @@ impl<'a> SemanticsAnalyzer<'a> {
             let return_value = self.lower_expr(expr_key);
 
             if !is_return_expr {
-                let typ = self.nir_builder.exprs_types[expr_key];
+                let typ = self.nir_builder.exprs_types[&expr_key];
                 let rvalue = RValue::Use(return_value);
                 self.cfg_builder
                     .get_current_basic_block_mut()
@@ -314,7 +314,7 @@ impl<'a> SemanticsAnalyzer<'a> {
                     };
 
                     let expr_operand = self.lower_expr(expr_key);
-                    let typ = self.nir_builder.exprs_types[expr_key];
+                    let typ = self.nir_builder.exprs_types[&expr_key];
                     let rvalue = RValue::Use(expr_operand);
                     self.lower_assigned_bindings(let_stm_key, &binding_kind, typ, rvalue);
                 }
@@ -552,7 +552,7 @@ impl<'a> SemanticsAnalyzer<'a> {
             };
 
             let (Type::Ptr(_) | Type::MutPtr(_)) =
-                self.nir_builder.nir.types[self.nir_builder.exprs_types[unary_op_expr.expr]]
+                self.nir_builder.nir.types[self.nir_builder.exprs_types[&unary_op_expr.expr]]
             else {
                 break 'label self.lower_expr(cond_expr_key);
             };
@@ -579,7 +579,7 @@ impl<'a> SemanticsAnalyzer<'a> {
         };
 
         if let Type::Ptr(_) | Type::MutPtr(_) =
-            self.nir_builder.nir.types[self.nir_builder.exprs_types[cond_expr_key]]
+            self.nir_builder.nir.types[self.nir_builder.exprs_types[&cond_expr_key]]
         {
             let bool_type_key = TypeKey::from(0u32);
 
@@ -652,7 +652,7 @@ impl<'a> SemanticsAnalyzer<'a> {
     fn lower_expr(&mut self, expr_key: ExprKey) -> Operand {
         let expr_kind = std::mem::take(&mut self.ast.exprs[expr_key].kind);
 
-        let typ = self.nir_builder.exprs_types[expr_key];
+        let typ = self.nir_builder.exprs_types[&expr_key];
 
         let kind = match expr_kind {
             nazmc_ast::ExprKind::Unit => OperandKind::Const(Const::Unit),
@@ -752,7 +752,7 @@ impl<'a> SemanticsAnalyzer<'a> {
                     .map(|(id, expr_key)| {
                         (
                             // REVIEW: Should we cache the fields indecies
-                            self.nir_builder.nir.structs[struct_key]
+                            self.nir_builder.nir.structs[&struct_key]
                                 .fields
                                 .iter()
                                 .find_position(|f| f.id == id.id)
@@ -815,7 +815,7 @@ impl<'a> SemanticsAnalyzer<'a> {
                 let idx = match self.nir_builder.nir.types[on_typ] {
                     Type::Struct(struct_key) => {
                         // REVIEW: Should we cache fields indecies
-                        self.nir_builder.nir.structs[struct_key]
+                        self.nir_builder.nir.structs[&struct_key]
                             .fields
                             .iter()
                             .find_position(|f| f.id == field_expr.name.id)
@@ -956,7 +956,7 @@ impl<'a> SemanticsAnalyzer<'a> {
                         let rvalue = match unary_op_expr.op {
                             nazmc_ast::UnaryOp::Deref => {
                                 let operand_type_key =
-                                    self.nir_builder.exprs_types[unary_op_expr.expr];
+                                    self.nir_builder.exprs_types[&unary_op_expr.expr];
                                 let lvalue = if let Type::MutPtr(_) =
                                     self.nir_builder.nir.types[operand_type_key]
                                 {
@@ -1210,7 +1210,7 @@ impl<'a> SemanticsAnalyzer<'a> {
                 }
             }
             nazmc_ast::ExprKind::Cast(cast_expr) => {
-                let from_typ = self.nir_builder.exprs_types[cast_expr.expr];
+                let from_typ = self.nir_builder.exprs_types[&cast_expr.expr];
                 let val = self.lower_expr(cast_expr.expr);
 
                 let kind = if from_typ == typ {

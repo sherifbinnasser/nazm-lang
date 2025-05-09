@@ -93,12 +93,12 @@ impl<'a> SemanticsAnalyzer<'a> {
             },
             nir_builder: NIRBuilder {
                 nir: NIR {
-                    structs: TiVec::with_capacity(ast.structs.len()),
+                    structs: HashMap::with_capacity(ast.structs.len()),
                     statics: TiVec::with_capacity(ast.statics.len()),
                     fns: TiVec::with_capacity(ast.fns.len()),
                     ..Default::default()
                 },
-                exprs_types: TiVec::with_capacity(ast.exprs.len()),
+                exprs_types: HashMap::with_capacity(ast.exprs.len()),
                 bindings_types: HashMap::with_capacity(ast.lets.len()),
                 ..Default::default()
             },
@@ -108,6 +108,12 @@ impl<'a> SemanticsAnalyzer<'a> {
     }
 
     pub fn analyze(mut self) -> NIR<'a> {
+        // This will initialize bool type to TypeKey(0)
+        // So we can use it for if conditions and loops
+        // as we need to get the bool type in nir_builder when the condition type is a pointer
+        self.nir_builder
+            .get_unique_type(&ConcreteType::Primitive(type_infer::PrimitiveType::Bool));
+
         // for type_expr_key in self.ast.types_exprs.all.keys() {
         //     self.analyze_type_expr(type_expr_key);
         // }
@@ -132,67 +138,7 @@ impl<'a> SemanticsAnalyzer<'a> {
             exit(1);
         }
 
-        // This will initialize bool type to TypeKey(0)
-        // So we can use it for if conditions and loops
-        // as we need to get the bool type in nir_builder when the condition type is a pointer
-        self.nir_builder
-            .get_unique_type(&ConcreteType::Primitive(type_infer::PrimitiveType::Bool));
-
-        self.ast
-            .exprs
-            .iter_enumerated()
-            .for_each(|(expr_key, _expr)| {
-                let Type::Concrete(con_ty) = &self.typed_ast.exprs[&expr_key] else {
-                    unreachable!()
-                };
-                let type_key = self.nir_builder.get_unique_type(con_ty);
-                self.nir_builder.exprs_types.push(type_key);
-            });
-
-        self.typed_ast
-            .lets
-            .iter()
-            .for_each(|(let_stm_key, let_binding)| {
-                let Type::Concrete(let_ty) = &let_binding.ty else {
-                    unreachable!()
-                };
-                self.nir_builder.get_unique_type(let_ty);
-                let_binding
-                    .bindings
-                    .iter()
-                    .for_each(|(binding_id_key, binding_ty)| {
-                        let Type::Concrete(binding_ty) = &binding_ty else {
-                            unreachable!()
-                        };
-                        let binding_ty_key = self.nir_builder.get_unique_type(binding_ty);
-                        self.nir_builder
-                            .bindings_types
-                            .insert((*let_stm_key, *binding_id_key), binding_ty_key);
-                    });
-            });
-
-        self.ast
-            .structs
-            .iter_enumerated()
-            .for_each(|(struct_key, _struct)| {
-                let fields = self.ast.structs[struct_key]
-                    .fields
-                    .iter()
-                    .map(|(field_info)| {
-                        let id = field_info.id.id;
-                        let field_info = &self.typed_ast.structs[&struct_key].fields[&id];
-                        let Type::Concrete(field_typ) = &field_info.typ else {
-                            unreachable!()
-                        };
-                        let typ = self.nir_builder.get_unique_type(field_typ);
-                        Field { id, typ }
-                    })
-                    .collect();
-                self.nir_builder.nir.structs.push(Struct {
-                    info: _struct.info,
-                    fields,
-                });
-            });
+        self.prepare_building_nir();
 
         let fns_signatures = self
             .typed_ast
@@ -281,6 +227,94 @@ impl<'a> SemanticsAnalyzer<'a> {
         // TODO
     }
 
+    pub(crate) fn prepare_building_nir(&mut self) {
+        let typed_ast_exprs = std::mem::take(&mut self.typed_ast.exprs);
+
+        typed_ast_exprs.iter().for_each(|(expr_key, _expr)| {
+            if self.nir_builder.exprs_types.contains_key(&expr_key) {
+                return;
+            }
+            self.lower_expr_type_to_nir(*expr_key);
+        });
+
+        self.typed_ast.exprs = typed_ast_exprs;
+
+        let typed_ast_lets = std::mem::take(&mut self.typed_ast.lets);
+        typed_ast_lets
+            .iter()
+            .for_each(|(let_stm_key, let_binding)| {
+                if let Some(binding_id_key) = let_binding.bindings.keys().next() {
+                    let key = (*let_stm_key, *binding_id_key);
+                    // Test if it contains at least one binding for constants
+                    if self.nir_builder.bindings_types.contains_key(&key) {
+                        return;
+                    }
+                }
+
+                self.lower_let_type_to_nir(*let_stm_key, let_binding);
+            });
+
+        self.typed_ast
+            .structs
+            .iter()
+            .for_each(|(struct_key, _struct)| {
+                let nir_struct_key = nazmc_nir::StructKey(struct_key.0);
+                if self.nir_builder.nir.structs.contains_key(&nir_struct_key) {
+                    return;
+                }
+                let fields = self.ast.structs[*struct_key]
+                    .fields
+                    .iter()
+                    .map(|field_info| {
+                        let id = field_info.id.id;
+                        let field_info = &self.typed_ast.structs[&struct_key].fields[&id];
+                        let Type::Concrete(field_typ) = &field_info.typ else {
+                            unreachable!()
+                        };
+                        let typ = self.nir_builder.get_unique_type(field_typ);
+                        Field { id, typ }
+                    })
+                    .collect();
+                self.nir_builder.nir.structs.insert(
+                    nir_struct_key,
+                    Struct {
+                        info: self.ast.structs[*struct_key].info,
+                        fields,
+                    },
+                );
+            });
+    }
+
+    pub(crate) fn lower_expr_type_to_nir(&mut self, expr_key: ExprKey) {
+        let Type::Concrete(con_ty) = &self.typed_ast.exprs[&expr_key] else {
+            unreachable!()
+        };
+
+        let type_key = self.nir_builder.get_unique_type(con_ty);
+        self.nir_builder.exprs_types.insert(expr_key, type_key);
+    }
+
+    pub(crate) fn lower_let_type_to_nir(&mut self, let_stm_key: LetStmKey, let_binding: &LetStm) {
+        let Type::Concrete(let_ty) = &let_binding.ty else {
+            unreachable!()
+        };
+        self.nir_builder.get_unique_type(let_ty);
+        let_binding
+            .bindings
+            .iter()
+            .for_each(|(binding_id_key, binding_ty)| {
+                let key = (let_stm_key, *binding_id_key);
+                if self.nir_builder.bindings_types.contains_key(&key) {
+                    return;
+                }
+                let Type::Concrete(binding_ty) = &binding_ty else {
+                    unreachable!()
+                };
+                let binding_ty_key = self.nir_builder.get_unique_type(binding_ty);
+                self.nir_builder.bindings_types.insert(key, binding_ty_key);
+            });
+    }
+
     fn analyze_fn_signatures(&mut self) {
         let fns = std::mem::take(&mut self.ast.fns);
 
@@ -358,7 +392,12 @@ impl<'a> SemanticsAnalyzer<'a> {
             }
         }
 
-        self.check_scope_ty_vars(fn_scope_key);
+        self.check_and_report_unknown_type_vars(fn_scope_key);
+    }
+
+    /// Returns true if no error is reported
+    fn check_and_report_unknown_type_vars(&mut self, scope_key: ScopeKey) -> bool {
+        self.check_scope_ty_vars(scope_key);
 
         for (unknown_ty, span, first_used_span) in &self.unknown_type_errors {
             let mut code_window =
@@ -377,9 +416,12 @@ impl<'a> SemanticsAnalyzer<'a> {
             self.diagnostics.push(diagnostic);
         }
 
+        let no_err = self.unknown_type_errors.is_empty();
+
         self.unknown_ty_vars.clear();
         self.unknown_type_errors.clear();
-        // self.s.ty_vars.clear();
+
+        no_err
     }
 
     fn infer_scope(&mut self, scope_key: ScopeKey) -> Type {

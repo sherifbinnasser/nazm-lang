@@ -32,7 +32,7 @@ pub struct NIR<'a> {
     pub tuple_types: TiVec<TupleTypeKey, TupleType>,
     pub lambda_types: TiVec<LambdaTypeKey, LambdaType>,
     pub fn_ptr_types: TiVec<FnPtrTypeKey, FnPtrType>,
-    pub structs: TiVec<StructKey, Struct>,
+    pub structs: HashMap<StructKey, Struct>,
     pub statics: TiVec<StaticKey, Static>,
     pub fns: TiVec<FnKey, Fn>,
     pub files_infos: &'a TiSlice<FileKey, FileInfo>,

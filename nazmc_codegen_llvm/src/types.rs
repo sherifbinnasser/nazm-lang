@@ -243,7 +243,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             return *struct_ty;
         }
 
-        let _struct = &self.nir.structs[struct_key];
+        let _struct = &self.nir.structs[&struct_key];
         let field_types = _struct
             .fields
             .iter()

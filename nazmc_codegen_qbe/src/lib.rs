@@ -129,7 +129,7 @@ impl<'a> QbeCodegen<'a> {
                 Type::F8 => qbe::Type::Double,
                 Type::Ptr(_) | Type::MutPtr(_) | Type::FnPtr(_) => qbe::Type::Long,
                 Type::Struct(struct_key) => {
-                    let _struct = std::mem::take(&mut self.nir.structs[struct_key]);
+                    let _struct = std::mem::take(self.nir.structs.get_mut(&struct_key).unwrap());
                     let mut offset = 0;
                     let mut fields_offsets = HashMap::with_capacity(_struct.fields.len());
                     let mut items = Vec::with_capacity(_struct.fields.len());
@@ -151,7 +151,7 @@ impl<'a> QbeCodegen<'a> {
                         offset += qbe_field_type.size() as u32;
                     }
                     self.structs.insert(struct_key, fields_offsets);
-                    let name = self.fmt_item_name(self.nir.structs[struct_key].info);
+                    let name = self.fmt_item_name(self.nir.structs[&struct_key].info);
                     let type_def = qbe::TypeDef::new(name, None, items);
                     let type_def = self.module.add_type(type_def);
                     qbe::Type::Aggregate(type_def)

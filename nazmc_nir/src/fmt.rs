@@ -143,7 +143,7 @@ impl<'a> NIR<'a> {
             Type::Bool => format!("شرط"),
             Type::Char => format!("حرف"),
             Type::Struct(struct_key) => {
-                let item_info = self.structs[struct_key].info;
+                let item_info = self.structs[&struct_key].info;
                 self.fmt_item_name(item_info)
             }
             Type::Slice(type_key) => format!("[{}]", self.fmt_typ(type_key)),
@@ -285,7 +285,7 @@ impl<'a> NIR<'a> {
             }
             RValue::Struct { struct_key, fields } => format!(
                 "{} {{ {} }}",
-                self.fmt_item_name(self.structs[*struct_key].info),
+                self.fmt_item_name(self.structs[*&struct_key].info),
                 fields
                     .iter()
                     .map(|(idx, op)| format!("{}: {}", idx, self.fmt_operand(cfg, op)))
