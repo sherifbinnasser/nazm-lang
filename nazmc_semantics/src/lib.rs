@@ -410,7 +410,7 @@ impl<'a> SemanticsAnalyzer<'a> {
                                 &let_stm_type,
                                 &expr_ty,
                                 expected_type_expr_key,
-                                expr_key,
+                                self.get_expr_span(expr_key),
                             );
                         }
                     }

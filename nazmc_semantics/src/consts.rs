@@ -30,6 +30,20 @@ impl<'a> SemanticsAnalyzer<'a> {
         let called_from = CycleDetected::Const(const_key);
         let typ = self.analyze_type_expr_checked(self.ast.consts[const_key].typ, at, called_from);
         let expr_scope_key = self.ast.consts[const_key].expr_scope_key;
+        let scope_type = self.infer_scope(expr_scope_key);
+
+        if let Err(err) = self.type_inf_ctx.unify(&typ, &scope_type) {
+            // self.current_file_key should be set to const's file key
+            let current_file_key = self.current_file_key;
+            self.current_file_key = at;
+            self.add_type_mismatch_in_let_stm_err(
+                &typ,
+                &scope_type,
+                self.ast.consts[const_key].typ,
+                self.ast.scopes[expr_scope_key].span,
+            );
+            self.current_file_key = current_file_key;
+        }
 
         self.semantics_stack.consts.remove(&const_key);
         self.typed_ast.consts.insert(
