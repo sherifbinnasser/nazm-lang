@@ -588,6 +588,7 @@ impl<'a> QbeCodegen<'a> {
         match cfg.lvalues[lvalue_key].kind {
             LValueKind::Binding(binding_key) => self.bindings[binding_key].clone(),
             LValueKind::Static(static_key) => self.statics[static_key].clone(),
+            LValueKind::Const(const_key) => todo!(),
             LValueKind::Arg(arg_key) => self.args[&arg_key].clone(),
             LValueKind::Temp(temp_key) => self.temps[temp_key].clone(),
             LValueKind::Deref(lvalue_key) | LValueKind::MutDeref(lvalue_key) => {
@@ -646,6 +647,7 @@ impl<'a> QbeCodegen<'a> {
     ) -> qbe::Value {
         match cfg.lvalues[lvalue_key].kind {
             LValueKind::Static(static_key) => self.statics[static_key].clone(),
+            LValueKind::Const(static_key) => todo!(),
             LValueKind::Arg(arg_key) => self.args[&arg_key].clone(),
             LValueKind::Temp(temp_key) => self.temps[temp_key].clone(),
             LValueKind::Binding(binding_key) => {

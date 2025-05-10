@@ -1,4 +1,4 @@
-use nazmc_nir_interpreter::RcValue;
+use nazmc_nir::RcValue;
 
 use crate::*;
 
@@ -40,7 +40,6 @@ pub struct FnPtrType {
 #[derive(Default)]
 pub struct Const {
     pub typ: Type,
-    pub value: RcValue,
 }
 
 pub struct Static {

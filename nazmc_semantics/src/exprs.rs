@@ -29,6 +29,10 @@ impl<'a> SemanticsAnalyzer<'a> {
                 (self.infer_call_expr(&call_expr), ExprKind::Call(call_expr))
             }
             ExprKind::Idx(idx_expr) => (self.infer_idx_expr(&idx_expr), ExprKind::Idx(idx_expr)),
+            ExprKind::ArrayRepeated(array_repeated_expr) => (
+                self.infer_array_repeated(&array_repeated_expr),
+                ExprKind::ArrayRepeated(array_repeated_expr),
+            ),
             ExprKind::ArrayElements(elements) => (
                 self.infer_array_elements(&elements),
                 ExprKind::ArrayElements(elements),
@@ -50,7 +54,6 @@ impl<'a> SemanticsAnalyzer<'a> {
                 self.infer_lambda_expr(&lambda_expr),
                 ExprKind::Lambda(lambda_expr),
             ),
-            ExprKind::ArrayRepeated(_) => todo!(),
             ExprKind::On => todo!(),
             ExprKind::UnaryOp(unary_op_expr) => (
                 self.infer_unary_op_expr(&unary_op_expr),
@@ -292,6 +295,22 @@ impl<'a> SemanticsAnalyzer<'a> {
         }
 
         underlying_ty
+    }
+
+    fn infer_array_repeated(&mut self, array_repeated_expr: &ArrayRepeatedExpr) -> Type {
+        let size_const = array_repeated_expr.size_const;
+        let underlying_typ = self.infer(array_repeated_expr.repeat);
+        self.analyze_const(size_const);
+        let size = if let nazmc_nir::Value::UInt(size) = self.nir_builder.nir.consts
+            [&nazmc_nir::ConstKey(size_const.0)]
+            .value
+            .inner()
+        {
+            size as u32
+        } else {
+            0
+        };
+        Type::array(underlying_typ, size)
     }
 
     fn infer_array_elements(&mut self, elements: &ThinVec<ExprKey>) -> Type {

@@ -1,4 +1,4 @@
-use nazmc_nir_interpreter::RcValue;
+use nazmc_nir::RcValue;
 use typed_ast::Const;
 
 use crate::*;
@@ -8,11 +8,9 @@ impl<'a> SemanticsAnalyzer<'a> {
         for const_key in self.ast.consts.keys() {
             self.analyze_const(const_key);
         }
-        for const_key in self.ast.consts.keys() {
-            println!(
-                "const{} = {:?}",
-                const_key.0, self.typed_ast.consts[&const_key].value
-            );
+
+        for (const_key, cnst) in &self.nir_builder.nir.consts {
+            println!("const{} = {:?}", const_key.0, cnst.value);
         }
     }
 
@@ -59,17 +57,16 @@ impl<'a> SemanticsAnalyzer<'a> {
             }
         }
 
+        let mut type_key = nazmc_nir::TypeKey::default();
+
         let value = if self.check_unkown_ty_vars_and_lower_to_nir(expr_scope_key) {
             self.nir_builder.build_types();
             let mut cfg = self.lower_scope_to_cfg(expr_scope_key);
 
-            let const_typ_key =
+            type_key =
                 self.nir_builder.exprs_types[&self.ast.scopes[expr_scope_key].return_expr.unwrap()];
 
-            let is_unit = matches!(
-                self.nir_builder.nir.types[const_typ_key],
-                nazmc_nir::Type::Unit
-            );
+            let is_unit = matches!(self.nir_builder.nir.types[type_key], nazmc_nir::Type::Unit);
 
             self.analyze_const_cfg(is_unit, &mut cfg, const_key);
 
@@ -92,9 +89,15 @@ impl<'a> SemanticsAnalyzer<'a> {
         self.current_file_key = current_file_key;
         self.semantics_stack.consts.remove(&const_key);
 
-        self.typed_ast
-            .consts
-            .insert(const_key, Const { typ, value });
+        self.typed_ast.consts.insert(const_key, Const { typ });
+        self.nir_builder.nir.consts.insert(
+            nazmc_nir::ConstKey(const_key.0),
+            nazmc_nir::NamedConst {
+                info: self.ast.consts[const_key].info,
+                typ: type_key,
+                value,
+            },
+        );
     }
 
     fn analyze_const_cfg(&mut self, is_unit_typ: bool, cfg: &mut CFG, const_key: ConstKey) {

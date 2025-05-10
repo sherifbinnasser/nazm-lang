@@ -509,7 +509,8 @@ impl<'a> SemanticsAnalyzer<'a> {
                 let fn_key = FnKey::from(usize::from(self.current_fn_key));
                 self.nir_builder.nir.fns[fn_key].args[*arg_key].is_mut
             }
-            LValueKind::Deref(_)
+            LValueKind::Const(_)
+            | LValueKind::Deref(_)
             | LValueKind::Field { .. }
             | LValueKind::ArrayIdx { .. }
             | LValueKind::ArrayConstIdx { .. } => false,
@@ -700,7 +701,11 @@ impl<'a> SemanticsAnalyzer<'a> {
                 let item = self.ast.state.paths_no_pkgs_exprs[path_no_pkg_key];
 
                 match item {
-                    nazmc_ast::Item::Const { vis, key } => todo!(),
+                    nazmc_ast::Item::Const { vis, key } => {
+                        let const_key = nazmc_nir::ConstKey(key.0);
+                        let lvalue_key = self.get_lvalue_key(LValueKind::Const(const_key), typ);
+                        OperandKind::LValue(lvalue_key)
+                    }
                     nazmc_ast::Item::Static { vis, key } => {
                         let static_key = StaticKey::from(usize::from(key));
                         let lvalue_key = self.get_lvalue_key(LValueKind::Static(static_key), typ);
@@ -728,7 +733,11 @@ impl<'a> SemanticsAnalyzer<'a> {
                 let item = self.ast.state.paths_with_pkgs_exprs[path_with_pkg_key];
 
                 match item {
-                    nazmc_ast::Item::Const { vis, key } => todo!(),
+                    nazmc_ast::Item::Const { vis, key } => {
+                        let const_key = nazmc_nir::ConstKey(key.0);
+                        let lvalue_key = self.get_lvalue_key(LValueKind::Const(const_key), typ);
+                        OperandKind::LValue(lvalue_key)
+                    }
                     nazmc_ast::Item::Static { vis, key } => {
                         let static_key = StaticKey::from(usize::from(key));
                         let lvalue_key = self.get_lvalue_key(LValueKind::Static(static_key), typ);

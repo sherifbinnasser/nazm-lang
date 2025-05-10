@@ -285,6 +285,10 @@ impl<'a> SemanticsAnalyzer<'a> {
 
                 ExprKind::ArrayElements(elements)
             }
+            ExprKind::ArrayRepeated(array_repeated_expr) => {
+                self.check_expr_ty_vars(array_repeated_expr.repeat);
+                ExprKind::ArrayRepeated(array_repeated_expr)
+            }
             ExprKind::If(if_expr) => {
                 self.check_expr_ty_vars(if_expr.if_.1);
                 self.check_scope_ty_vars(if_expr.if_.2);
@@ -454,7 +458,6 @@ impl<'a> SemanticsAnalyzer<'a> {
 
                 return;
             }
-            ExprKind::ArrayRepeated(_) => todo!(),
             ExprKind::On => todo!(),
             kind @ _ => kind,
         };

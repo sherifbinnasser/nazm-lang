@@ -238,6 +238,7 @@ impl<'a> NIR<'a> {
             LValueKind::Binding(binding_key) => format!("VAR_{}", binding_key.0),
             LValueKind::Arg(arg_key) => format!("ARG_{}", arg_key.0),
             LValueKind::Static(static_key) => format!("STATIC_{}", static_key.0),
+            LValueKind::Const(const_key) => format!("CONST_{}", const_key.0),
             LValueKind::Temp(temp_key) => format!("TEMP_{}", temp_key.0),
             LValueKind::Deref(lvalue_key) | LValueKind::MutDeref(lvalue_key) => {
                 format!("*{}", self.fmt_lvalue(cfg, lvalue_key))

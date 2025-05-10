@@ -262,7 +262,17 @@ impl<'a> SemanticsAnalyzer<'a> {
         let underlying_typ = self.ast.types_exprs.arrays[key].underlying_typ;
         let underlying_typ = self.analyze_type_expr(underlying_typ);
         let size_const = self.ast.types_exprs.arrays[key].size_const;
-        todo!()
+        self.analyze_const(size_const);
+        let size = if let nazmc_nir::Value::UInt(size) = self.nir_builder.nir.consts
+            [&nazmc_nir::ConstKey(size_const.0)]
+            .value
+            .inner()
+        {
+            size as u32
+        } else {
+            0
+        };
+        Type::array(underlying_typ, size)
     }
 
     #[inline]
