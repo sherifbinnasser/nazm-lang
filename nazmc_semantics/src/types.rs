@@ -179,25 +179,27 @@ impl<'a> SemanticsAnalyzer<'a> {
     }
 
     #[inline]
-    pub(crate) fn analyze_struct(&mut self, key: StructKey) {
-        if self.typed_ast.structs.contains_key(&key) {
+    pub(crate) fn analyze_struct(&mut self, struct_key: StructKey) {
+        if self.typed_ast.structs.contains_key(&struct_key) {
             // It is already computed
             return;
-        } else if self.semantics_stack.structs.contains_key(&key) {
-            self.semantics_stack.is_cycle_detected = CycleDetected::Struct(key);
+        } else if self.semantics_stack.structs.contains_key(&struct_key) {
+            self.semantics_stack.is_cycle_detected = CycleDetected::Struct(struct_key);
 
-            self.typed_ast.structs.insert(key, Default::default());
+            self.typed_ast
+                .structs
+                .insert(struct_key, Default::default());
 
-            self.semantics_stack.structs.remove(&key);
+            self.semantics_stack.structs.remove(&struct_key);
 
             return;
         }
 
-        self.semantics_stack.structs.insert(key, ());
+        self.semantics_stack.structs.insert(struct_key, ());
 
-        let at = self.ast.structs[key].info.file_key;
-        let called_from = CycleDetected::Struct(key);
-        let fields_len = self.ast.structs[key].fields.len();
+        let at = self.ast.structs[struct_key].info.file_key;
+        let called_from = CycleDetected::Struct(struct_key);
+        let fields_len = self.ast.structs[struct_key].fields.len();
         let mut fields = HashMap::with_capacity(fields_len);
 
         for i in 0..fields_len {
@@ -205,14 +207,38 @@ impl<'a> SemanticsAnalyzer<'a> {
                 vis: _,
                 id: ASTId { span: _, id },
                 typ,
-            } = self.ast.structs[key].fields[i];
+            } = self.ast.structs[struct_key].fields[i];
             let typ = self.analyze_type_expr_checked(typ, at, called_from);
             fields.insert(id, typed_ast::FieldInfo { typ, idx: i as u32 });
         }
 
-        self.semantics_stack.structs.remove(&key);
+        self.semantics_stack.structs.remove(&struct_key);
 
-        self.typed_ast.structs.insert(key, Struct { fields });
+        self.typed_ast.structs.insert(struct_key, Struct { fields });
+
+        // Lower struct tyo NIR
+
+        let nir_struct_key = nazmc_nir::StructKey(struct_key.0);
+        let fields = self.ast.structs[struct_key]
+            .fields
+            .iter()
+            .map(|field_info| {
+                let id = field_info.id.id;
+                let field_info = &self.typed_ast.structs[&struct_key].fields[&id];
+                let Type::Concrete(field_typ) = &field_info.typ else {
+                    unreachable!()
+                };
+                let typ = self.nir_builder.get_unique_type(field_typ);
+                Field { id, typ }
+            })
+            .collect();
+        self.nir_builder.nir.structs.insert(
+            nir_struct_key,
+            nazmc_nir::Struct {
+                info: self.ast.structs[struct_key].info,
+                fields,
+            },
+        );
     }
 
     #[inline]
