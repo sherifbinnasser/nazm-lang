@@ -5,16 +5,13 @@ use nazmc_diagnostics::{eprint_diagnostics, CodeWindow, Diagnostic};
 
 use crate::{BasicBlockKey, FnLinkage, Stm, Type, CFG, NIR};
 
-pub struct NIRAnalyzer<'a, 'b: 'a> {
-    pub nir: &'a mut NIR<'b>,
+pub struct NIRAnalyzer<'a> {
+    pub nir: NIR<'a>,
     pub errors: Vec<Diagnostic<'a>>,
 }
 
-impl<'a, 'b> NIRAnalyzer<'a, 'b>
-where
-    'b: 'a,
-{
-    pub fn analyze(mut self) {
+impl<'a> NIRAnalyzer<'a> {
+    pub fn analyze(mut self) -> NIR<'a> {
         let mut fns = std::mem::take(&mut self.nir.fns);
         for _fn in &mut fns {
             let FnLinkage::Local(cfg) = &mut _fn.linkage else {
@@ -31,9 +28,15 @@ where
             eprint_diagnostics(self.errors);
             exit(1);
         }
+
+        self.nir
     }
 
-    fn remove_dead_code(&mut self, cfg: &mut CFG) {
+    pub fn drop(self) -> NIR<'a> {
+        self.nir
+    }
+
+    pub fn remove_dead_code(&mut self, cfg: &mut CFG) {
         loop {
             let mut remove = None;
             for (bb_key, bb) in cfg.basic_blocks.iter() {
@@ -76,7 +79,7 @@ where
         }
     }
 
-    fn check_all_paths_must_return(&mut self, cfg: &CFG, info: &ItemInfo) {
+    pub fn check_all_paths_must_return(&mut self, cfg: &CFG, info: &ItemInfo) {
         let end_block = &cfg.basic_blocks[&BasicBlockKey::END_BASIC_BLOCK];
         for incoming_branch_key in end_block.incoming.keys() {
             let incoming_branch = &cfg.branches[incoming_branch_key];

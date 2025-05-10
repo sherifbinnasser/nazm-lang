@@ -108,7 +108,7 @@ impl<'a> Interpreter<'a> {
         self.execute_cfg(&cfg, args)
     }
 
-    fn execute_cfg(
+    pub fn execute_cfg(
         &mut self,
         cfg: &'a CFG,
         args: HashMap<ArgKey, RcValue>,

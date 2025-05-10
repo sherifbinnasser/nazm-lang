@@ -245,23 +245,18 @@ fn main() {
 
     let ast = NameResolver::new(&files_infos, &id_pool, &pkgs.map, &pkgs_names, ast).resolve();
 
-    let mut nir = nazmc_semantics::SemanticsAnalyzer::new(
+    let nir = nazmc_semantics::SemanticsAnalyzer::new(
         &files_infos,
         &files_to_pkgs,
         &id_pool,
         &pkgs_names,
+        str_pool.build(),
         ast,
     )
     .analyze();
 
-    nir.files_infos = &files_infos;
-    nir.files_to_pkgs = &files_to_pkgs;
-    nir.pkgs_names = &pkgs_names;
-    nir.id_pool = &id_pool;
-    nir.str_pool = str_pool.build();
-
-    NIRAnalyzer {
-        nir: &mut nir,
+    let nir = NIRAnalyzer {
+        nir,
         errors: Vec::new(),
     }
     .analyze();

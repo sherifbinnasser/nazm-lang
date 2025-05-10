@@ -9,7 +9,7 @@ mod types;
 
 use nazmc_data_pool::{
     typed_index_collections::{TiSlice, TiVec},
-    FileKey, IdKey, PkgKey,
+    FileKey, IdKey, PkgKey, StrKey,
 };
 
 pub(crate) use nazmc_ast::*;
@@ -75,6 +75,7 @@ impl<'a> SemanticsAnalyzer<'a> {
         files_to_pkgs: &'a TiSlice<FileKey, PkgKey>,
         id_pool: &'a TiSlice<IdKey, String>,
         pkgs_names: &'a TiSlice<PkgKey, &'a ThinVec<IdKey>>,
+        str_pool: TiVec<StrKey, String>,
         ast: nazmc_ast::AST<Resolved>,
     ) -> Self {
         Self {
@@ -96,6 +97,11 @@ impl<'a> SemanticsAnalyzer<'a> {
                     structs: HashMap::with_capacity(ast.structs.len()),
                     statics: TiVec::with_capacity(ast.statics.len()),
                     fns: TiVec::with_capacity(ast.fns.len()),
+                    files_infos,
+                    files_to_pkgs,
+                    pkgs_names,
+                    id_pool,
+                    str_pool,
                     ..Default::default()
                 },
                 exprs_types: HashMap::with_capacity(ast.exprs.len()),
@@ -108,6 +114,8 @@ impl<'a> SemanticsAnalyzer<'a> {
     }
 
     pub fn analyze(mut self) -> NIR<'a> {
+        self.cfg_builder.build(); // To init first cfg start and end blocks
+
         // This will initialize bool type to TypeKey(0)
         // So we can use it for if conditions and loops
         // as we need to get the bool type in nir_builder when the condition type is a pointer
@@ -153,7 +161,6 @@ impl<'a> SemanticsAnalyzer<'a> {
         self.nir_builder.build_types();
 
         let fns = std::mem::take(&mut self.ast.fns);
-        self.cfg_builder.build(); // To init first cfg start and end blocks
 
         fns.iter_enumerated().for_each(|(fn_key, _fn)| {
             self.current_fn_key = fn_key;
@@ -196,8 +203,7 @@ impl<'a> SemanticsAnalyzer<'a> {
                 FnLinkage::ExternWithSameId { .. } => nazmc_nir::FnLinkage::ExternWithSameId,
                 FnLinkage::Extern { name, .. } => nazmc_nir::FnLinkage::Extern(name),
                 FnLinkage::Local(scope_key) => {
-                    self.lower_fn_scope(scope_key);
-                    let cfg = self.cfg_builder.build();
+                    let cfg = self.lower_scope_to_cfg(scope_key);
                     nazmc_nir::FnLinkage::Local(Box::new(cfg))
                 }
             };

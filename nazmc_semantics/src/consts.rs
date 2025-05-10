@@ -5,9 +5,14 @@ use crate::*;
 
 impl<'a> SemanticsAnalyzer<'a> {
     pub(crate) fn analyze_consts(&mut self) {
-        println!("consts len: {}", self.ast.consts.len());
         for const_key in self.ast.consts.keys() {
             self.analyze_const(const_key);
+        }
+        for const_key in self.ast.consts.keys() {
+            println!(
+                "const{} = {:?}",
+                const_key.0, self.typed_ast.consts[&const_key].value
+            );
         }
     }
 
@@ -56,7 +61,26 @@ impl<'a> SemanticsAnalyzer<'a> {
 
         let value = if self.check_unkown_ty_vars_and_lower_to_nir(expr_scope_key) {
             self.nir_builder.build_types();
-            todo!("Interpret")
+            let mut cfg = self.lower_scope_to_cfg(expr_scope_key);
+
+            let const_typ_key =
+                self.nir_builder.exprs_types[&self.ast.scopes[expr_scope_key].return_expr.unwrap()];
+
+            let is_unit = matches!(
+                self.nir_builder.nir.types[const_typ_key],
+                nazmc_nir::Type::Unit
+            );
+
+            self.analyze_const_cfg(is_unit, &mut cfg, const_key);
+
+            if self.diagnostics.is_empty() {
+                let mut interpreter =
+                    nazmc_nir_interpreter::Interpreter::new(&self.nir_builder.nir);
+                let return_value = interpreter.execute_cfg(&cfg, HashMap::new());
+                return_value.unwrap_or_default()
+            } else {
+                RcValue::default()
+            }
         } else {
             RcValue::default()
         };
@@ -71,5 +95,27 @@ impl<'a> SemanticsAnalyzer<'a> {
         self.typed_ast
             .consts
             .insert(const_key, Const { typ, value });
+    }
+
+    fn analyze_const_cfg(&mut self, is_unit_typ: bool, cfg: &mut CFG, const_key: ConstKey) {
+        let nir = std::mem::take(&mut self.nir_builder.nir);
+        let mut analyzer = nazmc_nir::nir_analyzer::NIRAnalyzer {
+            nir,
+            errors: Vec::new(),
+        };
+
+        analyzer.remove_dead_code(cfg);
+
+        if !is_unit_typ {
+            analyzer.check_all_paths_must_return(&cfg, &self.ast.consts[const_key].info);
+        }
+
+        let errors = std::mem::take(&mut analyzer.errors);
+
+        for err in errors {
+            self.diagnostics.push(err);
+        }
+
+        self.nir_builder.nir = analyzer.drop();
     }
 }

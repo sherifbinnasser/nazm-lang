@@ -279,9 +279,10 @@ impl CFGBuilder {
 }
 
 impl<'a> SemanticsAnalyzer<'a> {
-    pub(crate) fn lower_fn_scope(&mut self, scope_key: ScopeKey) {
+    pub(crate) fn lower_scope_to_cfg(&mut self, scope_key: ScopeKey) -> CFG {
         self.lower_scope(scope_key);
         self.lower_return_expr(self.ast.scopes[scope_key].return_expr);
+        self.cfg_builder.build()
     }
 
     fn lower_return_expr(&mut self, return_expr: Option<ExprKey>) {
