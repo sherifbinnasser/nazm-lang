@@ -150,17 +150,7 @@ impl<'a> SemanticsAnalyzer<'a> {
             })
             .collect::<HashMap<_, _>>();
 
-        let all_types = std::mem::take(&mut self.nir_builder.all_types);
-        let all_tuple_types = std::mem::take(&mut self.nir_builder.all_tuple_types);
-        let all_array_types = std::mem::take(&mut self.nir_builder.all_array_types);
-        let all_lambda_types = std::mem::take(&mut self.nir_builder.all_lambda_types);
-        let all_fn_ptr_types = std::mem::take(&mut self.nir_builder.all_fn_ptr_types);
-
-        self.nir_builder.nir.types = all_types.build();
-        self.nir_builder.nir.array_types = all_array_types.build();
-        self.nir_builder.nir.tuple_types = all_tuple_types.build();
-        self.nir_builder.nir.lambda_types = all_lambda_types.build();
-        self.nir_builder.nir.fn_ptr_types = all_fn_ptr_types.build();
+        self.nir_builder.build_types();
 
         let fns = std::mem::take(&mut self.ast.fns);
         self.cfg_builder.build(); // To init first cfg start and end blocks

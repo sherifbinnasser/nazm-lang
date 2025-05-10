@@ -111,6 +111,27 @@ where
 
         data
     }
+
+    pub fn build_cloned(&self) -> TiVec<K, V> {
+        let len = self.map.len();
+
+        let mut data = TiVec::with_capacity(len);
+
+        let ptr: *mut V = data.as_mut_ptr();
+
+        for (val, index) in &self.map {
+            let val = val.clone();
+            unsafe {
+                ptr.add(*index).write(val);
+            }
+        }
+
+        unsafe {
+            data.set_len(len);
+        }
+
+        data
+    }
 }
 
 impl<K, V> Default for DataPoolBuilder<K, V>

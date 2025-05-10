@@ -55,6 +55,7 @@ impl<'a> SemanticsAnalyzer<'a> {
         }
 
         let value = if self.check_unkown_ty_vars_and_lower_to_nir(expr_scope_key) {
+            self.nir_builder.build_types();
             todo!("Interpret")
         } else {
             RcValue::default()

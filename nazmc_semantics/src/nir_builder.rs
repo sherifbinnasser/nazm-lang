@@ -26,6 +26,18 @@ pub(crate) struct NIRBuilder<'a> {
 }
 
 impl<'a> NIRBuilder<'a> {
+    pub(crate) fn build_types(&mut self) {
+        if self.all_types.map.len() <= self.nir.types.len() {
+            return;
+        }
+
+        self.nir.types = self.all_types.build_cloned();
+        self.nir.array_types = self.all_array_types.build_cloned();
+        self.nir.tuple_types = self.all_tuple_types.build_cloned();
+        self.nir.lambda_types = self.all_lambda_types.build_cloned();
+        self.nir.fn_ptr_types = self.all_fn_ptr_types.build_cloned();
+    }
+
     pub(crate) fn get_unique_type(&mut self, typ: &crate::ConcreteType) -> TypeKey {
         let typ = match typ {
             crate::ConcreteType::Composite(composite_type) => match composite_type {
