@@ -11,9 +11,9 @@ impl<'a> SemanticsAnalyzer<'a> {
             self.analyze_const(const_key, call_file, call_span);
         }
 
-        for (const_key, cnst) in &self.nir_builder.nir.consts {
-            println!("const{} = {:?}", const_key.0, cnst.value);
-        }
+        //     for (const_key, cnst) in &self.nir_builder.nir.consts {
+        //         println!("const{} = {:?}", const_key.0, cnst.value);
+        //     }
     }
 
     pub(crate) fn analyze_const(
@@ -32,11 +32,14 @@ impl<'a> SemanticsAnalyzer<'a> {
             return;
         }
 
-        self.semantics_stack.stack.push(ItemStackCall {
-            call_file,
-            call_span,
-            kind: ItemStackCallKind::Const(const_key),
-        });
+        // To not consider array sizes constants
+        if self.ast.consts[const_key].info.id_key != IdKey::EMPTY {
+            self.semantics_stack.stack.push(ItemStackCall {
+                call_file,
+                call_span,
+                kind: ItemStackCallKind::Const(const_key),
+            });
+        }
 
         self.semantics_stack.consts.insert(const_key, ());
 
@@ -104,7 +107,11 @@ impl<'a> SemanticsAnalyzer<'a> {
         self.type_inf_ctx = type_inf_ctx;
         self.current_file_key = current_file_key;
         self.semantics_stack.consts.remove(&const_key);
-        self.semantics_stack.stack.pop();
+
+        // To not consider array sizes constants
+        if self.ast.consts[const_key].info.id_key != IdKey::EMPTY {
+            self.semantics_stack.stack.pop();
+        }
 
         self.typed_ast.consts.insert(const_key, Const { typ });
         self.nir_builder.nir.consts.insert(

@@ -230,11 +230,11 @@ impl<'a> SemanticsAnalyzer<'a> {
         let get_cause = |kind: &ItemStackCallKind| match kind {
             ItemStackCallKind::Const(const_key) => {
                 let item_info = self.ast.consts[*const_key].info;
-                format!("حساب قيمة الثابت {}", self.fmt_item_name(item_info))
+                format!("حساب قيمة الثابت `{}`", self.fmt_item_name(item_info))
             }
             ItemStackCallKind::Struct(struct_key) => {
                 let item_info = self.ast.structs[*struct_key].info;
-                format!("تحديد حجم الهيكل {}", self.fmt_item_name(item_info))
+                format!("تحديد حجم الهيكل `{}`", self.fmt_item_name(item_info))
             }
         };
 

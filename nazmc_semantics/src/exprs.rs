@@ -382,6 +382,12 @@ impl<'a> SemanticsAnalyzer<'a> {
             return typ;
         }
 
+        self.analyze_struct(
+            struct_key,
+            self.current_file_key,
+            self.get_expr_span(expr_key),
+        );
+
         let mut struct_fields = self.typed_ast.structs[&struct_key].fields.clone();
 
         let mut used_fields = HashMap::with_capacity(struct_fields.len());
