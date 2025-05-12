@@ -1,56 +1,9 @@
 use nazmc_nir::*;
 use std::{
     cell::{Ref, RefCell},
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     rc::Rc,
 };
-
-#[derive(Default, Debug, Clone)]
-pub struct RcValue {
-    data: Rc<RefCell<Value>>,
-}
-
-impl RcValue {
-    pub fn new(value: Value) -> Self {
-        Self {
-            data: Rc::new(RefCell::new(value)),
-        }
-    }
-
-    pub fn copy(&self) -> Self {
-        let data = match &*self.borrow() {
-            Value::Agg(elements) => Value::Agg(Rc::new(
-                elements.iter().map(|element| element.copy()).collect(),
-            )),
-            data => data.clone(),
-        };
-        Self {
-            data: Rc::new(RefCell::new(data)),
-        }
-    }
-
-    pub fn borrow(&self) -> Ref<'_, Value> {
-        self.data.borrow()
-    }
-
-    pub fn inner(&self) -> Value {
-        self.borrow().clone()
-    }
-}
-
-#[derive(Default, Debug, Clone)]
-pub enum Value {
-    #[default]
-    Unit,
-    Int(i64),
-    UInt(u64),
-    Float(f64),
-    Bool(bool),
-    Char(char),
-    FnPtr(FnKey),
-    Ptr(RcValue),
-    Agg(Rc<Vec<RcValue>>),
-}
 
 pub struct Interpreter<'a> {
     nir: &'a NIR<'a>,
@@ -108,7 +61,7 @@ impl<'a> Interpreter<'a> {
         self.execute_cfg(&cfg, args)
     }
 
-    fn execute_cfg(
+    pub fn execute_cfg(
         &mut self,
         cfg: &'a CFG,
         args: HashMap<ArgKey, RcValue>,
@@ -211,6 +164,7 @@ impl<'a> Interpreter<'a> {
                 .entry(binding_key)
                 .or_default()
                 .clone(),
+            LValueKind::Const(const_key) => self.nir.consts[&const_key].value.clone(),
             LValueKind::Temp(temp_key) => self
                 .current_frame
                 .temps

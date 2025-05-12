@@ -64,7 +64,7 @@ pub struct Resolved {
     pub paths_with_pkgs_exprs: TiVec<PathWithPkgKey, Item>,
     /// The list of resolved types paths expressions
     /// which point only to resolved structs
-    pub types_paths: TiVec<PathTypeExprKey, (Item, Span)>,
+    pub types_paths: TiVec<PathTypeExprKey, (Item, FileKey, Span)>,
 }
 
 #[derive(Default)]
@@ -434,7 +434,7 @@ pub struct IdxExpr {
 #[derive(Clone, Debug)]
 pub struct ArrayRepeatedExpr {
     pub repeat: ExprKey,
-    pub size: ExprKey,
+    pub size_const: ConstKey,
 }
 
 #[derive(Clone, Debug)]

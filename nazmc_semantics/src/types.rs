@@ -3,80 +3,6 @@ use typed_ast::Struct;
 use crate::*;
 
 impl<'a> SemanticsAnalyzer<'a> {
-    fn analyze_type_expr_checked(
-        &mut self,
-        type_expr_key: TypeExprKey,
-        at: FileKey,
-        called_from: CycleDetected,
-    ) -> Type {
-        let result = self.analyze_type_expr(type_expr_key);
-
-        if self.semantics_stack.is_cycle_detected == CycleDetected::None {
-            return result;
-        }
-
-        let type_expr_span = self.get_type_expr_span(type_expr_key);
-
-        if self.semantics_stack.is_cycle_detected == called_from {
-            match called_from {
-                CycleDetected::None => {}
-                CycleDetected::Const(const_key) => todo!(),
-                CycleDetected::Struct(struct_key) => {
-                    let item_info = self.ast.structs[struct_key].info;
-                    let msg = format!(
-                        "توجد حلقة لا متناهية في تحديد حجم الهيكل `{}`",
-                        self.fmt_item_name(item_info)
-                    );
-                    let sec_label = format!("لتحديد حجم الهيكل");
-                    let err_label = if self.cycle_stack.is_empty() {
-                        format!("يجب تحديد حجم نفس الهيكل مرة أخرى")
-                    } else {
-                        format!("ستنشأ الحلقة عند تحديد حجم هذا النوع")
-                    };
-
-                    let mut code_window =
-                        CodeWindow::new(&self.files_infos[at], type_expr_span.start);
-
-                    code_window.mark_secondary(item_info.id_span, vec![sec_label.into()]);
-                    code_window.mark_error(type_expr_span, vec![err_label]);
-
-                    let mut diagnostic = Diagnostic::error(msg, vec![code_window]);
-
-                    for cycle in std::mem::take(&mut self.cycle_stack).into_iter().rev() {
-                        diagnostic.chain(cycle);
-                    }
-
-                    self.diagnostics.push(diagnostic);
-                }
-            }
-
-            self.semantics_stack.is_cycle_detected = CycleDetected::None;
-        } else {
-            match called_from {
-                CycleDetected::None => {}
-                CycleDetected::Const(const_key) => todo!(),
-                CycleDetected::Struct(struct_key) => {
-                    let item_info = self.ast.structs[struct_key].info;
-
-                    let msg = format!("عند تحديد حجم الهيكل `{}`", self.fmt_item_name(item_info));
-                    let sec_label = format!("لتحديد حجم الهيكل");
-                    let note_label = format!("يجب تحديد حجم هذا النوع");
-
-                    let mut code_window =
-                        CodeWindow::new(&self.files_infos[at], type_expr_span.start);
-
-                    code_window.mark_secondary(item_info.id_span, vec![sec_label]);
-                    code_window.mark_note(type_expr_span, vec![note_label]);
-
-                    let diagnostic = Diagnostic::note(msg, vec![code_window]);
-
-                    self.cycle_stack.push(diagnostic);
-                }
-            }
-        }
-        result
-    }
-
     pub(crate) fn analyze_type_expr(&mut self, type_expr_key: TypeExprKey) -> Type {
         let type_expr = &self.ast.types_exprs.all[type_expr_key];
         match type_expr {
@@ -137,7 +63,7 @@ impl<'a> SemanticsAnalyzer<'a> {
 
     #[inline]
     fn analyze_path_type_expr(&mut self, key: PathTypeExprKey) -> Type {
-        let (path_type, _span) = &self.ast.state.types_paths[key];
+        let (path_type, call_file, call_span) = &self.ast.state.types_paths[key];
 
         let Item::Struct { vis: _, key } = *path_type else {
             unreachable!()
@@ -147,7 +73,7 @@ impl<'a> SemanticsAnalyzer<'a> {
             return typ;
         }
 
-        self.analyze_struct(key);
+        self.analyze_struct(key, *call_file, *call_span);
         Type::Concrete(ConcreteType::Struct(key))
     }
 
@@ -179,25 +105,33 @@ impl<'a> SemanticsAnalyzer<'a> {
     }
 
     #[inline]
-    pub(crate) fn analyze_struct(&mut self, key: StructKey) {
-        if self.typed_ast.structs.contains_key(&key) {
+    pub(crate) fn analyze_struct(
+        &mut self,
+        struct_key: StructKey,
+        call_file: FileKey,
+        call_span: Span,
+    ) {
+        if self.typed_ast.structs.contains_key(&struct_key) {
             // It is already computed
             return;
-        } else if self.semantics_stack.fields_structs.contains_key(&key) {
-            self.semantics_stack.is_cycle_detected = CycleDetected::Struct(key);
-
-            self.typed_ast.structs.insert(key, Default::default());
-
-            self.semantics_stack.fields_structs.remove(&key);
-
+        } else if self.semantics_stack.structs.contains_key(&struct_key) {
+            self.typed_ast
+                .structs
+                .insert(struct_key, Default::default());
+            self.report_cycle_detected(call_file, call_span);
             return;
         }
 
-        self.semantics_stack.fields_structs.insert(key, ());
+        self.semantics_stack.stack.push(ItemStackCall {
+            call_file,
+            call_span,
+            kind: ItemStackCallKind::Struct(struct_key),
+        });
 
-        let at = self.ast.structs[key].info.file_key;
-        let called_from = CycleDetected::Struct(key);
-        let fields_len = self.ast.structs[key].fields.len();
+        self.semantics_stack.structs.insert(struct_key, ());
+
+        let at = self.ast.structs[struct_key].info.file_key;
+        let fields_len = self.ast.structs[struct_key].fields.len();
         let mut fields = HashMap::with_capacity(fields_len);
 
         for i in 0..fields_len {
@@ -205,14 +139,38 @@ impl<'a> SemanticsAnalyzer<'a> {
                 vis: _,
                 id: ASTId { span: _, id },
                 typ,
-            } = self.ast.structs[key].fields[i];
-            let typ = self.analyze_type_expr_checked(typ, at, called_from);
+            } = self.ast.structs[struct_key].fields[i];
+            let typ = self.analyze_type_expr(typ);
             fields.insert(id, typed_ast::FieldInfo { typ, idx: i as u32 });
         }
 
-        self.semantics_stack.fields_structs.remove(&key);
+        self.semantics_stack.structs.remove(&struct_key);
+        self.semantics_stack.stack.pop();
+        self.typed_ast.structs.insert(struct_key, Struct { fields });
 
-        self.typed_ast.structs.insert(key, Struct { fields });
+        // Lower struct tyo NIR
+
+        let nir_struct_key = nazmc_nir::StructKey(struct_key.0);
+        let fields = self.ast.structs[struct_key]
+            .fields
+            .iter()
+            .map(|field_info| {
+                let id = field_info.id.id;
+                let field_info = &self.typed_ast.structs[&struct_key].fields[&id];
+                let Type::Concrete(field_typ) = &field_info.typ else {
+                    unreachable!()
+                };
+                let typ = self.nir_builder.get_unique_type(field_typ);
+                Field { id, typ }
+            })
+            .collect();
+        self.nir_builder.nir.structs.insert(
+            nir_struct_key,
+            nazmc_nir::Struct {
+                info: self.ast.structs[struct_key].info,
+                fields,
+            },
+        );
     }
 
     #[inline]
@@ -235,8 +193,22 @@ impl<'a> SemanticsAnalyzer<'a> {
     fn analyze_array(&mut self, key: ArrayTypeExprKey) -> Type {
         let underlying_typ = self.ast.types_exprs.arrays[key].underlying_typ;
         let underlying_typ = self.analyze_type_expr(underlying_typ);
-        let size_expr_scope_key = self.ast.types_exprs.arrays[key].size_expr_scope_key;
-        todo!()
+        let size_const = self.ast.types_exprs.arrays[key].size_const;
+        self.analyze_const(
+            size_const,
+            self.ast.consts[size_const].info.file_key,
+            self.ast.consts[size_const].info.id_span,
+        );
+        let size = if let nazmc_nir::Value::UInt(size) = self.nir_builder.nir.consts
+            [&nazmc_nir::ConstKey(size_const.0)]
+            .value
+            .inner()
+        {
+            size as u32
+        } else {
+            0
+        };
+        Type::array(underlying_typ, size)
     }
 
     #[inline]

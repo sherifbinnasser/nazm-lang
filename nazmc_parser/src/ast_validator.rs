@@ -568,13 +568,33 @@ impl<'a> ASTValidator<'a> {
                         .merged_with(&slice_type.close_bracket.unwrap().span);
 
                     if let Some(array_size) = slice_type.array_size {
-                        let size_expr_scope_key =
+                        let size =
                             self.lower_staic_or_const_expr_to_scope(array_size.expr.unwrap());
+                        let size_span = self.ast.scopes[size].span;
+                        let size_info = nazmc_data_pool::ItemInfo {
+                            file_key: self.file_key,
+                            id_key: IdKey::EMPTY,
+                            id_span: size_span,
+                        };
+                        let size_typ = self.lower_type(Type::Path(Box::new(SimplePath {
+                            double_colons: None,
+                            top: Terminal {
+                                span: size_span,
+                                data: IdToken { val: IdKey::U_TYPE },
+                            },
+                            inners: vec![],
+                        })));
+
+                        let size_const = self.ast.consts.push_and_get_key(nazmc_ast::Const {
+                            info: size_info,
+                            typ: size_typ,
+                            expr_scope_key: size,
+                        });
 
                         let key = self.ast.types_exprs.arrays.push_and_get_key(
                             nazmc_ast::ArrayTypeExpr {
                                 underlying_typ,
-                                size_expr_scope_key,
+                                size_const,
                                 file_key: self.file_key,
                                 span,
                             },
@@ -1460,8 +1480,30 @@ impl<'a> ASTValidator<'a> {
         })) = array_expr.expr_kind
         {
             let repeat = self.lower_expr(repeated_expr.unwrap());
-            let size = self.lower_expr(size_expr.unwrap());
-            let array_elements_sized_expr = Box::new(nazmc_ast::ArrayRepeatedExpr { repeat, size });
+            let size = self.lower_staic_or_const_expr_to_scope(size_expr.unwrap());
+            let size_span = self.ast.scopes[size].span;
+            let size_info = nazmc_data_pool::ItemInfo {
+                file_key: self.file_key,
+                id_key: IdKey::EMPTY,
+                id_span: size_span,
+            };
+            let size_typ = self.lower_type(Type::Path(Box::new(SimplePath {
+                double_colons: None,
+                top: Terminal {
+                    span: size_span,
+                    data: IdToken { val: IdKey::U_TYPE },
+                },
+                inners: vec![],
+            })));
+
+            let size_const = self.ast.consts.push_and_get_key(nazmc_ast::Const {
+                info: size_info,
+                typ: size_typ,
+                expr_scope_key: size,
+            });
+
+            let array_elements_sized_expr =
+                Box::new(nazmc_ast::ArrayRepeatedExpr { repeat, size_const });
 
             self.new_expr(
                 span,

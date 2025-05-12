@@ -129,7 +129,7 @@ impl<'a> QbeCodegen<'a> {
                 Type::F8 => qbe::Type::Double,
                 Type::Ptr(_) | Type::MutPtr(_) | Type::FnPtr(_) => qbe::Type::Long,
                 Type::Struct(struct_key) => {
-                    let _struct = std::mem::take(&mut self.nir.structs[struct_key]);
+                    let _struct = std::mem::take(self.nir.structs.get_mut(&struct_key).unwrap());
                     let mut offset = 0;
                     let mut fields_offsets = HashMap::with_capacity(_struct.fields.len());
                     let mut items = Vec::with_capacity(_struct.fields.len());
@@ -151,7 +151,7 @@ impl<'a> QbeCodegen<'a> {
                         offset += qbe_field_type.size() as u32;
                     }
                     self.structs.insert(struct_key, fields_offsets);
-                    let name = self.fmt_item_name(self.nir.structs[struct_key].info);
+                    let name = self.fmt_item_name(self.nir.structs[&struct_key].info);
                     let type_def = qbe::TypeDef::new(name, None, items);
                     let type_def = self.module.add_type(type_def);
                     qbe::Type::Aggregate(type_def)
@@ -588,6 +588,7 @@ impl<'a> QbeCodegen<'a> {
         match cfg.lvalues[lvalue_key].kind {
             LValueKind::Binding(binding_key) => self.bindings[binding_key].clone(),
             LValueKind::Static(static_key) => self.statics[static_key].clone(),
+            LValueKind::Const(const_key) => todo!(),
             LValueKind::Arg(arg_key) => self.args[&arg_key].clone(),
             LValueKind::Temp(temp_key) => self.temps[temp_key].clone(),
             LValueKind::Deref(lvalue_key) | LValueKind::MutDeref(lvalue_key) => {
@@ -646,6 +647,7 @@ impl<'a> QbeCodegen<'a> {
     ) -> qbe::Value {
         match cfg.lvalues[lvalue_key].kind {
             LValueKind::Static(static_key) => self.statics[static_key].clone(),
+            LValueKind::Const(static_key) => todo!(),
             LValueKind::Arg(arg_key) => self.args[&arg_key].clone(),
             LValueKind::Temp(temp_key) => self.temps[temp_key].clone(),
             LValueKind::Binding(binding_key) => {

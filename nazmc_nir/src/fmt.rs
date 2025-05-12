@@ -143,7 +143,7 @@ impl<'a> NIR<'a> {
             Type::Bool => format!("شرط"),
             Type::Char => format!("حرف"),
             Type::Struct(struct_key) => {
-                let item_info = self.structs[struct_key].info;
+                let item_info = self.structs[&struct_key].info;
                 self.fmt_item_name(item_info)
             }
             Type::Slice(type_key) => format!("[{}]", self.fmt_typ(type_key)),
@@ -238,6 +238,7 @@ impl<'a> NIR<'a> {
             LValueKind::Binding(binding_key) => format!("VAR_{}", binding_key.0),
             LValueKind::Arg(arg_key) => format!("ARG_{}", arg_key.0),
             LValueKind::Static(static_key) => format!("STATIC_{}", static_key.0),
+            LValueKind::Const(const_key) => format!("CONST_{}", const_key.0),
             LValueKind::Temp(temp_key) => format!("TEMP_{}", temp_key.0),
             LValueKind::Deref(lvalue_key) | LValueKind::MutDeref(lvalue_key) => {
                 format!("*{}", self.fmt_lvalue(cfg, lvalue_key))
@@ -285,7 +286,7 @@ impl<'a> NIR<'a> {
             }
             RValue::Struct { struct_key, fields } => format!(
                 "{} {{ {} }}",
-                self.fmt_item_name(self.structs[*struct_key].info),
+                self.fmt_item_name(self.structs[*&struct_key].info),
                 fields
                     .iter()
                     .map(|(idx, op)| format!("{}: {}", idx, self.fmt_operand(cfg, op)))

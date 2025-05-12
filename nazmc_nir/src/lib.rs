@@ -4,7 +4,9 @@ use nazmc_data_pool::{new_data_pool_key, typed_index_collections::TiVec, IdKey, 
 use nazmc_data_pool::{FileKey, PkgKey};
 use nazmc_diagnostics::file_info::FileInfo;
 use nazmc_diagnostics::span::Span;
+use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
+use std::rc::Rc;
 use thin_vec::ThinVec;
 pub mod fmt;
 pub mod nir_analyzer;
@@ -23,6 +25,7 @@ new_data_pool_key! { LambdaTypeKey }
 new_data_pool_key! { FnPtrTypeKey }
 new_data_pool_key! { TempKey }
 new_data_pool_key! { LValueKey }
+new_data_pool_key! { ConstKey }
 
 /// NIR, the Nazm Intermediate Representation
 #[derive(Default)]
@@ -32,7 +35,7 @@ pub struct NIR<'a> {
     pub tuple_types: TiVec<TupleTypeKey, TupleType>,
     pub lambda_types: TiVec<LambdaTypeKey, LambdaType>,
     pub fn_ptr_types: TiVec<FnPtrTypeKey, FnPtrType>,
-    pub structs: TiVec<StructKey, Struct>,
+    pub structs: HashMap<StructKey, Struct>,
     pub statics: TiVec<StaticKey, Static>,
     pub fns: TiVec<FnKey, Fn>,
     pub files_infos: &'a TiSlice<FileKey, FileInfo>,
@@ -40,6 +43,54 @@ pub struct NIR<'a> {
     pub pkgs_names: &'a TiSlice<PkgKey, &'a ThinVec<IdKey>>,
     pub id_pool: &'a TiSlice<IdKey, String>,
     pub str_pool: TiVec<StrKey, String>,
+    pub consts: HashMap<ConstKey, NamedConst>,
+}
+
+#[derive(Default, Debug, Clone)]
+pub struct RcValue {
+    pub data: Rc<RefCell<Value>>,
+}
+
+impl RcValue {
+    pub fn new(value: Value) -> Self {
+        Self {
+            data: Rc::new(RefCell::new(value)),
+        }
+    }
+
+    pub fn copy(&self) -> Self {
+        let data = match &*self.borrow() {
+            Value::Agg(elements) => Value::Agg(Rc::new(
+                elements.iter().map(|element| element.copy()).collect(),
+            )),
+            data => data.clone(),
+        };
+        Self {
+            data: Rc::new(RefCell::new(data)),
+        }
+    }
+
+    pub fn borrow(&self) -> Ref<'_, Value> {
+        self.data.borrow()
+    }
+
+    pub fn inner(&self) -> Value {
+        self.borrow().clone()
+    }
+}
+
+#[derive(Default, Debug, Clone)]
+pub enum Value {
+    #[default]
+    Unit,
+    Int(i64),
+    UInt(u64),
+    Float(f64),
+    Bool(bool),
+    Char(char),
+    FnPtr(FnKey),
+    Ptr(RcValue),
+    Agg(Rc<Vec<RcValue>>),
 }
 
 #[derive(Default)]
@@ -51,6 +102,12 @@ pub struct Struct {
 pub struct Field {
     pub id: IdKey,
     pub typ: TypeKey,
+}
+
+pub struct NamedConst {
+    pub info: ItemInfo,
+    pub typ: TypeKey,
+    pub value: RcValue,
 }
 
 pub struct Static {
@@ -231,6 +288,7 @@ pub enum LValueKind {
     Binding(BindingKey),
     Arg(ArgKey),
     Static(StaticKey),
+    Const(ConstKey),
     Temp(TempKey),
     Deref(LValueKey),
     Field {

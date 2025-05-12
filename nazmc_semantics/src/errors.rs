@@ -130,7 +130,7 @@ impl<'a> SemanticsAnalyzer<'a> {
 
     pub(crate) fn get_type_expr_span(&self, type_expr_key: TypeExprKey) -> Span {
         match &self.ast.types_exprs.all[type_expr_key] {
-            TypeExpr::Path(path_type_expr_key) => self.ast.state.types_paths[*path_type_expr_key].1,
+            TypeExpr::Path(path_type_expr_key) => self.ast.state.types_paths[*path_type_expr_key].2,
             TypeExpr::Paren(paren_type_expr_key) => {
                 self.ast.types_exprs.parens[*paren_type_expr_key].span
             }
@@ -207,11 +207,9 @@ impl<'a> SemanticsAnalyzer<'a> {
         &mut self,
         expected_ty: &Type,
         found_ty: &Type,
-        expected_type_expr_key: TypeExprKey,
-        expr_key: ExprKey,
+        expected_span: Span,
+        found_span: Span,
     ) {
-        let expected_span = self.get_type_expr_span(expected_type_expr_key);
-        let found_span = self.get_expr_span(expr_key);
         let expected_ty = self.fmt_ty(expected_ty);
 
         let mut code_window =

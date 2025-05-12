@@ -14,11 +14,11 @@ impl<'a> SemanticsAnalyzer<'a> {
                 (self.infer_lit_expr(lit_expr), ExprKind::Literal(lit_expr))
             }
             ExprKind::PathNoPkg(path_no_pkg_key) => (
-                self.infer_path_no_pkg_expr(path_no_pkg_key),
+                self.infer_path_no_pkg_expr(path_no_pkg_key, expr_key),
                 ExprKind::PathNoPkg(path_no_pkg_key),
             ),
             ExprKind::PathInPkg(path_with_pkg_key) => (
-                self.infer_path_with_pkg_expr(path_with_pkg_key),
+                self.infer_path_with_pkg_expr(path_with_pkg_key, expr_key),
                 ExprKind::PathInPkg(path_with_pkg_key),
             ),
             ExprKind::Tuple(thin_vec) => {
@@ -29,6 +29,10 @@ impl<'a> SemanticsAnalyzer<'a> {
                 (self.infer_call_expr(&call_expr), ExprKind::Call(call_expr))
             }
             ExprKind::Idx(idx_expr) => (self.infer_idx_expr(&idx_expr), ExprKind::Idx(idx_expr)),
+            ExprKind::ArrayRepeated(array_repeated_expr) => (
+                self.infer_array_repeated(&array_repeated_expr),
+                ExprKind::ArrayRepeated(array_repeated_expr),
+            ),
             ExprKind::ArrayElements(elements) => (
                 self.infer_array_elements(&elements),
                 ExprKind::ArrayElements(elements),
@@ -50,7 +54,6 @@ impl<'a> SemanticsAnalyzer<'a> {
                 self.infer_lambda_expr(&lambda_expr),
                 ExprKind::Lambda(lambda_expr),
             ),
-            ExprKind::ArrayRepeated(_) => todo!(),
             ExprKind::On => todo!(),
             ExprKind::UnaryOp(unary_op_expr) => (
                 self.infer_unary_op_expr(&unary_op_expr),
@@ -108,11 +111,14 @@ impl<'a> SemanticsAnalyzer<'a> {
         }
     }
 
-    fn infer_path_no_pkg_expr(&mut self, path_no_pkg_key: PathNoPkgKey) -> Type {
+    fn infer_path_no_pkg_expr(&mut self, path_no_pkg_key: PathNoPkgKey, expr_key: ExprKey) -> Type {
         let item = self.ast.state.paths_no_pkgs_exprs[path_no_pkg_key];
 
         let typ = match item {
-            Item::Const { vis: _, key } => todo!(),
+            Item::Const { vis: _, key } => {
+                self.analyze_const(key, self.current_file_key, self.get_expr_span(expr_key));
+                &self.typed_ast.consts[&key].typ
+            }
             Item::Static { vis: _, key } => todo!(),
             Item::Fn { vis: _, key } => &self.typed_ast.fns_signatures[&key],
             Item::LocalVar { id, key } => self
@@ -153,11 +159,18 @@ impl<'a> SemanticsAnalyzer<'a> {
         typ.clone()
     }
 
-    fn infer_path_with_pkg_expr(&mut self, path_with_pkg_key: PathWithPkgKey) -> Type {
+    fn infer_path_with_pkg_expr(
+        &mut self,
+        path_with_pkg_key: PathWithPkgKey,
+        expr_key: ExprKey,
+    ) -> Type {
         let item = self.ast.state.paths_with_pkgs_exprs[path_with_pkg_key];
 
         let typ: &Type = match item {
-            Item::Const { vis: _, key } => todo!(),
+            Item::Const { vis: _, key } => {
+                self.analyze_const(key, self.current_file_key, self.get_expr_span(expr_key));
+                &self.typed_ast.consts[&key].typ
+            }
             Item::Static { vis: _, key } => todo!(),
             Item::Fn { vis: _, key } => &self.typed_ast.fns_signatures[&key],
             _ => unreachable!(),
@@ -288,6 +301,26 @@ impl<'a> SemanticsAnalyzer<'a> {
         underlying_ty
     }
 
+    fn infer_array_repeated(&mut self, array_repeated_expr: &ArrayRepeatedExpr) -> Type {
+        let size_const = array_repeated_expr.size_const;
+        let underlying_typ = self.infer(array_repeated_expr.repeat);
+        self.analyze_const(
+            size_const,
+            self.current_file_key,
+            self.ast.consts[size_const].info.id_span,
+        );
+        let size = if let nazmc_nir::Value::UInt(size) = self.nir_builder.nir.consts
+            [&nazmc_nir::ConstKey(size_const.0)]
+            .value
+            .inner()
+        {
+            size as u32
+        } else {
+            0
+        };
+        Type::array(underlying_typ, size)
+    }
+
     fn infer_array_elements(&mut self, elements: &ThinVec<ExprKey>) -> Type {
         if elements.is_empty() {
             let unknown_ty = self.type_inf_ctx.new_ty_var();
@@ -348,6 +381,12 @@ impl<'a> SemanticsAnalyzer<'a> {
             self.add_primitive_cannot_be_initiated(&typ, self.get_expr_span(expr_key));
             return typ;
         }
+
+        self.analyze_struct(
+            struct_key,
+            self.current_file_key,
+            self.get_expr_span(expr_key),
+        );
 
         let mut struct_fields = self.typed_ast.structs[&struct_key].fields.clone();
 

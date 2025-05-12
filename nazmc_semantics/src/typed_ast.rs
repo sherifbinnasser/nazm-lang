@@ -1,3 +1,5 @@
+use nazmc_nir::RcValue;
+
 use crate::*;
 
 #[derive(Default)]
@@ -35,9 +37,9 @@ pub struct FnPtrType {
     pub return_type: Type,
 }
 
+#[derive(Default)]
 pub struct Const {
     pub typ: Type,
-    pub value: Vec<u8>,
 }
 
 pub struct Static {

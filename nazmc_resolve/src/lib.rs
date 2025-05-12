@@ -125,9 +125,9 @@ impl<'a> NameResolver<'a> {
                     )
                     .unwrap_or_default();
 
-                (item, span)
+                (item, file_key, span)
             })
-            .collect::<TiVec<PathTypeExprKey, (Item, Span)>>();
+            .collect::<_>();
 
         let resolved_structs_exprs = paths
             .structs_paths_exprs
@@ -234,24 +234,6 @@ impl<'a> NameResolver<'a> {
             let static_key = StaticKey::from(i);
             let at = self.ast.statics[static_key].info.file_key;
             let scope_key = self.ast.statics[static_key].expr_scope_key;
-            self.resolve_paths_in_scope(
-                at,
-                &mut names_stack,
-                None,
-                scope_key,
-                &paths.paths_no_pkgs_exprs,
-                &mut resolved_paths_no_pkgs_exprs,
-                &resolved_imports,
-                &resolved_star_imports,
-            );
-        }
-
-        let array_types_exprs_len = self.ast.types_exprs.arrays.len();
-
-        for i in 0..array_types_exprs_len {
-            let array_type_expr_key = ArrayTypeExprKey::from(i);
-            let at = self.ast.types_exprs.arrays[array_type_expr_key].file_key;
-            let scope_key = self.ast.types_exprs.arrays[array_type_expr_key].size_expr_scope_key;
             self.resolve_paths_in_scope(
                 at,
                 &mut names_stack,
