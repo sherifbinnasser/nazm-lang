@@ -125,9 +125,9 @@ impl<'a> NameResolver<'a> {
                     )
                     .unwrap_or_default();
 
-                (item, span)
+                (item, file_key, span)
             })
-            .collect::<TiVec<PathTypeExprKey, (Item, Span)>>();
+            .collect::<_>();
 
         let resolved_structs_exprs = paths
             .structs_paths_exprs

@@ -14,11 +14,11 @@ impl<'a> SemanticsAnalyzer<'a> {
                 (self.infer_lit_expr(lit_expr), ExprKind::Literal(lit_expr))
             }
             ExprKind::PathNoPkg(path_no_pkg_key) => (
-                self.infer_path_no_pkg_expr(path_no_pkg_key),
+                self.infer_path_no_pkg_expr(path_no_pkg_key, expr_key),
                 ExprKind::PathNoPkg(path_no_pkg_key),
             ),
             ExprKind::PathInPkg(path_with_pkg_key) => (
-                self.infer_path_with_pkg_expr(path_with_pkg_key),
+                self.infer_path_with_pkg_expr(path_with_pkg_key, expr_key),
                 ExprKind::PathInPkg(path_with_pkg_key),
             ),
             ExprKind::Tuple(thin_vec) => {
@@ -111,12 +111,12 @@ impl<'a> SemanticsAnalyzer<'a> {
         }
     }
 
-    fn infer_path_no_pkg_expr(&mut self, path_no_pkg_key: PathNoPkgKey) -> Type {
+    fn infer_path_no_pkg_expr(&mut self, path_no_pkg_key: PathNoPkgKey, expr_key: ExprKey) -> Type {
         let item = self.ast.state.paths_no_pkgs_exprs[path_no_pkg_key];
 
         let typ = match item {
             Item::Const { vis: _, key } => {
-                self.analyze_const(key);
+                self.analyze_const(key, self.current_file_key, self.get_expr_span(expr_key));
                 &self.typed_ast.consts[&key].typ
             }
             Item::Static { vis: _, key } => todo!(),
@@ -159,12 +159,16 @@ impl<'a> SemanticsAnalyzer<'a> {
         typ.clone()
     }
 
-    fn infer_path_with_pkg_expr(&mut self, path_with_pkg_key: PathWithPkgKey) -> Type {
+    fn infer_path_with_pkg_expr(
+        &mut self,
+        path_with_pkg_key: PathWithPkgKey,
+        expr_key: ExprKey,
+    ) -> Type {
         let item = self.ast.state.paths_with_pkgs_exprs[path_with_pkg_key];
 
         let typ: &Type = match item {
             Item::Const { vis: _, key } => {
-                self.analyze_const(key);
+                self.analyze_const(key, self.current_file_key, self.get_expr_span(expr_key));
                 &self.typed_ast.consts[&key].typ
             }
             Item::Static { vis: _, key } => todo!(),
@@ -300,7 +304,11 @@ impl<'a> SemanticsAnalyzer<'a> {
     fn infer_array_repeated(&mut self, array_repeated_expr: &ArrayRepeatedExpr) -> Type {
         let size_const = array_repeated_expr.size_const;
         let underlying_typ = self.infer(array_repeated_expr.repeat);
-        self.analyze_const(size_const);
+        self.analyze_const(
+            size_const,
+            self.current_file_key,
+            self.ast.consts[size_const].info.id_span,
+        );
         let size = if let nazmc_nir::Value::UInt(size) = self.nir_builder.nir.consts
             [&nazmc_nir::ConstKey(size_const.0)]
             .value

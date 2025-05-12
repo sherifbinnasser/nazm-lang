@@ -64,7 +64,7 @@ pub struct Resolved {
     pub paths_with_pkgs_exprs: TiVec<PathWithPkgKey, Item>,
     /// The list of resolved types paths expressions
     /// which point only to resolved structs
-    pub types_paths: TiVec<PathTypeExprKey, (Item, Span)>,
+    pub types_paths: TiVec<PathTypeExprKey, (Item, FileKey, Span)>,
 }
 
 #[derive(Default)]

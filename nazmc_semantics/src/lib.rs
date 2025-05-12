@@ -9,7 +9,7 @@ mod types;
 
 use nazmc_data_pool::{
     typed_index_collections::{TiSlice, TiVec},
-    FileKey, IdKey, PkgKey, StrKey,
+    FileKey, IdKey, ItemInfo, PkgKey, StrKey,
 };
 
 pub(crate) use nazmc_ast::*;
@@ -19,26 +19,30 @@ use nazmc_diagnostics::{
     span::{Span, SpanCursor},
     CodeWindow, Diagnostic,
 };
-use nazmc_nir::{Arg, Field, Struct, CFG, NIR};
+use nazmc_nir::{Arg, Field, CFG, NIR};
 use nir_builder::{CFGBuilder, NIRBuilder};
 use std::{collections::HashMap, process::exit};
 use thin_vec::ThinVec;
 use type_infer::{CompositeType, ConcreteType, Type, TypeInferenceCtx, TypeVarKey};
 use typed_ast::{LetStm, TypedAST};
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-enum CycleDetected {
-    #[default]
-    None,
-    Const(ConstKey),
-    Struct(StructKey),
-}
-
 #[derive(Default)]
 struct SemanticsStack {
+    stack: Vec<ItemStackCall>,
     consts: HashMap<ConstKey, ()>,
     structs: HashMap<StructKey, ()>,
-    is_cycle_detected: CycleDetected,
+    bad_consts_detected: bool,
+}
+
+struct ItemStackCall {
+    call_file: FileKey,
+    call_span: Span,
+    kind: ItemStackCallKind,
+}
+
+pub enum ItemStackCallKind {
+    Const(ConstKey),
+    Struct(StructKey),
 }
 
 #[derive(Default)]
@@ -51,7 +55,6 @@ pub struct SemanticsAnalyzer<'a> {
     typed_ast: TypedAST,
     semantics_stack: SemanticsStack,
     diagnostics: Vec<Diagnostic<'a>>,
-    cycle_stack: Vec<Diagnostic<'a>>,
     current_file_key: FileKey,
     current_fn_key: FnKey,
     type_inf_ctx: TypeInferenceCtx,
@@ -134,7 +137,9 @@ impl<'a> SemanticsAnalyzer<'a> {
         }
 
         for struct_key in self.ast.structs.keys() {
-            self.analyze_struct(struct_key);
+            let call_file = self.ast.structs[struct_key].info.file_key;
+            let call_span = self.ast.structs[struct_key].info.id_span;
+            self.analyze_struct(struct_key, call_file, call_span);
         }
 
         self.analyze_fn_signatures();
@@ -217,6 +222,86 @@ impl<'a> SemanticsAnalyzer<'a> {
         }
 
         self.nir_builder.nir
+    }
+
+    fn report_cycle_detected(&mut self, last_call_file: FileKey, last_call_span: Span) {
+        let stack = std::mem::take(&mut self.semantics_stack.stack);
+
+        let get_cause = |kind: &ItemStackCallKind| match kind {
+            ItemStackCallKind::Const(const_key) => {
+                let item_info = self.ast.consts[*const_key].info;
+                format!("حساب قيمة الثابت {}", self.fmt_item_name(item_info))
+            }
+            ItemStackCallKind::Struct(struct_key) => {
+                let item_info = self.ast.structs[*struct_key].info;
+                format!("تحديد حجم الهيكل {}", self.fmt_item_name(item_info))
+            }
+        };
+
+        let get_id_span = |kind: &ItemStackCallKind| match kind {
+            ItemStackCallKind::Const(const_key) => self.ast.consts[*const_key].info.id_span,
+            ItemStackCallKind::Struct(struct_key) => self.ast.structs[*struct_key].info.id_span,
+        };
+
+        // first
+        let ItemStackCall {
+            call_file,
+            call_span,
+            kind,
+        } = &stack[0];
+
+        let msg = format!("توجد حلقة لا متناهية عند {}", get_cause(kind));
+
+        let mut code_window = CodeWindow::new(&self.files_infos[*call_file], call_span.start);
+        code_window.mark_error(*call_span, vec![]);
+        let mut diagnostic = Diagnostic::error(msg, vec![code_window]);
+        let mut last_id_span = get_id_span(kind);
+
+        // second
+        if let Some(ItemStackCall {
+            call_file,
+            call_span,
+            kind,
+        }) = stack.get(1)
+        {
+            let msg = format!("يجب أولاً {}", get_cause(kind));
+            let mut code_window = CodeWindow::new(&self.files_infos[*call_file], call_span.start);
+            code_window.mark_secondary(last_id_span, vec![]);
+            code_window.mark_note(*call_span, vec![]);
+            let note = Diagnostic::note(msg, vec![code_window]);
+            diagnostic.chain(note);
+            last_id_span = get_id_span(kind);
+        }
+
+        for ItemStackCall {
+            call_file,
+            call_span,
+            kind,
+        } in &stack[2..]
+        {
+            let msg = format!("يجب بعدها {}", get_cause(kind));
+            let mut code_window = CodeWindow::new(&self.files_infos[*call_file], call_span.start);
+            code_window.mark_secondary(last_id_span, vec![]);
+            code_window.mark_note(*call_span, vec![]);
+            let note = Diagnostic::note(msg, vec![code_window]);
+            diagnostic.chain(note);
+            last_id_span = get_id_span(kind);
+        }
+
+        // last
+        let msg = if stack.len() == 1 {
+            format!("يجب {} مرة أخرى", get_cause(kind))
+        } else {
+            format!("يجب بعدها {} مرة أخرى", get_cause(kind))
+        };
+        let mut code_window =
+            CodeWindow::new(&self.files_infos[last_call_file], last_call_span.start);
+        code_window.mark_secondary(last_id_span, vec![]);
+        code_window.mark_note(last_call_span, vec![]);
+        let note = Diagnostic::note(msg, vec![code_window]);
+        diagnostic.chain(note);
+
+        self.diagnostics.push(diagnostic);
     }
 
     fn lower_exprs_and_stms_types_to_nir(&mut self) {
