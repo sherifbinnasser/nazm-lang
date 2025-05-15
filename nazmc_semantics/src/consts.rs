@@ -92,10 +92,8 @@ impl<'a> SemanticsAnalyzer<'a> {
             self.analyze_const_cfg(is_unit, &mut cfg, const_key);
 
             if self.diagnostics.is_empty() {
-                let mut interpreter = nazmc_nir_interpreter::Interpreter::new(
-                    &self.nir_builder.nir,
-                    &self.interpreter_str_pool,
-                );
+                let mut interpreter =
+                    nazmc_nir_interpreter::Interpreter::new(&self.nir_builder.nir);
                 let return_value = interpreter.execute_cfg(&cfg, HashMap::new());
                 return_value.unwrap_or_default()
             } else {
@@ -105,7 +103,7 @@ impl<'a> SemanticsAnalyzer<'a> {
             RcValue::default()
         };
 
-        if check_dangling_pointer(&*value.borrow()).is_err() {
+        if self.check_dangling_pointer(&*value.borrow()).is_err() {
             let msg = format!(
                 "تم العثور على مؤشر منقطع عند حساب قيمة الثابت `{}`",
                 self.fmt_item_name(self.ast.consts[const_key].info)
@@ -164,23 +162,23 @@ impl<'a> SemanticsAnalyzer<'a> {
 
         self.nir_builder.nir = analyzer.drop();
     }
-}
 
-fn check_dangling_pointer(value: &Value) -> Result<(), ()> {
-    match value {
-        Value::Ptr(rc_value) => {
-            if Rc::strong_count(&rc_value.data) == 1 {
-                Err(())
-            } else {
+    fn check_dangling_pointer(&self, value: &Value) -> Result<(), ()> {
+        match value {
+            Value::Ptr(rc_value) => {
+                if Rc::strong_count(&rc_value.data) == 1 {
+                    Err(())
+                } else {
+                    Ok(())
+                }
+            }
+            Value::Agg(vec) => {
+                for val in vec.iter() {
+                    self.check_dangling_pointer(&*val.borrow())?
+                }
                 Ok(())
             }
+            _ => Ok(()),
         }
-        Value::Agg(vec) => {
-            for val in vec.iter() {
-                check_dangling_pointer(&*val.borrow())?
-            }
-            Ok(())
-        }
-        _ => Ok(()),
     }
 }

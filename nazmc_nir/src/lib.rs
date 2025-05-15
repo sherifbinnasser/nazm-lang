@@ -46,6 +46,8 @@ pub struct NIR<'a> {
     pub id_pool: &'a TiSlice<IdKey, String>,
     pub str_pool: TiVec<StrKey, String>,
     pub consts: HashMap<ConstKey, NamedConst>,
+    pub interpreter_str_pool: HashMap<RcValue, StrKey>,
+    pub interpreter_str_slices_pool: TiVec<StrKey, RcValue>,
 }
 
 #[derive(Default, Debug, Clone)]

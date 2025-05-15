@@ -4,7 +4,6 @@ use std::{collections::HashMap, rc::Rc};
 
 pub struct Interpreter<'a> {
     nir: &'a NIR<'a>,
-    str_pool: &'a TiSlice<StrKey, RcValue>,
     current_cfg: Option<&'a CFG>,
     current_frame: Frame,
     null_ptr: RcValue,
@@ -20,10 +19,9 @@ struct Frame {
 }
 
 impl<'a> Interpreter<'a> {
-    pub fn new(nir: &'a NIR, str_pool: &'a TiSlice<StrKey, RcValue>) -> Self {
+    pub fn new(nir: &'a NIR) -> Self {
         Self {
             nir,
-            str_pool,
             current_cfg: None,
             current_frame: Default::default(),
             null_ptr: RcValue::default(),
@@ -215,7 +213,7 @@ impl<'a> Interpreter<'a> {
     fn evaluate_rvalue(&mut self, rvalue: &RValue) -> Result<RcValue, String> {
         let value = match rvalue {
             RValue::Use(op) => return self.evaluate_operand(op),
-            RValue::Str(sk) => return Ok(self.str_pool[*sk].clone()),
+            RValue::Str(sk) => return Ok(self.nir.interpreter_str_slices_pool[*sk].clone()),
             RValue::RefMut(lv) | RValue::Ref(lv) => Value::Ptr(self.evaluate_lvalue(*lv)?),
             RValue::Tuple(elements) | RValue::ArrayElements(elements) => {
                 let mut eval_elements = Vec::with_capacity(elements.len());
