@@ -32,7 +32,7 @@ use inkwell::{
         IntType, PointerType, StructType,
     },
     values::{
-        AnyValue, AnyValueEnum, BasicMetadataValueEnum, BasicValueEnum, FunctionValue,
+        AnyValue, AnyValueEnum, BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue,
         InstructionOpcode, PointerValue,
     },
     AddressSpace, FloatPredicate, IntPredicate,
@@ -51,8 +51,9 @@ pub struct LLVMCodeGen<'ctx, 'nir> {
     nir: NIR<'nir>,
     llvm_fns: TiVec<FnKey, FunctionValue<'ctx>>,
     llvm_str_pool: TiVec<StrKey, PointerValue<'ctx>>,
+    llvm_str_slices_pool: TiVec<StrKey, PointerValue<'ctx>>,
     llvm_statics: TiVec<StaticKey, PointerValue<'ctx>>,
-    llvm_consts: TiVec<ConstKey, PointerValue<'ctx>>,
+    llvm_consts: HashMap<ConstKey, PointerValue<'ctx>>,
     llvm_temps_counter: Cell<usize>,
     ret_ptr: Cell<Option<PointerValue<'ctx>>>,
     llvm_temps: RefCell<Vec<String>>,
@@ -164,8 +165,9 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             machine,
             llvm_fns: TiVec::with_capacity(nir.fns.len()),
             llvm_str_pool: TiVec::with_capacity(nir.str_pool.len()),
+            llvm_str_slices_pool: TiVec::with_capacity(nir.str_pool.len()),
             llvm_statics: TiVec::with_capacity(nir.statics.len()),
-            llvm_consts: TiVec::with_capacity(nir.consts.len()),
+            llvm_consts: HashMap::with_capacity(nir.consts.len()),
             llvm_temps_counter: Cell::new(0),
             ret_ptr: Default::default(),
             llvm_temps: RefCell::new(Vec::new()),
@@ -185,6 +187,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         // So lower functions signatures first as extern functions may have string consts link names
         self.lower_fns_signatures();
         self.lower_string_consts();
+        self.lower_consts();
         self.lower_fns_bodies();
     }
 
@@ -233,21 +236,121 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             global.set_unnamed_addr(true);
             global.set_linkage(Linkage::Private);
             global.set_alignment(1);
+            let global = global.as_pointer_value();
+            self.llvm_str_pool.push(global);
+
+            let slice = self
+                .context
+                .const_struct(&[global.into(), str_len.into()], false);
 
             let global_slice = self.module.add_global(
                 self.slice_type(),
                 None,
                 &format!(".str_slice{}", str_key.0),
             );
-            let slice = self
-                .context
-                .const_struct(&[global.as_pointer_value().into(), str_len.into()], false);
             global_slice.set_initializer(&slice);
-            global.set_constant(true);
+            global_slice.set_constant(true);
             global_slice.set_unnamed_addr(true);
             global_slice.set_linkage(Linkage::Private);
 
-            self.llvm_str_pool.push(global_slice.as_pointer_value());
+            self.llvm_str_slices_pool
+                .push(global_slice.as_pointer_value());
+        }
+    }
+
+    fn lower_consts(&mut self) {
+        for i in 0..self.nir.consts.len() as u32 {
+            self.lower_const(ConstKey(i));
+        }
+    }
+
+    fn lower_const(&mut self, const_key: ConstKey) -> PointerValue {
+        if let Some(ptr) = self.llvm_consts.get(&const_key) {
+            return ptr.clone();
+        }
+
+        let typ = self.lower_type(self.nir.consts[&const_key].typ);
+        let global_const = self.module.add_global(
+            any_type_enum_to_basic_type_enum(typ),
+            None,
+            &format!("CONST{}", const_key.0),
+        );
+
+        let value = self.lower_rc_value(self.nir.consts[&const_key].value.clone(), typ);
+
+        global_const.set_initializer(&value);
+        global_const.set_constant(true);
+        global_const.set_unnamed_addr(true);
+        global_const.set_linkage(Linkage::Private);
+        let global_const = global_const.as_pointer_value();
+        self.llvm_consts.insert(const_key, global_const);
+        global_const
+    }
+
+    fn lower_rc_value(&mut self, rc_value: RcValue, typ: AnyTypeEnum<'ctx>) -> BasicValueEnum {
+        match &*rc_value.borrow() {
+            Value::Unit => self
+                .context
+                .i64_type()
+                .const_int(0, false)
+                .as_basic_value_enum(),
+            Value::Int(int) => typ
+                .into_int_type()
+                .const_int(*int as u64, false)
+                .as_basic_value_enum(),
+            Value::UInt(int) => typ
+                .into_int_type()
+                .const_int(*int, false)
+                .as_basic_value_enum(),
+            Value::Float(float) => typ
+                .into_float_type()
+                .const_float(*float as f64)
+                .as_basic_value_enum(),
+            Value::Bool(b) => typ
+                .into_int_type() // i8
+                .const_int(*b as u64, false)
+                .as_basic_value_enum(),
+            Value::Char(c) => typ
+                .into_int_type() // i32
+                .const_int(*c as u64, false)
+                .as_basic_value_enum(),
+            Value::FnPtr(fn_key) => self.llvm_fns[*fn_key]
+                .as_global_value()
+                .as_pointer_value()
+                .as_basic_value_enum(),
+            Value::Ptr(rc_value) => {
+                if let Some(str_key) = self.nir.interpreter_str_pool.get(rc_value) {
+                    self.llvm_str_pool[*str_key]
+                } else {
+                    todo!()
+                }
+                .as_basic_value_enum()
+            }
+            Value::Agg(vec) => match typ {
+                AnyTypeEnum::ArrayType(array_type) => {
+                    let underlying_typ = array_type.get_element_type().as_any_type_enum();
+                    // let mut values = Vec::with_capacity(vec.len());
+                    // let vec = vec.clone();
+                    // for rc_value in vec.iter().cloned() {
+                    //     let value = self.lower_rc_value(rc_value, underlying_typ);
+                    //     values.push(value);
+                    // }
+                    match underlying_typ {
+                        AnyTypeEnum::ArrayType(array_type) => todo!(),
+                        AnyTypeEnum::FloatType(float_type) => {
+                            todo!()
+                        }
+                        AnyTypeEnum::FunctionType(function_type) => todo!(),
+                        AnyTypeEnum::IntType(int_type) => todo!(),
+                        AnyTypeEnum::PointerType(pointer_type) => todo!(),
+                        AnyTypeEnum::StructType(struct_type) => todo!(),
+                        AnyTypeEnum::VectorType(vector_type) => todo!(),
+                        AnyTypeEnum::VoidType(void_type) => todo!(),
+                    }
+                }
+                AnyTypeEnum::StructType(struct_type) => todo!(),
+                _ => unreachable!(),
+            },
         }
     }
 

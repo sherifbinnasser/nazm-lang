@@ -24,7 +24,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                     .build_memcpy(dest_ptr, align, src_ptr, align, size);
             }
             RValue::Str(str_key) => {
-                let src_ptr = self.llvm_str_pool[*str_key];
+                let src_ptr = self.llvm_str_slices_pool[*str_key];
                 let _ = self
                     .builder
                     .build_memcpy(dest_ptr, align, src_ptr, align, size);
@@ -626,7 +626,6 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
     }
 
     fn lower_cast(&self, val: AnyValueEnum<'ctx>, kind: &CastKind) -> AnyValueEnum<'ctx> {
-        use inkwell::types::BasicTypeEnum;
         use inkwell::values::AnyValue;
 
         let ptr_size_bits = self.machine.get_target_data().get_pointer_byte_size(None);

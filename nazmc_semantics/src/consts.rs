@@ -13,9 +13,9 @@ impl<'a> SemanticsAnalyzer<'a> {
             self.analyze_const(const_key, call_file, call_span);
         }
 
-        for (const_key, cnst) in &self.nir_builder.nir.consts {
-            println!("const{} = {:?}", const_key.0, cnst.value);
-        }
+        // for (const_key, cnst) in &self.nir_builder.nir.consts {
+        //     println!("const{} = {:?}", const_key.0, cnst.value);
+        // }
     }
 
     pub(crate) fn analyze_const(
@@ -103,7 +103,7 @@ impl<'a> SemanticsAnalyzer<'a> {
             RcValue::default()
         };
 
-        if self.check_dangling_pointer(&*value.borrow()).is_err() {
+        if check_dangling_pointer(&*value.borrow()).is_err() {
             let msg = format!(
                 "تم العثور على مؤشر منقطع عند حساب قيمة الثابت `{}`",
                 self.fmt_item_name(self.ast.consts[const_key].info)
@@ -162,23 +162,23 @@ impl<'a> SemanticsAnalyzer<'a> {
 
         self.nir_builder.nir = analyzer.drop();
     }
+}
 
-    fn check_dangling_pointer(&self, value: &Value) -> Result<(), ()> {
-        match value {
-            Value::Ptr(rc_value) => {
-                if Rc::strong_count(&rc_value.data) == 1 {
-                    Err(())
-                } else {
-                    Ok(())
-                }
-            }
-            Value::Agg(vec) => {
-                for val in vec.iter() {
-                    self.check_dangling_pointer(&*val.borrow())?
-                }
+fn check_dangling_pointer(value: &Value) -> Result<(), ()> {
+    match value {
+        Value::Ptr(rc_value) => {
+            if Rc::strong_count(&rc_value.data) == 1 {
+                Err(())
+            } else {
                 Ok(())
             }
-            _ => Ok(()),
         }
+        Value::Agg(vec) => {
+            for val in vec.iter() {
+                check_dangling_pointer(&*val.borrow())?
+            }
+            Ok(())
+        }
+        _ => Ok(()),
     }
 }

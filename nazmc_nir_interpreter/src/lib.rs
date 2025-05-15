@@ -1,4 +1,3 @@
-use nazmc_data_pool::{typed_index_collections::TiSlice, StrKey};
 use nazmc_nir::*;
 use std::{collections::HashMap, rc::Rc};
 

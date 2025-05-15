@@ -18,7 +18,6 @@ use nazmc_resolve::NameResolver;
 use owo_colors::OwoColorize;
 use serde::Deserialize;
 use serde_yaml::Value;
-use std::collections::HashMap;
 use std::io;
 use std::io::Write;
 use std::{
@@ -285,18 +284,16 @@ fn main() {
     //     qbe.to_string(),
     // );
 
-    /*
-
-    let mut interpreter = Interpreter::new(&nir);
-    let ret_result = interpreter
-        .execute_function(main_fn, HashMap::new())
-        .unwrap()
-        .inner();
-    if let nazmc_nir_interpreter::Value::Int(ret_value) = ret_result {
-        println!("Interpreter returned: {ret_value}");
-    } else {
-        eprintln!("Unexpected return value of interpreter: {:?}", ret_result)
-    };
+    // let mut interpreter = Interpreter::new(&nir);
+    // let ret_result = interpreter
+    //     .execute_function(main_fn, HashMap::new())
+    //     .unwrap()
+    //     .inner();
+    // if let nazmc_nir_interpreter::Value::Int(ret_value) = ret_result {
+    //     println!("Interpreter returned: {ret_value}");
+    // } else {
+    //     eprintln!("Unexpected return value of interpreter: {:?}", ret_result)
+    // };
 
     let llvm_ctx = LLVMCodeGen::new_ctx();
     let mut llvm_codegen =
@@ -304,8 +301,6 @@ fn main() {
     llvm_codegen.lower();
     // llvm_codegen.optimize_module(OptimizationLevel::Default);
     llvm_codegen.print_ir();
-
-    */
 
     // let (file_path, file_content) = cli::read_file();
 
