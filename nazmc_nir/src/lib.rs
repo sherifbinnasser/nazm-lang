@@ -6,6 +6,8 @@ use nazmc_diagnostics::file_info::FileInfo;
 use nazmc_diagnostics::span::Span;
 use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
+use std::hash::Hash;
+use std::hash::Hasher;
 use std::rc::Rc;
 use thin_vec::ThinVec;
 pub mod fmt;
@@ -76,6 +78,20 @@ impl RcValue {
 
     pub fn inner(&self) -> Value {
         self.borrow().clone()
+    }
+}
+
+impl PartialEq for RcValue {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.data, &other.data)
+    }
+}
+
+impl Eq for RcValue {}
+
+impl Hash for RcValue {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        Rc::as_ptr(&self.data).hash(state);
     }
 }
 

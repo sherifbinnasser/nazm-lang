@@ -1,9 +1,10 @@
+use nazmc_data_pool::{typed_index_collections::TiSlice, StrKey};
 use nazmc_nir::*;
 use std::{collections::HashMap, rc::Rc};
 
 pub struct Interpreter<'a> {
     nir: &'a NIR<'a>,
-    str_pool: Vec<RcValue>,
+    str_pool: &'a TiSlice<StrKey, RcValue>,
     current_cfg: Option<&'a CFG>,
     current_frame: Frame,
     null_ptr: RcValue,
@@ -19,25 +20,10 @@ struct Frame {
 }
 
 impl<'a> Interpreter<'a> {
-    pub fn new(nir: &'a NIR) -> Self {
-        let mut str_pool = Vec::with_capacity(nir.str_pool.len());
-        for string in &nir.str_pool {
-            let byte_array = RcValue::new(Value::Agg(Rc::new(
-                string
-                    .bytes()
-                    .map(|byte| RcValue::new(Value::UInt(byte as u64)))
-                    .collect(),
-            )));
-            let slice = RcValue::new(Value::Agg(Rc::new(vec![
-                RcValue::new(Value::Ptr(byte_array)),
-                RcValue::new(Value::UInt(string.len() as u64)),
-            ])));
-            str_pool.push(slice);
-        }
-
+    pub fn new(nir: &'a NIR, str_pool: &'a TiSlice<StrKey, RcValue>) -> Self {
         Self {
-            str_pool,
             nir,
+            str_pool,
             current_cfg: None,
             current_frame: Default::default(),
             null_ptr: RcValue::default(),
@@ -229,7 +215,7 @@ impl<'a> Interpreter<'a> {
     fn evaluate_rvalue(&mut self, rvalue: &RValue) -> Result<RcValue, String> {
         let value = match rvalue {
             RValue::Use(op) => return self.evaluate_operand(op),
-            RValue::Str(sk) => return Ok(self.str_pool[sk.0 as usize].clone()),
+            RValue::Str(sk) => return Ok(self.str_pool[*sk].clone()),
             RValue::RefMut(lv) | RValue::Ref(lv) => Value::Ptr(self.evaluate_lvalue(*lv)?),
             RValue::Tuple(elements) | RValue::ArrayElements(elements) => {
                 let mut eval_elements = Vec::with_capacity(elements.len());

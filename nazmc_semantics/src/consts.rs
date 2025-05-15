@@ -92,8 +92,10 @@ impl<'a> SemanticsAnalyzer<'a> {
             self.analyze_const_cfg(is_unit, &mut cfg, const_key);
 
             if self.diagnostics.is_empty() {
-                let mut interpreter =
-                    nazmc_nir_interpreter::Interpreter::new(&self.nir_builder.nir);
+                let mut interpreter = nazmc_nir_interpreter::Interpreter::new(
+                    &self.nir_builder.nir,
+                    &self.interpreter_str_pool,
+                );
                 let return_value = interpreter.execute_cfg(&cfg, HashMap::new());
                 return_value.unwrap_or_default()
             } else {

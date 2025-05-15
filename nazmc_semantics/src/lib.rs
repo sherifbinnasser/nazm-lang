@@ -9,7 +9,7 @@ mod types;
 
 use nazmc_data_pool::{
     typed_index_collections::{TiSlice, TiVec},
-    FileKey, IdKey, ItemInfo, PkgKey, StrKey,
+    FileKey, IdKey, PkgKey, StrKey,
 };
 
 pub(crate) use nazmc_ast::*;
@@ -19,9 +19,9 @@ use nazmc_diagnostics::{
     span::{Span, SpanCursor},
     CodeWindow, Diagnostic,
 };
-use nazmc_nir::{Arg, Field, CFG, NIR};
+use nazmc_nir::{Arg, Field, RcValue, Value, CFG, NIR};
 use nir_builder::{CFGBuilder, NIRBuilder};
-use std::{collections::HashMap, process::exit};
+use std::{collections::HashMap, process::exit, rc::Rc};
 use thin_vec::ThinVec;
 use type_infer::{CompositeType, ConcreteType, Type, TypeInferenceCtx, TypeVarKey};
 use typed_ast::{LetStm, TypedAST};
@@ -60,6 +60,8 @@ pub struct SemanticsAnalyzer<'a> {
     type_inf_ctx: TypeInferenceCtx,
     nir_builder: NIRBuilder<'a>,
     cfg_builder: CFGBuilder,
+    interpreter_str_arrays: HashMap<RcValue, StrKey>,
+    interpreter_str_pool: TiVec<StrKey, RcValue>,
     /// For fns and lambdas only
     current_scope_expected_return_ty: Type,
     current_lambda_first_implicit_return_ty_span: Option<Span>,
@@ -81,6 +83,26 @@ impl<'a> SemanticsAnalyzer<'a> {
         str_pool: TiVec<StrKey, String>,
         ast: nazmc_ast::AST<Resolved>,
     ) -> Self {
+        let mut interpreter_str_arrays = HashMap::with_capacity(str_pool.len());
+        let mut interpreter_str_pool = TiVec::with_capacity(str_pool.len());
+        for string in &str_pool {
+            let byte_array = RcValue::new(Value::Agg(Rc::new(
+                string
+                    .bytes()
+                    .map(|byte| RcValue::new(Value::UInt(byte as u64)))
+                    .collect(),
+            )));
+            interpreter_str_arrays.insert(
+                byte_array.clone(),
+                StrKey(interpreter_str_pool.len() as u32),
+            );
+            let slice = RcValue::new(Value::Agg(Rc::new(vec![
+                RcValue::new(Value::Ptr(byte_array)),
+                RcValue::new(Value::UInt(string.len() as u64)),
+            ])));
+            interpreter_str_pool.push(slice);
+        }
+
         Self {
             files_infos,
             files_to_pkgs,
@@ -112,6 +134,8 @@ impl<'a> SemanticsAnalyzer<'a> {
                 ..Default::default()
             },
             ast,
+            interpreter_str_arrays,
+            interpreter_str_pool,
             ..Default::default()
         }
     }
