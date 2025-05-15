@@ -1,4 +1,6 @@
-use nazmc_nir::RcValue;
+use std::rc::Rc;
+
+use nazmc_nir::{RcValue, Value};
 use typed_ast::Const;
 
 use crate::*;
@@ -11,9 +13,9 @@ impl<'a> SemanticsAnalyzer<'a> {
             self.analyze_const(const_key, call_file, call_span);
         }
 
-        //     for (const_key, cnst) in &self.nir_builder.nir.consts {
-        //         println!("const{} = {:?}", const_key.0, cnst.value);
-        //     }
+        for (const_key, cnst) in &self.nir_builder.nir.consts {
+            println!("const{} = {:?}", const_key.0, cnst.value);
+        }
     }
 
     pub(crate) fn analyze_const(
@@ -101,6 +103,21 @@ impl<'a> SemanticsAnalyzer<'a> {
             RcValue::default()
         };
 
+        if check_dangling_pointer(&*value.borrow()).is_err() {
+            let msg = format!(
+                "تم العثور على مؤشر منقطع عند حساب قيمة الثابت `{}`",
+                self.fmt_item_name(self.ast.consts[const_key].info)
+            );
+            let const_id_span = self.ast.consts[const_key].info.id_span;
+            let mut code_window = CodeWindow::new(
+                &self.files_infos[self.current_file_key],
+                const_id_span.start,
+            );
+            code_window.mark_error(const_id_span, vec![]);
+            let diagnostic = Diagnostic::error(msg, vec![code_window]);
+            self.diagnostics.push(diagnostic);
+        }
+
         self.typed_ast.exprs = typed_ast_exprs;
         self.typed_ast.lets = typed_ast_lets;
         self.unknown_ty_vars = unknown_ty_vars;
@@ -144,5 +161,24 @@ impl<'a> SemanticsAnalyzer<'a> {
         }
 
         self.nir_builder.nir = analyzer.drop();
+    }
+}
+
+fn check_dangling_pointer(value: &Value) -> Result<(), ()> {
+    match value {
+        Value::Ptr(rc_value) => {
+            if Rc::strong_count(&rc_value.data) == 1 {
+                Err(())
+            } else {
+                Ok(())
+            }
+        }
+        Value::Agg(vec) => {
+            for val in vec.iter() {
+                check_dangling_pointer(&*val.borrow())?
+            }
+            Ok(())
+        }
+        _ => Ok(()),
     }
 }

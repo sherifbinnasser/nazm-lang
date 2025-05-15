@@ -1,9 +1,5 @@
 use nazmc_nir::*;
-use std::{
-    cell::{Ref, RefCell},
-    collections::HashMap,
-    rc::Rc,
-};
+use std::{collections::HashMap, rc::Rc};
 
 pub struct Interpreter<'a> {
     nir: &'a NIR<'a>,
