@@ -65,21 +65,11 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                     unreachable!()
                 };
                 let struct_ty = self.tuples_layouts.borrow()[&tuple_type_key].struct_ty;
-                self.lower_struct_rvalue(
-                    dest_ptr,
-                    struct_ty,
-                    types.iter().enumerate().map(|(i, &t)| (i as u32, t)),
-                    cfg,
-                )
+                self.lower_struct_rvalue(dest_ptr, struct_ty, types.iter(), cfg)
             }
             RValue::Struct { struct_key, fields } => {
                 let struct_ty = self.structs_layouts.borrow()[struct_key].struct_ty;
-                self.lower_struct_rvalue(
-                    dest_ptr,
-                    struct_ty,
-                    fields.iter().map(|(i, t)| (*i, *t)),
-                    cfg,
-                )
+                self.lower_struct_rvalue(dest_ptr, struct_ty, fields.iter(), cfg)
             }
             RValue::Cast { val, kind } => {
                 // Only array to slice is allowed
@@ -184,10 +174,10 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         &self,
         dest_ptr: PointerValue,
         struct_ty: StructType,
-        fields: impl Iterator<Item = (u32, Operand)>,
+        fields: impl Iterator<Item = &'a Operand>,
         cfg: &CFG,
     ) {
-        for (i, field) in fields {
+        for (i, field) in fields.enumerate() {
             let size = self.get_type_size(field.typ);
 
             if size == 0 {
@@ -196,7 +186,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
 
             let field_ptr = self
                 .builder
-                .build_struct_gep(struct_ty.as_basic_type_enum(), dest_ptr, i, "")
+                .build_struct_gep(struct_ty.as_basic_type_enum(), dest_ptr, i as u32, "")
                 .unwrap();
 
             if self.is_agg_type(field.typ) {

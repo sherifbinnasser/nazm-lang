@@ -1,5 +1,6 @@
 use nazmc_nir::*;
 use std::{collections::HashMap, rc::Rc};
+mod mem;
 
 pub struct Interpreter<'a> {
     nir: &'a NIR<'a>,
@@ -231,9 +232,9 @@ impl<'a> Interpreter<'a> {
                 Value::Agg(Rc::new(eval_elements))
             }
             RValue::Struct { struct_key, fields } => {
-                let mut eval_elements = vec![RcValue::default(); fields.len()];
-                for (idx, op) in fields {
-                    eval_elements[*idx as usize] = self.evaluate_operand(op)?;
+                let mut eval_elements = Vec::with_capacity(fields.len());
+                for op in fields {
+                    eval_elements.push(self.evaluate_operand(op)?);
                 }
                 Value::Agg(Rc::new(eval_elements))
             }

@@ -28,6 +28,7 @@ new_data_pool_key! { FnPtrTypeKey }
 new_data_pool_key! { TempKey }
 new_data_pool_key! { LValueKey }
 new_data_pool_key! { ConstKey }
+new_data_pool_key! { PtrKey }
 
 /// NIR, the Nazm Intermediate Representation
 #[derive(Default)]
@@ -108,6 +109,7 @@ pub enum Value {
     Char(char),
     FnPtr(FnKey),
     Ptr(RcValue),
+    /// Add Rc around Vec to avoid deep cloning
     Agg(Rc<Vec<RcValue>>),
 }
 
@@ -354,7 +356,7 @@ pub enum RValue {
     },
     Struct {
         struct_key: StructKey,
-        fields: ThinVec<(u32, Operand)>,
+        fields: ThinVec<Operand>,
     },
     Cast {
         val: Operand,

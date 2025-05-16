@@ -773,7 +773,6 @@ impl<'a> SemanticsAnalyzer<'a> {
                     .iter()
                     .map(|(id, expr_key)| {
                         (
-                            // REVIEW: Should we cache the fields indecies
                             self.nir_builder.nir.structs[&struct_key]
                                 .fields
                                 .iter()
@@ -783,7 +782,9 @@ impl<'a> SemanticsAnalyzer<'a> {
                             self.lower_expr(*expr_key),
                         )
                     })
-                    .collect();
+                    .collect::<HashMap<_, _>>();
+
+                let fields = fields.into_iter().sorted().collect();
 
                 let rvalue = RValue::Struct { struct_key, fields };
 
