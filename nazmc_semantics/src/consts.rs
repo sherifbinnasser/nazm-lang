@@ -13,9 +13,9 @@ impl<'a> SemanticsAnalyzer<'a> {
             self.analyze_const(const_key, call_file, call_span);
         }
 
-        // for (const_key, cnst) in &self.nir_builder.nir.consts {
-        //     println!("const{} = {:?}", const_key.0, cnst.value);
-        // }
+        for (const_key, cnst) in &self.nir_builder.nir.consts {
+            println!("const{} = {:?}", const_key.0, cnst.value);
+        }
     }
 
     pub(crate) fn analyze_const(
@@ -95,7 +95,7 @@ impl<'a> SemanticsAnalyzer<'a> {
                 let mut interpreter =
                     nazmc_nir_interpreter::Interpreter::new(&self.nir_builder.nir);
                 let return_value = interpreter.execute_cfg(&cfg, HashMap::new());
-                return_value.unwrap_or_default()
+                return_value.unwrap()
             } else {
                 RcValue::default()
             }
