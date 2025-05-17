@@ -1421,6 +1421,9 @@ impl<'a> SemanticsAnalyzer<'a> {
                 }),
                 _ => None,
             },
+            (Type::U, ptr_matches!()) => Some(UIntToPtr),
+            (ptr_matches!(), Type::U) => Some(PtrToUInt),
+            (ptr_matches!(), ptr_matches!()) => Some(PtrToPtr),
             (i1 @ uint_matches!(), t2) => match t2 {
                 int_matches!() => Some(UIntToInt {
                     int1_size: get_int_size(i1),
@@ -1436,15 +1439,8 @@ impl<'a> SemanticsAnalyzer<'a> {
                 F8 => Some(UIntToF8 {
                     int_size: get_int_size(i1),
                 }),
-                ptr_matches!() => Some(UIntToPtr {
-                    int_size: get_int_size(i1),
-                }),
                 _ => None,
             },
-            (ptr_matches!(), i @ uint_matches!()) => Some(PtrToUInt {
-                int_size: get_int_size(i),
-            }),
-            (ptr_matches!(), ptr_matches!()) => Some(PtrToPtr),
             (Slice(type_key1) | MutSlice(type_key1), Slice(type_key2) | MutSlice(type_key2))
                 if type_key1 == type_key2
                     || ptr_matches!(*type_key1) && ptr_matches!(*type_key2) =>

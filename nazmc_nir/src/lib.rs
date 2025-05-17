@@ -127,7 +127,7 @@ pub struct Field {
 pub struct NamedConst {
     pub info: ItemInfo,
     pub typ: TypeKey,
-    pub value: RcValue,
+    pub value: PtrKey,
 }
 
 pub struct Static {
@@ -469,13 +469,9 @@ pub enum CastKind {
     /// It is used when casting a slice of pointers to another slice of pointers, or array of pointers to another array (same length) of pointers
     PtrToPtr,
     /// Cast only from unsigned ptr-sized integers
-    UIntToPtr {
-        int_size: Size,
-    },
+    UIntToPtr,
     /// Cast only to unsigned ptr-sized integers
-    PtrToUInt {
-        int_size: Size,
-    },
+    PtrToUInt,
 
     // Primtives to integers
     F4ToInt {

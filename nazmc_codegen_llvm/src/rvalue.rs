@@ -668,22 +668,16 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
 
             // Pointer conversions
             CastKind::PtrToPtr => val,
-            CastKind::UIntToPtr { .. } => self
+            CastKind::UIntToPtr => self
                 .builder
                 .build_int_to_ptr(val.into_int_value(), self.ptr_type(), "")
                 .unwrap()
                 .as_any_value_enum(),
-            CastKind::PtrToUInt { int_size } => {
-                let int_bits = size_to_bits(*int_size);
-                self.builder
-                    .build_ptr_to_int(
-                        val.into_pointer_value(),
-                        self.context.custom_width_int_type(int_bits),
-                        "",
-                    )
-                    .unwrap()
-                    .as_any_value_enum()
-            }
+            CastKind::PtrToUInt => self
+                .builder
+                .build_ptr_to_int(val.into_pointer_value(), self.isize_type(), "")
+                .unwrap()
+                .as_any_value_enum(),
 
             // Float to integer conversions
             CastKind::F4ToInt { int_size } | CastKind::F8ToInt { int_size } => {
