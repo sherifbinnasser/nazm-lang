@@ -6,6 +6,7 @@ mod types;
 mod util;
 
 use fns::*;
+use nazmc_nir_interpreter::InterpreterData;
 use operand::*;
 use rvalue::*;
 use std::{
@@ -49,6 +50,7 @@ pub struct LLVMCodeGen<'ctx, 'nir> {
     builder: Builder<'ctx>,
     machine: TargetMachine,
     nir: NIR<'nir>,
+    interpreter_data: InterpreterData,
     llvm_fns: TiVec<FnKey, FunctionValue<'ctx>>,
     llvm_str_pool: TiVec<StrKey, GlobalValue<'ctx>>,
     llvm_str_slices_pool: TiVec<StrKey, PointerValue<'ctx>>,
@@ -129,6 +131,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
     pub fn new(
         context: &'ctx Context,
         nir: NIR<'nir>,
+        interpreter_data: InterpreterData,
         name: &str,
         target: Option<&str>,
         opt_lvl: OptimizationLevel,
@@ -163,6 +166,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             module,
             builder,
             machine,
+            interpreter_data,
             llvm_fns: TiVec::with_capacity(nir.fns.len()),
             llvm_str_pool: TiVec::with_capacity(nir.str_pool.len()),
             llvm_str_slices_pool: TiVec::with_capacity(nir.str_pool.len()),
@@ -268,14 +272,15 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             return ptr.clone();
         }
 
-        let typ = self.lower_type(self.nir.consts[&const_key].typ);
+        let typ = self.nir.consts[&const_key].typ;
+        let llvm_typ = self.lower_type(typ);
         let global_const = self.module.add_global(
-            any_type_enum_to_basic_type_enum(typ),
+            any_type_enum_to_basic_type_enum(llvm_typ),
             None,
             &format!("CONST{}", const_key.0),
         );
 
-        let value = self.lower_rc_value(self.nir.consts[&const_key].value.clone(), typ);
+        let value = self.lower_bytes(self.nir.consts[&const_key].value, typ, llvm_typ);
 
         global_const.set_initializer(&value);
         global_const.set_constant(true);
@@ -286,91 +291,161 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         global_const
     }
 
-    fn lower_rc_value(&mut self, value: RcValue, typ: AnyTypeEnum<'ctx>) -> BasicValueEnum<'ctx> {
-        match &*value.borrow() {
-            Value::Unit => self
+    fn lower_bytes(
+        &mut self,
+        value_ptr: PtrKey,
+        typ: TypeKey,
+        llvm_typ: AnyTypeEnum<'ctx>,
+    ) -> BasicValueEnum {
+        enum Data {
+            Int(u64),
+            Float(f64),
+            Ptr(u64),
+        }
+
+        use nazmc_nir_interpreter::bytes::*;
+
+        let value = self.interpreter_data.memory.get_bytes_at(value_ptr);
+
+        macro_rules! to_int {
+            ($method: ident) => {
+                llvm_typ
+                    .into_int_type()
+                    .const_int($method(value).unwrap() as u64, false)
+                    .as_basic_value_enum()
+            };
+        }
+
+        macro_rules! to_float {
+            ($method: ident) => {
+                llvm_typ
+                    .into_float_type()
+                    .const_float($method(value).unwrap() as f64)
+                    .as_basic_value_enum()
+            };
+        }
+
+        match self.nir.types[typ] {
+            Type::Bool => to_int!(to_bool),
+            Type::Char => to_int!(to_char),
+            Type::I => to_int!(to_isize),
+            Type::I1 => to_int!(to_i8),
+            Type::I2 => to_int!(to_i16),
+            Type::I4 => to_int!(to_i32),
+            Type::I8 => to_int!(to_i64),
+            Type::U => to_int!(to_usize),
+            Type::U1 => to_int!(to_u8),
+            Type::U2 => to_int!(to_u16),
+            Type::U4 => to_int!(to_u32),
+            Type::U8 => to_int!(to_u64),
+            Type::F4 => to_float!(to_f32),
+            Type::F8 => to_float!(to_f64),
+            Type::Unit => self
                 .context
                 .i64_type()
                 .const_int(0, false)
                 .as_basic_value_enum(),
-            Value::Int(int) => typ
-                .into_int_type()
-                .const_int(*int as u64, false)
-                .as_basic_value_enum(),
-            Value::UInt(int) => typ
-                .into_int_type()
-                .const_int(*int, false)
-                .as_basic_value_enum(),
-            Value::Float(float) => typ
-                .into_float_type()
-                .const_float(*float as f64)
-                .as_basic_value_enum(),
-            Value::Bool(b) => typ
-                .into_int_type() // i8
-                .const_int(*b as u64, false)
-                .as_basic_value_enum(),
-            Value::Char(c) => typ
-                .into_int_type() // i32
-                .const_int(*c as u64, false)
-                .as_basic_value_enum(),
-            Value::FnPtr(fn_key) => self.llvm_fns[*fn_key]
-                .as_global_value()
-                .as_pointer_value()
-                .as_basic_value_enum(),
-            Value::Ptr(rc_value) => {
-                if let Some(str_key) = self.nir.interpreter_str_pool.get(rc_value) {
-                    // Prepare GEP indices
-                    let i32_type = self.context.i32_type();
-                    let zero = i32_type.const_zero();
-                    let two = i32_type.const_int(2, false);
-                    let str_ptr = self.llvm_str_pool[*str_key];
-                    let str_typ = any_type_enum_to_basic_type_enum(str_ptr.get_value_type());
-                    unsafe { str_ptr.as_pointer_value().const_gep(str_typ, &[zero, two]) }
-                } else {
-                    todo!()
-                }
-                .as_basic_value_enum()
-            }
-            Value::Agg(vec) => match typ {
-                AnyTypeEnum::ArrayType(array_type) => {
-                    let underlying_typ = array_type.get_element_type().as_any_type_enum();
-                    let values_iter = vec
-                        .iter()
-                        .map(|val| self.lower_rc_value(val.clone(), underlying_typ));
-
-                    macro_rules! map {
-                        ($id: ident, $typ: expr) => {
-                            $typ.const_array(&values_iter.map(|val| val.$id()).collect::<Vec<_>>())
-                        };
-                    }
-
-                    match underlying_typ {
-                        AnyTypeEnum::ArrayType(typ) => map!(into_array_value, typ),
-                        AnyTypeEnum::FloatType(typ) => map!(into_float_value, typ),
-                        AnyTypeEnum::IntType(typ) => map!(into_int_value, typ),
-                        AnyTypeEnum::PointerType(typ) => map!(into_pointer_value, typ),
-                        AnyTypeEnum::StructType(typ) => map!(into_struct_value, typ),
-                        AnyTypeEnum::FunctionType(typ) => map!(
-                            into_pointer_value,
-                            typ.get_context().ptr_type(AddressSpace::default())
-                        ),
-                        _ => unreachable!(),
-                    }
+            Type::FnPtr(fn_ptr_type_key) => {
+                let fn_key = to_fn_key(value).unwrap();
+                self.llvm_fns[fn_key]
+                    .as_global_value()
+                    .as_pointer_value()
                     .as_basic_value_enum()
-                }
-                AnyTypeEnum::StructType(struct_type) => {
-                    let mut fields = Vec::with_capacity(vec.len());
-                    for (rc_value, typ) in vec.iter().zip(struct_type.get_field_types_iter()) {
-                        fields.push(self.lower_rc_value(rc_value.clone(), typ.as_any_type_enum()));
-                    }
-                    struct_type
-                        .const_named_struct(&fields)
-                        .as_basic_value_enum()
-                }
-                _ => unreachable!(),
-            },
+            }
+            Type::Ptr(type_key) | Type::MutPtr(type_key) => todo!(),
+            Type::Struct(struct_key) => todo!(),
+            Type::Slice(type_key) | Type::MutSlice(type_key) => todo!(),
+            Type::Array(array_type_key) => todo!(),
+            Type::Tuple(tuple_type_key) => todo!(),
+            Type::Lambda(lambda_type_key) => todo!(),
         }
     }
+
+    // fn lower_rc_value(&mut self, value: RcValue, typ: AnyTypeEnum<'ctx>) -> BasicValueEnum<'ctx> {
+    //     match &*value.borrow() {
+    //         Value::Unit => self
+    //             .context
+    //             .i64_type()
+    //             .const_int(0, false)
+    //             .as_basic_value_enum(),
+    //         Value::Int(int) => typ
+    //             .into_int_type()
+    //             .const_int(*int as u64, false)
+    //             .as_basic_value_enum(),
+    //         Value::UInt(int) => typ
+    //             .into_int_type()
+    //             .const_int(*int, false)
+    //             .as_basic_value_enum(),
+    //         Value::Float(float) => typ
+    //             .into_float_type()
+    //             .const_float(*float as f64)
+    //             .as_basic_value_enum(),
+    //         Value::Bool(b) => typ
+    //             .into_int_type() // i8
+    //             .const_int(*b as u64, false)
+    //             .as_basic_value_enum(),
+    //         Value::Char(c) => typ
+    //             .into_int_type() // i32
+    //             .const_int(*c as u64, false)
+    //             .as_basic_value_enum(),
+    //         Value::FnPtr(fn_key) => self.llvm_fns[*fn_key]
+    //             .as_global_value()
+    //             .as_pointer_value()
+    //             .as_basic_value_enum(),
+    //         Value::Ptr(rc_value) => {
+    //             if let Some(str_key) = self.nir.interpreter_str_pool.get(rc_value) {
+    //                 // Prepare GEP indices
+    //                 let i32_type = self.context.i32_type();
+    //                 let zero = i32_type.const_zero();
+    //                 let two = i32_type.const_int(2, false);
+    //                 let str_ptr = self.llvm_str_pool[*str_key];
+    //                 let str_typ = any_type_enum_to_basic_type_enum(str_ptr.get_value_type());
+    //                 unsafe { str_ptr.as_pointer_value().const_gep(str_typ, &[zero, two]) }
+    //             } else {
+    //                 todo!()
+    //             }
+    //             .as_basic_value_enum()
+    //         }
+    //         Value::Agg(vec) => match typ {
+    //             AnyTypeEnum::ArrayType(array_type) => {
+    //                 let underlying_typ = array_type.get_element_type().as_any_type_enum();
+    //                 let values_iter = vec
+    //                     .iter()
+    //                     .map(|val| self.lower_rc_value(val.clone(), underlying_typ));
+
+    //                 macro_rules! map {
+    //                     ($id: ident, $typ: expr) => {
+    //                         $typ.const_array(&values_iter.map(|val| val.$id()).collect::<Vec<_>>())
+    //                     };
+    //                 }
+
+    //                 match underlying_typ {
+    //                     AnyTypeEnum::ArrayType(typ) => map!(into_array_value, typ),
+    //                     AnyTypeEnum::FloatType(typ) => map!(into_float_value, typ),
+    //                     AnyTypeEnum::IntType(typ) => map!(into_int_value, typ),
+    //                     AnyTypeEnum::PointerType(typ) => map!(into_pointer_value, typ),
+    //                     AnyTypeEnum::StructType(typ) => map!(into_struct_value, typ),
+    //                     AnyTypeEnum::FunctionType(typ) => map!(
+    //                         into_pointer_value,
+    //                         typ.get_context().ptr_type(AddressSpace::default())
+    //                     ),
+    //                     _ => unreachable!(),
+    //                 }
+    //                 .as_basic_value_enum()
+    //             }
+    //             AnyTypeEnum::StructType(struct_type) => {
+    //                 let mut fields = Vec::with_capacity(vec.len());
+    //                 for (rc_value, typ) in vec.iter().zip(struct_type.get_field_types_iter()) {
+    //                     fields.push(self.lower_rc_value(rc_value.clone(), typ.as_any_type_enum()));
+    //                 }
+    //                 struct_type
+    //                     .const_named_struct(&fields)
+    //                     .as_basic_value_enum()
+    //             }
+    //             _ => unreachable!(),
+    //         },
+    //     }
+    // }
 
     fn get_id(&self, id: IdKey) -> &str {
         &self.nir.id_pool[id]

@@ -19,10 +19,10 @@ use nazmc_diagnostics::{
     span::{Span, SpanCursor},
     CodeWindow, Diagnostic,
 };
-use nazmc_nir::{Arg, Field, RcValue, Value, CFG, NIR};
+use nazmc_nir::{Arg, Field, CFG, NIR};
 use nazmc_nir_interpreter::InterpreterData;
 use nir_builder::{CFGBuilder, NIRBuilder};
-use std::{collections::HashMap, process::exit, rc::Rc};
+use std::{collections::HashMap, process::exit};
 use thin_vec::ThinVec;
 use type_infer::{CompositeType, ConcreteType, Type, TypeInferenceCtx, TypeVarKey};
 use typed_ast::{LetStm, TypedAST};
@@ -135,7 +135,7 @@ impl<'a> SemanticsAnalyzer<'a> {
         }
     }
 
-    pub fn analyze(mut self) -> NIR<'a> {
+    pub fn analyze(mut self) -> (NIR<'a>, InterpreterData) {
         self.cfg_builder.build(); // To init first cfg start and end blocks
 
         // This will initialize bool type to TypeKey(0)
@@ -240,7 +240,7 @@ impl<'a> SemanticsAnalyzer<'a> {
             exit(1);
         }
 
-        self.nir_builder.nir
+        (self.nir_builder.nir, self.interpreter_data)
     }
 
     fn report_cycle_detected(&mut self, last_call_file: FileKey, last_call_span: Span) {

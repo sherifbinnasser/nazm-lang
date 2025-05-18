@@ -255,6 +255,7 @@ dependencies = [
  "inkwell",
  "nazmc_data_pool",
  "nazmc_nir",
+ "nazmc_nir_interpreter",
  "thin-vec",
 ]
 
