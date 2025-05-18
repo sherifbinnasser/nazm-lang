@@ -784,7 +784,11 @@ impl<'a> SemanticsAnalyzer<'a> {
                     })
                     .collect::<HashMap<_, _>>();
 
-                let fields = fields.into_iter().sorted().collect();
+                let fields = fields
+                    .into_iter()
+                    .sorted_by_key(|v| v.0)
+                    .map(|v| v.1)
+                    .collect();
 
                 let rvalue = RValue::Struct { struct_key, fields };
 

@@ -1,22 +1,19 @@
 use mem::{bytes::to_f32, Memory};
-use nazmc_data_pool::{typed_index_collections::TiVec, StrKey};
 use nazmc_nir::*;
 use std::collections::HashMap;
 mod mem;
-use mem::bytes;
+pub use mem::bytes;
 
 pub struct Interpreter<'a> {
     nir: &'a NIR<'a>,
     current_cfg: Option<&'a CFG>,
     current_frame: Frame,
-    null_ptr: RcValue,
-    data: InterpreterData,
+    data: &'a mut InterpreterData,
 }
 
+#[derive(Default)]
 pub struct InterpreterData {
-    memory: Memory,
-    str_pool: TiVec<StrKey, PtrKey>,
-    str_slices_pool: TiVec<StrKey, PtrKey>,
+    pub memory: Memory,
     structs_layouts: HashMap<StructKey, AggLayout>,
     tuples_layouts: HashMap<TupleTypeKey, AggLayout>,
 }
@@ -36,14 +33,13 @@ struct Frame {
 }
 
 impl<'a> Interpreter<'a> {
-    pub fn new(nir: &'a NIR) -> Self {
-        todo!()
-        // Self {
-        //     nir,
-        //     current_cfg: None,
-        //     current_frame: Default::default(),
-        //     null_ptr: RcValue::default(),
-        // }
+    pub fn new(nir: &'a NIR, data: &'a mut InterpreterData) -> Self {
+        Self {
+            nir,
+            data,
+            current_cfg: None,
+            current_frame: Default::default(),
+        }
     }
 
     fn compute_struct_layout(&mut self, struct_key: StructKey) {
@@ -318,7 +314,7 @@ impl<'a> Interpreter<'a> {
             RValue::Str(sk) => self
                 .data
                 .memory
-                .get_bytes_at(self.data.str_slices_pool[*sk])
+                .get_bytes_at(self.nir.interpreter_str_slices_pool[*sk])
                 .to_vec(),
             RValue::RefMut(lv) | RValue::Ref(lv) => {
                 let ptr = self.evaluate_lvalue_ptr(*lv);

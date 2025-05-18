@@ -1,6 +1,7 @@
 use nazmc_data_pool::typed_index_collections::TiVec;
 use nazmc_nir::PtrKey;
 
+#[derive(Default)]
 pub struct Memory {
     stack: TiVec<PtrKey, u8>,
 }
@@ -52,124 +53,12 @@ impl Memory {
         ptr
     }
 
-    pub fn push_u8(&mut self, value: u8) -> PtrKey {
+    pub fn push_usize(&mut self, value: usize) -> PtrKey {
         self.push_bytes(&value.to_le_bytes())
-    }
-
-    pub fn push_u16(&mut self, value: u16) -> PtrKey {
-        self.push_bytes(&value.to_le_bytes())
-    }
-
-    pub fn push_u32(&mut self, value: u32) -> PtrKey {
-        self.push_bytes(&value.to_le_bytes())
-    }
-
-    pub fn push_u64(&mut self, value: u64) -> PtrKey {
-        self.push_bytes(&value.to_le_bytes())
-    }
-
-    pub fn push_f32(&mut self, val: f32) -> PtrKey {
-        self.push_bytes(&val.to_le_bytes())
-    }
-
-    pub fn push_f64(&mut self, val: f64) -> PtrKey {
-        self.push_bytes(&val.to_le_bytes())
-    }
-
-    pub fn push_char(&mut self, val: char) -> PtrKey {
-        self.push_u32(val as u32)
-    }
-
-    pub fn push_bool(&mut self, val: bool) -> PtrKey {
-        self.push_u8(if val { 1 } else { 0 })
     }
 
     pub fn push_ptr(&mut self, val: PtrKey) -> PtrKey {
-        self.push_u32(val.0)
-    }
-
-    // ======== Pops ========
-
-    pub fn pop_bytes(&mut self, size: usize) -> Option<Vec<u8>> {
-        if self.stack.len() < size {
-            return None;
-        }
-        let start = self.stack.len() - size;
-        let bytes = self.stack.raw[start..].to_vec();
-        self.stack.truncate(start);
-        Some(bytes)
-    }
-
-    pub fn pop_u8(&mut self) -> Option<u8> {
-        self.stack.raw.pop()
-    }
-
-    pub fn pop_u16(&mut self) -> Option<u16> {
-        if self.stack.len() < 2 {
-            return None;
-        }
-        let start = self.stack.len() - 2;
-        let bytes = &self.stack.raw[start..];
-        let val = u16::from_le_bytes(bytes.try_into().unwrap());
-        self.stack.truncate(start);
-        Some(val)
-    }
-
-    pub fn pop_u32(&mut self) -> Option<u32> {
-        if self.stack.len() < 4 {
-            return None;
-        }
-        let start = self.stack.len() - 4;
-        let bytes = &self.stack.raw[start..];
-        let val = u32::from_le_bytes(bytes.try_into().unwrap());
-        self.stack.truncate(start);
-        Some(val)
-    }
-
-    pub fn pop_u64(&mut self) -> Option<u64> {
-        if self.stack.len() < 8 {
-            return None;
-        }
-        let start = self.stack.len() - 8;
-        let bytes = &self.stack.raw[start..];
-        let val = u64::from_le_bytes(bytes.try_into().unwrap());
-        self.stack.truncate(start);
-        Some(val)
-    }
-
-    pub fn pop_f32(&mut self) -> Option<f32> {
-        if self.stack.len() < 4 {
-            return None;
-        }
-        let start = self.stack.len() - 4;
-        let bytes = &self.stack.raw[start..];
-        let val = f32::from_le_bytes(bytes.try_into().unwrap());
-        self.stack.truncate(start);
-        Some(val)
-    }
-
-    pub fn pop_f64(&mut self) -> Option<f64> {
-        if self.stack.len() < 8 {
-            return None;
-        }
-        let start = self.stack.len() - 8;
-        let bytes = &self.stack.raw[start..];
-        let val = f64::from_le_bytes(bytes.try_into().unwrap());
-        self.stack.truncate(start);
-        Some(val)
-    }
-
-    pub fn pop_char(&mut self) -> Option<char> {
-        let code = self.pop_u32()?;
-        std::char::from_u32(code)
-    }
-
-    pub fn pop_bool(&mut self) -> Option<bool> {
-        self.pop_u8().map(|b| b != 0)
-    }
-
-    pub fn pop_ptr(&mut self) -> Option<PtrKey> {
-        self.pop_u32().map(PtrKey)
+        self.push_usize(val.0 as usize)
     }
 }
 

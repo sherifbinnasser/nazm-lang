@@ -20,6 +20,7 @@ use nazmc_diagnostics::{
     CodeWindow, Diagnostic,
 };
 use nazmc_nir::{Arg, Field, RcValue, Value, CFG, NIR};
+use nazmc_nir_interpreter::InterpreterData;
 use nir_builder::{CFGBuilder, NIRBuilder};
 use std::{collections::HashMap, process::exit, rc::Rc};
 use thin_vec::ThinVec;
@@ -60,6 +61,7 @@ pub struct SemanticsAnalyzer<'a> {
     type_inf_ctx: TypeInferenceCtx,
     nir_builder: NIRBuilder<'a>,
     cfg_builder: CFGBuilder,
+    interpreter_data: InterpreterData,
     /// For fns and lambdas only
     current_scope_expected_return_ty: Type,
     current_lambda_first_implicit_return_ty_span: Option<Span>,
@@ -81,24 +83,18 @@ impl<'a> SemanticsAnalyzer<'a> {
         str_pool: TiVec<StrKey, String>,
         ast: nazmc_ast::AST<Resolved>,
     ) -> Self {
-        let mut interpreter_str_pool = HashMap::with_capacity(str_pool.len());
+        let mut interpreter_data = InterpreterData::default();
+        let mut interpreter_str_pool = TiVec::with_capacity(str_pool.len());
         let mut interpreter_str_slices_pool = TiVec::with_capacity(str_pool.len());
         for string in &str_pool {
-            let byte_array = RcValue::new(Value::Agg(Rc::new(
-                string
-                    .bytes()
-                    .map(|byte| RcValue::new(Value::UInt(byte as u64)))
-                    .collect(),
-            )));
-            interpreter_str_pool.insert(
-                byte_array.clone(),
-                StrKey(interpreter_str_slices_pool.len() as u32),
-            );
-            let slice = RcValue::new(Value::Agg(Rc::new(vec![
-                RcValue::new(Value::Ptr(byte_array)),
-                RcValue::new(Value::UInt(string.len() as u64)),
-            ])));
-            interpreter_str_slices_pool.push(slice);
+            let str_ptr_key = interpreter_data.memory.push_bytes(string.as_bytes());
+            interpreter_str_pool.push(str_ptr_key);
+        }
+        for (str_key, string) in str_pool.iter_enumerated() {
+            let str_ptr_key = interpreter_str_pool[str_key];
+            let str_slice_key = interpreter_data.memory.push_ptr(str_ptr_key);
+            interpreter_data.memory.push_usize(string.len());
+            interpreter_str_slices_pool.push(str_slice_key);
         }
 
         Self {
@@ -134,6 +130,7 @@ impl<'a> SemanticsAnalyzer<'a> {
                 ..Default::default()
             },
             ast,
+            interpreter_data,
             ..Default::default()
         }
     }
