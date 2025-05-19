@@ -280,7 +280,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             &format!("CONST{}", const_key.0),
         );
 
-        let value = self.lower_bytes(self.nir.consts[&const_key].value, typ, llvm_typ);
+        let value = self.lower_bytes(self.nir.consts[&const_key].value, typ);
 
         global_const.set_initializer(&value);
         global_const.set_constant(true);
@@ -317,14 +317,10 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         }
     }
 
-    fn lower_bytes(
-        &mut self,
-        value_ptr: PtrKey,
-        typ: TypeKey,
-        llvm_typ: AnyTypeEnum<'ctx>,
-    ) -> BasicValueEnum {
+    fn lower_bytes(&self, value_ptr: PtrKey, typ: TypeKey) -> BasicValueEnum {
         use nazmc_nir_interpreter::bytes::*;
 
+        let llvm_typ = self.lower_type(typ);
         let size = self.get_interpreter_type_size(typ);
         let value = self
             .interpreter_data
@@ -377,10 +373,79 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                     .as_basic_value_enum()
             }
             Type::Ptr(type_key) | Type::MutPtr(type_key) => todo!(),
-            Type::Struct(struct_key) => todo!(),
             Type::Slice(type_key) | Type::MutSlice(type_key) => todo!(),
-            Type::Array(array_type_key) => todo!(),
-            Type::Tuple(tuple_type_key) => todo!(),
+            Type::Struct(struct_key) => {
+                let mut fields = Vec::with_capacity(self.nir.structs[&struct_key].fields.len());
+                for (&offset, typ) in self.interpreter_data.structs_layouts[&struct_key]
+                    .offsets
+                    .iter()
+                    .zip(self.nir.structs[&struct_key].fields.iter().map(|f| f.typ))
+                {
+                    let value_ptr = PtrKey(value_ptr.0 + offset);
+                    let field = self.lower_bytes(value_ptr, typ);
+                    fields.push(field);
+                }
+                let AnyTypeEnum::StructType(ty) = llvm_typ else {
+                    unreachable!()
+                };
+                ty.const_named_struct(&fields).as_basic_value_enum()
+            }
+            Type::Tuple(tuple_type_key) => {
+                let mut fields =
+                    Vec::with_capacity(self.nir.tuple_types[tuple_type_key].types.len());
+                for (&offset, &typ) in self.interpreter_data.tuples_layouts[&tuple_type_key]
+                    .offsets
+                    .iter()
+                    .zip(self.nir.tuple_types[tuple_type_key].types.iter())
+                {
+                    let value_ptr = PtrKey(value_ptr.0 + offset);
+                    let field = self.lower_bytes(value_ptr, typ);
+                    fields.push(field);
+                }
+                let AnyTypeEnum::StructType(ty) = llvm_typ else {
+                    unreachable!()
+                };
+                ty.const_named_struct(&fields).as_basic_value_enum()
+            }
+            Type::Array(array_type_key) => {
+                let ArrayType {
+                    underlying_typ: nir_underlying_typ,
+                    size: len,
+                } = self.nir.array_types[array_type_key];
+
+                let underlying_typ_interpreter_size =
+                    self.get_interpreter_type_size(nir_underlying_typ);
+
+                let AnyTypeEnum::ArrayType(array_type) = llvm_typ else {
+                    unreachable!()
+                };
+
+                let iter = (0..len).into_iter().map(|idx| {
+                    let offset = idx * underlying_typ_interpreter_size;
+                    let value_ptr = PtrKey(value_ptr.0 + offset);
+                    self.lower_bytes(value_ptr, nir_underlying_typ)
+                });
+
+                macro_rules! map {
+                    ($id: ident, $typ: expr) => {
+                        $typ.const_array(&iter.map(|val| val.$id()).collect::<Vec<_>>())
+                    };
+                }
+
+                match array_type.get_element_type().as_any_type_enum() {
+                    AnyTypeEnum::ArrayType(typ) => map!(into_array_value, typ),
+                    AnyTypeEnum::FloatType(typ) => map!(into_float_value, typ),
+                    AnyTypeEnum::IntType(typ) => map!(into_int_value, typ),
+                    AnyTypeEnum::PointerType(typ) => map!(into_pointer_value, typ),
+                    AnyTypeEnum::StructType(typ) => map!(into_struct_value, typ),
+                    AnyTypeEnum::FunctionType(typ) => map!(
+                        into_pointer_value,
+                        typ.get_context().ptr_type(AddressSpace::default())
+                    ),
+                    _ => unreachable!(),
+                }
+                .as_basic_value_enum()
+            }
             Type::Lambda(lambda_type_key) => todo!(),
         }
     }
