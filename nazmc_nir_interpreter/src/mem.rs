@@ -38,8 +38,9 @@ impl Memory {
         ptr
     }
 
-    pub fn get_bytes_at(&self, ptr: PtrKey) -> &[u8] {
-        &self.stack.raw[ptr.0 as usize..]
+    pub fn get_bytes_at(&self, ptr: PtrKey, size: usize) -> &[u8] {
+        let ptr = ptr.0 as usize;
+        &self.stack.raw[ptr..ptr + size]
     }
 
     pub fn push_bytes_at(&mut self, ptr: PtrKey, bytes: &[u8]) {

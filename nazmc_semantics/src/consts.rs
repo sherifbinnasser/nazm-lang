@@ -1,6 +1,3 @@
-use std::rc::Rc;
-
-use nazmc_nir::{PtrKey, TypeKey};
 use typed_ast::Const;
 
 use crate::*;
@@ -11,10 +8,6 @@ impl<'a> SemanticsAnalyzer<'a> {
             let call_file = self.ast.consts[const_key].info.file_key;
             let call_span = self.ast.consts[const_key].info.id_span;
             self.analyze_const(const_key, call_file, call_span);
-        }
-
-        for (const_key, cnst) in &self.nir_builder.nir.consts {
-            println!("const{} = {:?}", const_key.0, cnst.value);
         }
     }
 
@@ -78,7 +71,7 @@ impl<'a> SemanticsAnalyzer<'a> {
 
         let mut type_key = nazmc_nir::TypeKey::default();
 
-        let value_vec = if !self.semantics_stack.bad_consts_detected
+        let (value_vec, dangling_ptr) = if !self.semantics_stack.bad_consts_detected
             && self.check_unkown_ty_vars_and_lower_to_nir(expr_scope_key)
         {
             self.nir_builder.build_types();
@@ -96,17 +89,19 @@ impl<'a> SemanticsAnalyzer<'a> {
                     &self.nir_builder.nir,
                     &mut self.interpreter_data,
                 );
-                interpreter.execute_cfg(&cfg, HashMap::new())
+                let value = interpreter.execute_cfg(&cfg, HashMap::new());
+                let dangling_ptr = interpreter.check_dangling_pointer(&value, type_key);
+                (value, dangling_ptr)
             } else {
-                vec![0]
+                (vec![0], Ok(()))
             }
         } else {
-            vec![0]
+            (vec![0], Ok(()))
         };
 
         let value = self.interpreter_data.memory.push_bytes(&value_vec);
 
-        if self.check_dangling_pointer(&value_vec, type_key).is_err() {
+        if dangling_ptr.is_err() {
             let msg = format!(
                 "تم العثور على مؤشر منقطع عند حساب قيمة الثابت `{}`",
                 self.fmt_item_name(self.ast.consts[const_key].info)
@@ -164,34 +159,5 @@ impl<'a> SemanticsAnalyzer<'a> {
         }
 
         self.nir_builder.nir = analyzer.drop();
-    }
-
-    fn check_dangling_pointer(&self, value: &[u8], type_key: TypeKey) -> Result<(), ()> {
-        match self.nir_builder.nir.types[type_key] {
-            nazmc_nir::Type::Struct(struct_key) => todo!(),
-            nazmc_nir::Type::Slice(type_key)
-            | nazmc_nir::Type::MutSlice(type_key)
-            | nazmc_nir::Type::Ptr(type_key)
-            | nazmc_nir::Type::MutPtr(type_key) => {
-                let ptr_key = nazmc_nir_interpreter::bytes::to_ptr_key(&value).unwrap();
-                self.check_dangling_ptr_key(ptr_key)?;
-                let value = self.interpreter_data.memory.get_bytes_at(ptr_key);
-                self.check_dangling_pointer(value, type_key)
-            }
-            nazmc_nir::Type::Array(array_type_key) => todo!(),
-            nazmc_nir::Type::Tuple(tuple_type_key) => todo!(),
-            nazmc_nir::Type::Lambda(lambda_type_key) => todo!(),
-            nazmc_nir::Type::FnPtr(fn_ptr_type_key) => todo!(),
-            _ => Ok(()),
-        }
-    }
-
-    fn check_dangling_ptr_key(&self, ptr_key: PtrKey) -> Result<(), ()> {
-        let top = self.interpreter_data.memory.get_top();
-        if ptr_key.0 >= top.0 {
-            Err(())
-        } else {
-            Ok(())
-        }
     }
 }

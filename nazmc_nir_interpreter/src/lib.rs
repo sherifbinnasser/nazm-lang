@@ -14,13 +14,13 @@ pub struct Interpreter<'a> {
 #[derive(Default)]
 pub struct InterpreterData {
     pub memory: Memory,
-    structs_layouts: HashMap<StructKey, AggLayout>,
-    tuples_layouts: HashMap<TupleTypeKey, AggLayout>,
+    pub structs_layouts: HashMap<StructKey, AggLayout>,
+    pub tuples_layouts: HashMap<TupleTypeKey, AggLayout>,
 }
 
-struct AggLayout {
-    offsets: Vec<u32>,
-    size: u32,
+pub struct AggLayout {
+    pub offsets: Vec<u32>,
+    pub size: u32,
 }
 
 #[derive(Default)]
@@ -40,6 +40,140 @@ impl<'a> Interpreter<'a> {
             current_cfg: None,
             current_frame: Default::default(),
         }
+    }
+
+    pub fn check_dangling_pointer(&mut self, value: &[u8], type_key: TypeKey) -> Result<(), ()> {
+        match self.nir.types[type_key] {
+            nazmc_nir::Type::Slice(type_key)
+            | nazmc_nir::Type::MutSlice(type_key)
+            | nazmc_nir::Type::Ptr(type_key)
+            | nazmc_nir::Type::MutPtr(type_key) => self.check_dangling_ptr_key(value, type_key),
+            nazmc_nir::Type::Struct(struct_key) => {
+                self.compute_struct_layout(struct_key);
+                for (offset, typ) in self.data.structs_layouts[&struct_key]
+                    .offsets
+                    .iter()
+                    .copied()
+                    .zip(self.nir.structs[&struct_key].fields.iter().map(|f| f.typ))
+                    .collect::<Vec<_>>()
+                {
+                    let value = &value[offset as usize..];
+                    self.check_dangling_pointer(value, typ)?;
+                }
+                Ok(())
+            }
+            nazmc_nir::Type::Tuple(tuple_type_key) => {
+                self.compute_tuple_layout(tuple_type_key);
+                for (offset, &typ) in self.data.tuples_layouts[&tuple_type_key]
+                    .offsets
+                    .iter()
+                    .copied()
+                    .zip(self.nir.tuple_types[tuple_type_key].types.iter())
+                    .collect::<Vec<_>>()
+                {
+                    let value = &value[offset as usize..];
+                    self.check_dangling_pointer(value, typ)?;
+                }
+                Ok(())
+            }
+            nazmc_nir::Type::Array(array_type_key) => {
+                let mut ptr_offsets = Vec::new();
+
+                self.detect_array_ptr_offset(
+                    self.nir.array_types[array_type_key].underlying_typ,
+                    &mut ptr_offsets,
+                );
+
+                let len = self.nir.array_types[array_type_key].size;
+
+                for (offset, type_key) in ptr_offsets {
+                    for i in 0..len {
+                        let idx = (i + offset) as usize;
+                        let value = &value[idx..];
+                        self.check_dangling_ptr_key(value, type_key)?;
+                    }
+                }
+
+                Ok(())
+            }
+            nazmc_nir::Type::FnPtr(fn_ptr_type_key) => {
+                if bytes::to_fn_key(value).is_some() {
+                    Ok(())
+                } else {
+                    Err(())
+                }
+            }
+            nazmc_nir::Type::Lambda(lambda_type_key) => todo!(),
+            _ => Ok(()),
+        }
+    }
+
+    fn check_dangling_ptr_key(&mut self, value: &[u8], type_key: TypeKey) -> Result<(), ()> {
+        let top = self.data.memory.get_top();
+
+        let ptr_key = bytes::to_ptr_key(&value).unwrap();
+
+        if ptr_key.0 >= top.0 {
+            return Err(());
+        }
+
+        let value = self.get_bytes_at(ptr_key, type_key).to_vec();
+        self.check_dangling_pointer(&value, type_key)
+    }
+
+    fn detect_array_ptr_offset(
+        &self,
+        underlying_typ: TypeKey,
+        ptr_offsets: &mut Vec<(u32, TypeKey)>,
+    ) {
+        match self.nir.types[underlying_typ] {
+            nazmc_nir::Type::FnPtr(_) => ptr_offsets.push((0, underlying_typ)),
+            nazmc_nir::Type::Slice(type_key)
+            | nazmc_nir::Type::MutSlice(type_key)
+            | nazmc_nir::Type::Ptr(type_key)
+            | nazmc_nir::Type::MutPtr(type_key) => {
+                ptr_offsets.push((0, type_key));
+            }
+            nazmc_nir::Type::Struct(struct_key) => {
+                for (&offset, typ) in self.data.structs_layouts[&struct_key]
+                    .offsets
+                    .iter()
+                    .zip(self.nir.structs[&struct_key].fields.iter().map(|f| f.typ))
+                {
+                    let base = ptr_offsets.len();
+                    self.detect_array_ptr_offset(typ, ptr_offsets);
+                    for (i, _) in &mut ptr_offsets[base..] {
+                        *i += offset;
+                    }
+                }
+            }
+            nazmc_nir::Type::Tuple(tuple_type_key) => {
+                for (&offset, &typ) in self.data.tuples_layouts[&tuple_type_key]
+                    .offsets
+                    .iter()
+                    .zip(self.nir.tuple_types[tuple_type_key].types.iter())
+                {
+                    let base = ptr_offsets.len();
+                    self.detect_array_ptr_offset(typ, ptr_offsets);
+                    for (i, _) in &mut ptr_offsets[base..] {
+                        *i += offset;
+                    }
+                }
+            }
+            nazmc_nir::Type::Array(array_type_key) => {
+                self.detect_array_ptr_offset(
+                    self.nir.array_types[array_type_key].underlying_typ,
+                    ptr_offsets,
+                );
+            }
+            nazmc_nir::Type::Lambda(lambda_type_key) => todo!(),
+            _ => {}
+        }
+    }
+
+    fn get_bytes_at(&mut self, at: PtrKey, type_key: TypeKey) -> &[u8] {
+        let type_size = self.get_type_size(type_key);
+        self.data.memory.get_bytes_at(at, type_size as usize)
     }
 
     fn compute_struct_layout(&mut self, struct_key: StructKey) {
@@ -80,12 +214,14 @@ impl<'a> Interpreter<'a> {
     fn get_type_size(&mut self, type_key: TypeKey) -> u32 {
         match self.nir.types[type_key] {
             Type::Unit => 0,
-            Type::I | Type::U | Type::MutPtr(_) | Type::Ptr(_) | Type::FnPtr(_) => usize::BITS / 8,
+            Type::I | Type::U | Type::MutPtr(_) | Type::Ptr(_) | Type::FnPtr(_) => {
+                std::mem::size_of::<usize>() as u32
+            }
             Type::I1 | Type::U1 | Type::Bool => 1,
             Type::I2 | Type::U2 => 2,
             Type::I4 | Type::U4 | Type::F4 | Type::Char => 4,
             Type::I8 | Type::U8 | Type::F8 => 8,
-            Type::Slice(_) | Type::MutSlice(_) => 2 * usize::BITS / 8,
+            Type::Slice(_) | Type::MutSlice(_) => 2 * std::mem::size_of::<usize>() as u32,
             Type::Struct(struct_key) => {
                 self.compute_struct_layout(struct_key);
                 self.data.structs_layouts[&struct_key].size
@@ -136,10 +272,12 @@ impl<'a> Interpreter<'a> {
         for stm in &bb.stms {
             match stm {
                 Stm::Assign { lhs, rhs, typ } => {
+                    let LValue { typ, kind } = self.current_cfg.unwrap().lvalues[*lhs];
+                    let type_size = self.get_type_size(typ) as usize;
+
                     let rhs = self.evaluate_rvalue(rhs);
 
-                    if let LValueKind::Temp(temp_key) = self.current_cfg.unwrap().lvalues[*lhs].kind
-                    {
+                    if let LValueKind::Temp(temp_key) = kind {
                         self.current_frame.temps.insert(temp_key, rhs);
                     } else {
                         let lhs = self.evaluate_lvalue_ptr(*lhs);
@@ -225,9 +363,7 @@ impl<'a> Interpreter<'a> {
             LValueKind::Static(static_key) => todo!(),
             LValueKind::Deref(on) | LValueKind::MutDeref(on) => {
                 let on = self.evaluate_lvalue(on);
-                let on = usize::from_le_bytes(on.try_into().unwrap());
-                let on = PtrKey(on as u32);
-                on
+                bytes::to_ptr_key(on).unwrap()
             }
             LValueKind::Field { on, idx } | LValueKind::MutField { on, idx } => {
                 let field_offset = match self.nir.types[cfg.lvalues[on].typ] {
@@ -239,12 +375,13 @@ impl<'a> Interpreter<'a> {
                         self.compute_tuple_layout(tuple_type_key);
                         self.data.tuples_layouts[&tuple_type_key].offsets[idx as usize]
                     }
+                    Type::Slice(_) | Type::MutSlice(_) => idx * std::mem::size_of::<usize>() as u32,
                     _ => unreachable!(),
                 };
 
-                let on = self.evaluate_lvalue(on);
-                let on = usize::from_le_bytes(on.try_into().unwrap());
-                PtrKey(on as u32 + field_offset)
+                let mut on = self.evaluate_lvalue_ptr(on);
+                on.0 += field_offset;
+                on
             }
             LValueKind::ArrayConstIdx { on, idx } | LValueKind::MutArrayConstIdx { on, idx } => {
                 let Type::Array(array_type_key) = self.nir.types[cfg.lvalues[on].typ] else {
@@ -254,9 +391,9 @@ impl<'a> Interpreter<'a> {
                     self.get_type_size(self.nir.array_types[array_type_key].underlying_typ);
                 let offset = underlying_size * idx;
 
-                let on = self.evaluate_lvalue(on);
-                let on = usize::from_le_bytes(on.try_into().unwrap());
-                PtrKey(on as u32 + offset)
+                let mut on = self.evaluate_lvalue_ptr(on);
+                on.0 += offset;
+                on
             }
             LValueKind::ArrayIdx { on, idx } | LValueKind::MutArrayIdx { on, idx } => {
                 let Type::Array(array_type_key) = self.nir.types[cfg.lvalues[on].typ] else {
@@ -265,13 +402,12 @@ impl<'a> Interpreter<'a> {
                 let underlying_size =
                     self.get_type_size(self.nir.array_types[array_type_key].underlying_typ);
 
-                let on = self.evaluate_lvalue(on);
-                let on = usize::from_le_bytes(on.try_into().unwrap());
+                let mut on = self.evaluate_lvalue_ptr(on);
                 let idx = self.evaluate_lvalue(idx);
-                let idx = usize::from_le_bytes(idx.try_into().unwrap());
+                let idx = bytes::to_usize(idx).unwrap();
                 let offset = underlying_size * idx as u32;
-
-                PtrKey(on as u32 + offset)
+                on.0 += offset;
+                on
             }
         }
     }
@@ -281,7 +417,7 @@ impl<'a> Interpreter<'a> {
             &self.current_frame.temps[&temp_key]
         } else {
             let ptr_key = self.evaluate_lvalue_ptr(lv);
-            self.data.memory.get_bytes_at(ptr_key)
+            self.get_bytes_at(ptr_key, self.current_cfg.unwrap().lvalues[lv].typ)
         }
     }
 
@@ -314,7 +450,10 @@ impl<'a> Interpreter<'a> {
             RValue::Str(sk) => self
                 .data
                 .memory
-                .get_bytes_at(self.nir.interpreter_str_slices_pool[*sk])
+                .get_bytes_at(
+                    self.nir.interpreter_str_slices_pool[*sk],
+                    std::mem::size_of::<usize>() * 2,
+                )
                 .to_vec(),
             RValue::RefMut(lv) | RValue::Ref(lv) => {
                 let ptr = self.evaluate_lvalue_ptr(*lv);
@@ -338,7 +477,7 @@ impl<'a> Interpreter<'a> {
             RValue::Cast { val, kind } => self.apply_cast(val, *kind),
             RValue::Call { on, args } => {
                 let on = self.evaluate_operand_to_vec(on);
-                let on = usize::from_le_bytes(on.try_into().unwrap());
+                let on = bytes::to_usize(&on).unwrap();
                 let fn_key = FnKey(on as u32);
                 let top = self.data.memory.get_top();
 
@@ -529,7 +668,7 @@ impl<'a> Interpreter<'a> {
                     self.evaluate_lvalue_ptr(lvalue_key)
                 };
 
-            let mut vec = Vec::with_capacity(2 * usize::BITS as usize / 8);
+            let mut vec = Vec::with_capacity(2 * std::mem::size_of::<usize>());
             vec.extend_from_slice((ptr.0 as usize).to_le_bytes().as_slice());
             vec.extend_from_slice((len as usize).to_le_bytes().as_slice());
             return vec;

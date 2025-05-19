@@ -200,7 +200,10 @@ impl<'a> SemanticsAnalyzer<'a> {
             self.ast.consts[size_const].info.id_span,
         );
         let ptr = self.nir_builder.nir.consts[&nazmc_nir::ConstKey(size_const.0)].value;
-        let size = self.interpreter_data.memory.get_bytes_at(ptr);
+        let size = self
+            .interpreter_data
+            .memory
+            .get_bytes_at(ptr, std::mem::size_of::<usize>());
         let size = nazmc_nir_interpreter::bytes::to_usize(size).unwrap_or(0) as u32;
         Type::array(underlying_typ, size)
     }

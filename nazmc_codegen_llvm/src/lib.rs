@@ -291,21 +291,45 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         global_const
     }
 
+    fn get_interpreter_type_size(&self, type_key: TypeKey) -> u32 {
+        match self.nir.types[type_key] {
+            Type::Unit => 0,
+            Type::I | Type::U | Type::MutPtr(_) | Type::Ptr(_) | Type::FnPtr(_) => {
+                std::mem::size_of::<usize>() as u32
+            }
+            Type::I1 | Type::U1 | Type::Bool => 1,
+            Type::I2 | Type::U2 => 2,
+            Type::I4 | Type::U4 | Type::F4 | Type::Char => 4,
+            Type::I8 | Type::U8 | Type::F8 => 8,
+            Type::Slice(_) | Type::MutSlice(_) => 2 * std::mem::size_of::<usize>() as u32,
+            Type::Struct(struct_key) => self.interpreter_data.structs_layouts[&struct_key].size,
+            Type::Tuple(tuple_type_key) => {
+                self.interpreter_data.tuples_layouts[&tuple_type_key].size
+            }
+            Type::Array(array_type_key) => {
+                let ArrayType {
+                    underlying_typ,
+                    size,
+                } = self.nir.array_types[array_type_key];
+                self.get_interpreter_type_size(underlying_typ) * size
+            }
+            Type::Lambda(lambda_type_key) => todo!(),
+        }
+    }
+
     fn lower_bytes(
         &mut self,
         value_ptr: PtrKey,
         typ: TypeKey,
         llvm_typ: AnyTypeEnum<'ctx>,
     ) -> BasicValueEnum {
-        enum Data {
-            Int(u64),
-            Float(f64),
-            Ptr(u64),
-        }
-
         use nazmc_nir_interpreter::bytes::*;
 
-        let value = self.interpreter_data.memory.get_bytes_at(value_ptr);
+        let size = self.get_interpreter_type_size(typ);
+        let value = self
+            .interpreter_data
+            .memory
+            .get_bytes_at(value_ptr, size as usize);
 
         macro_rules! to_int {
             ($method: ident) => {
