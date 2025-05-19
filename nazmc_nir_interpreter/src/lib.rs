@@ -1,4 +1,5 @@
 use mem::{bytes::to_f32, Memory};
+use nazmc_data_pool::typed_index_collections::TiVec;
 use nazmc_nir::*;
 use std::collections::HashMap;
 mod mem;
@@ -26,7 +27,7 @@ pub struct AggLayout {
 #[derive(Default)]
 struct Frame {
     args: HashMap<ArgKey, PtrKey>,
-    bindings: HashMap<BindingKey, PtrKey>,
+    bindings: TiVec<BindingKey, PtrKey>,
     temps: HashMap<TempKey, Vec<u8>>,
     current_block: BasicBlockKey,
     predecessor: Option<BasicBlockKey>,
@@ -253,6 +254,14 @@ impl<'a> Interpreter<'a> {
         let prev_frame = std::mem::take(&mut self.current_frame);
         let prev_cfg = self.current_cfg;
         self.current_frame.args = args;
+
+        let top = self.data.memory.get_top();
+
+        for binding in &cfg.bindings {
+            let type_size = self.get_type_size(binding.typ);
+            let ptr = self.data.memory.alloc(type_size as usize);
+            self.current_frame.bindings.push(ptr);
+        }
         self.current_frame.current_block = BasicBlockKey::START_BASIC_BLOCK;
         self.current_cfg = Some(cfg);
         let mut ret_value = vec![];
@@ -262,6 +271,7 @@ impl<'a> Interpreter<'a> {
             ret_value = self.execute_block(bb);
         }
 
+        self.data.memory.set_top(top);
         self.current_frame = prev_frame;
         self.current_cfg = prev_cfg;
 
@@ -356,7 +366,7 @@ impl<'a> Interpreter<'a> {
         let cfg = self.current_cfg.unwrap();
 
         match cfg.lvalues[lv].kind {
-            LValueKind::Binding(binding_key) => self.current_frame.bindings[&binding_key],
+            LValueKind::Binding(binding_key) => self.current_frame.bindings[binding_key],
             LValueKind::Const(const_key) => self.nir.consts[&const_key].value,
             LValueKind::Temp(temp_key) => unreachable!(),
             LValueKind::Arg(arg_key) => self.current_frame.args[&arg_key],
