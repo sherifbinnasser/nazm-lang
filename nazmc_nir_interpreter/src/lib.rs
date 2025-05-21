@@ -28,7 +28,7 @@ pub struct AggLayout {
 struct Frame {
     args: HashMap<ArgKey, PtrKey>,
     bindings: TiVec<BindingKey, PtrKey>,
-    temps: HashMap<TempKey, Vec<u8>>,
+    temps: TiVec<TempKey, PtrKey>,
     current_block: BasicBlockKey,
     predecessor: Option<BasicBlockKey>,
 }
@@ -262,6 +262,13 @@ impl<'a> Interpreter<'a> {
             let ptr = self.data.memory.alloc(type_size as usize);
             self.current_frame.bindings.push(ptr);
         }
+
+        for temp in &cfg.temps {
+            let type_size = self.get_type_size(temp.typ);
+            let ptr = self.data.memory.alloc(type_size as usize);
+            self.current_frame.temps.push(ptr);
+        }
+
         self.current_frame.current_block = BasicBlockKey::START_BASIC_BLOCK;
         self.current_cfg = Some(cfg);
         let mut ret_value = vec![];
@@ -283,23 +290,11 @@ impl<'a> Interpreter<'a> {
             match stm {
                 Stm::Assign { lhs, rhs, typ } => {
                     let LValue { typ, kind } = self.current_cfg.unwrap().lvalues[*lhs];
-                    let type_size = self.get_type_size(typ) as usize;
-
                     let rhs = self.evaluate_rvalue(rhs);
-
-                    if let LValueKind::Temp(temp_key) = kind {
-                        self.current_frame.temps.insert(temp_key, rhs);
-                    } else {
-                        let lhs = self.evaluate_lvalue_ptr(*lhs);
-                        self.data.memory.push_bytes_at(lhs, &rhs);
-                    }
+                    let lhs = self.evaluate_lvalue_ptr(*lhs);
+                    self.data.memory.push_bytes_at(lhs, &rhs);
                 }
                 Stm::Phi { lhs, cases, typ } => {
-                    let LValueKind::Temp(temp_key) = self.current_cfg.unwrap().lvalues[*lhs].kind
-                    else {
-                        unreachable!()
-                    };
-
                     let frame_pred = self.current_frame.predecessor.unwrap();
 
                     let val = cases
@@ -307,9 +302,10 @@ impl<'a> Interpreter<'a> {
                         .find(|(pred, _)| *pred == frame_pred)
                         .map(|(_, op)| self.evaluate_operand_kind(op))
                         .unwrap()
-                        .collect();
+                        .collect::<Vec<_>>();
 
-                    self.current_frame.temps.insert(temp_key, val);
+                    let lhs = self.evaluate_lvalue_ptr(*lhs);
+                    self.data.memory.push_bytes_at(lhs, &val);
                 }
                 Stm::Return { rvalue, typ } => {
                     let value = self.evaluate_rvalue(rvalue);
@@ -368,7 +364,7 @@ impl<'a> Interpreter<'a> {
         match cfg.lvalues[lv].kind {
             LValueKind::Binding(binding_key) => self.current_frame.bindings[binding_key],
             LValueKind::Const(const_key) => self.nir.consts[&const_key].value,
-            LValueKind::Temp(temp_key) => todo!(),
+            LValueKind::Temp(temp_key) => self.current_frame.temps[temp_key],
             LValueKind::Arg(arg_key) => self.current_frame.args[&arg_key],
             LValueKind::Static(static_key) => todo!(),
             LValueKind::Deref(on) | LValueKind::MutDeref(on) => {
@@ -423,12 +419,8 @@ impl<'a> Interpreter<'a> {
     }
 
     fn evaluate_lvalue(&mut self, lv: LValueKey) -> &[u8] {
-        if let LValueKind::Temp(temp_key) = self.current_cfg.unwrap().lvalues[lv].kind {
-            &self.current_frame.temps[&temp_key]
-        } else {
-            let ptr_key = self.evaluate_lvalue_ptr(lv);
-            self.get_bytes_at(ptr_key, self.current_cfg.unwrap().lvalues[lv].typ)
-        }
+        let ptr_key = self.evaluate_lvalue_ptr(lv);
+        self.get_bytes_at(ptr_key, self.current_cfg.unwrap().lvalues[lv].typ)
     }
 
     fn evaluate_constant(&self, c: &Const) -> Box<dyn Iterator<Item = u8> + '_> {
@@ -670,14 +662,7 @@ impl<'a> Interpreter<'a> {
                 unreachable!()
             };
 
-            let ptr =
-                if let LValueKind::Temp(_) = self.current_cfg.unwrap().lvalues[lvalue_key].kind {
-                    let val = self.evaluate_operand_to_vec(val);
-                    self.data.memory.push_bytes(&val)
-                } else {
-                    self.evaluate_lvalue_ptr(lvalue_key)
-                };
-
+            let ptr = self.evaluate_lvalue_ptr(lvalue_key);
             let mut vec = Vec::with_capacity(2 * std::mem::size_of::<usize>());
             vec.extend_from_slice((ptr.0 as usize).to_le_bytes().as_slice());
             vec.extend_from_slice((len as usize).to_le_bytes().as_slice());
