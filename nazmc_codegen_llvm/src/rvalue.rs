@@ -24,7 +24,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                     .build_memcpy(dest_ptr, align, src_ptr, align, size);
             }
             RValue::Str(str_key) => {
-                let src_ptr = self.llvm_str_slices_pool[*str_key];
+                let src_ptr = self.llvm_str_slices_pool[*str_key].as_pointer_value();
                 let _ = self
                     .builder
                     .build_memcpy(dest_ptr, align, src_ptr, align, size);

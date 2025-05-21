@@ -53,7 +53,7 @@ pub struct LLVMCodeGen<'ctx, 'nir> {
     interpreter_data: InterpreterData,
     llvm_fns: TiVec<FnKey, FunctionValue<'ctx>>,
     llvm_str_pool: TiVec<StrKey, GlobalValue<'ctx>>,
-    llvm_str_slices_pool: TiVec<StrKey, PointerValue<'ctx>>,
+    llvm_str_slices_pool: TiVec<StrKey, GlobalValue<'ctx>>,
     llvm_statics: TiVec<StaticKey, PointerValue<'ctx>>,
     llvm_consts: HashMap<ConstKey, PointerValue<'ctx>>,
     llvm_temps_counter: Cell<usize>,
@@ -256,8 +256,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             global_slice.set_unnamed_addr(true);
             global_slice.set_linkage(Linkage::Private);
 
-            self.llvm_str_slices_pool
-                .push(global_slice.as_pointer_value());
+            self.llvm_str_slices_pool.push(global_slice);
         }
     }
 
@@ -372,8 +371,19 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                     .as_pointer_value()
                     .as_basic_value_enum()
             }
-            Type::Ptr(type_key) | Type::MutPtr(type_key) => todo!(),
-            Type::Slice(type_key) | Type::MutSlice(type_key) => todo!(),
+            Type::Ptr(type_key) | Type::MutPtr(type_key) => {
+                let ptr = to_ptr_key(value).unwrap();
+                self.lower_ptr(ptr, type_key)
+            }
+            Type::Slice(type_key) | Type::MutSlice(type_key) => {
+                let ptr = to_ptr_key(value).unwrap();
+                let len = to_usize(&value[8..]).unwrap();
+                let ptr = self.lower_ptr(ptr, type_key);
+                let len = self.isize_type().const_int(len as u64, false).into();
+                self.slice_type()
+                    .const_named_struct(&[ptr, len])
+                    .as_basic_value_enum()
+            }
             Type::Struct(struct_key) => {
                 let mut fields = Vec::with_capacity(self.nir.structs[&struct_key].fields.len());
                 for (&offset, typ) in self.interpreter_data.structs_layouts[&struct_key]
@@ -448,6 +458,67 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             }
             Type::Lambda(lambda_type_key) => todo!(),
         }
+    }
+
+    fn lower_ptr(&self, ptr_key: PtrKey, ptr_type_key: TypeKey) -> BasicValueEnum {
+        if self
+            .nir
+            .interpreter_str_pool
+            .last()
+            .is_some_and(|&last_ptr_key| {
+                ptr_key <= last_ptr_key || ptr_key < self.nir.interpreter_str_slices_pool.raw[0]
+            })
+        {
+            let found_str_key = self.nir.interpreter_str_pool.binary_search(&ptr_key);
+            match found_str_key {
+                Ok(str_key) => {
+                    return self.llvm_str_pool[str_key]
+                        .as_pointer_value()
+                        .as_basic_value_enum()
+                }
+                Err(next_str_key) => {
+                    let str_key = StrKey(next_str_key.0 - 1);
+                    let str_ptr_key = self.nir.interpreter_str_pool[str_key];
+                    let ptr_offset = ptr_key.0 - str_ptr_key.0;
+                    let llvm_offset = self.context.i32_type().const_int(ptr_offset as u64, false);
+                    let zero = self.context.i32_type().const_zero();
+                    let str_ptr = self.llvm_str_pool[str_key];
+                    let str_typ = any_type_enum_to_basic_type_enum(str_ptr.get_value_type());
+                    return unsafe {
+                        str_ptr
+                            .as_pointer_value()
+                            .const_gep(str_typ, &[zero, llvm_offset])
+                    }
+                    .as_basic_value_enum();
+                }
+            }
+        } else if self
+            .nir
+            .interpreter_str_slices_pool
+            .last()
+            .is_some_and(|&last_ptr_key| ptr_key <= last_ptr_key)
+        {
+            let found_str_key = self.nir.interpreter_str_slices_pool.binary_search(&ptr_key);
+            match found_str_key {
+                Ok(str_key) => return self.llvm_str_slices_pool[str_key].as_basic_value_enum(),
+                Err(next_str_key) => {
+                    let str_key = StrKey(next_str_key.0 - 1);
+                    let str_slice_ptr_key = self.nir.interpreter_str_slices_pool[str_key];
+                    let ptr_offset = ptr_key.0 - str_slice_ptr_key.0;
+                    let llvm_offset = self.context.i32_type().const_int(ptr_offset as u64, false);
+                    let zero = self.context.i32_type().const_zero();
+                    let str_ptr = self.llvm_str_slices_pool[str_key];
+                    let str_typ = any_type_enum_to_basic_type_enum(str_ptr.get_value_type());
+                    return unsafe {
+                        str_ptr
+                            .as_pointer_value()
+                            .const_gep(str_typ, &[zero, llvm_offset])
+                    }
+                    .as_basic_value_enum();
+                }
+            }
+        }
+        todo!()
     }
 
     // fn lower_rc_value(&mut self, value: RcValue, typ: AnyTypeEnum<'ctx>) -> BasicValueEnum<'ctx> {
