@@ -71,7 +71,7 @@ impl<'a> SemanticsAnalyzer<'a> {
 
         let mut type_key = nazmc_nir::TypeKey::default();
 
-        let (value_vec, dangling_ptr) = if !self.semantics_stack.bad_consts_detected
+        let value_vec = if !self.semantics_stack.bad_consts_detected
             && self.check_unkown_ty_vars_and_lower_to_nir(expr_scope_key)
         {
             self.nir_builder.build_types();
@@ -85,36 +85,15 @@ impl<'a> SemanticsAnalyzer<'a> {
             self.analyze_const_cfg(is_unit, &mut cfg, const_key);
 
             if self.diagnostics.is_empty() {
-                let mut interpreter = nazmc_nir_interpreter::Interpreter::new(
-                    &self.nir_builder.nir,
-                    &mut self.interpreter_data,
-                );
-                let value = interpreter.execute_cfg(&cfg, HashMap::new());
-                let dangling_ptr = interpreter.check_dangling_pointer(&value, type_key);
-                (value, dangling_ptr)
+                self.interpret_const_cfg(&cfg, const_key, type_key)
             } else {
-                (vec![0], Ok(()))
+                vec![0]
             }
         } else {
-            (vec![0], Ok(()))
+            vec![0]
         };
 
         let value = self.interpreter_data.memory.push_bytes(&value_vec);
-
-        if dangling_ptr.is_err() {
-            let msg = format!(
-                "تم العثور على مؤشر منقطع عند حساب قيمة الثابت `{}`",
-                self.fmt_item_name(self.ast.consts[const_key].info)
-            );
-            let const_id_span = self.ast.consts[const_key].info.id_span;
-            let mut code_window = CodeWindow::new(
-                &self.files_infos[self.current_file_key],
-                const_id_span.start,
-            );
-            code_window.mark_error(const_id_span, vec![]);
-            let diagnostic = Diagnostic::error(msg, vec![code_window]);
-            self.diagnostics.push(diagnostic);
-        }
 
         self.typed_ast.exprs = typed_ast_exprs;
         self.typed_ast.lets = typed_ast_lets;
@@ -159,5 +138,56 @@ impl<'a> SemanticsAnalyzer<'a> {
         }
 
         self.nir_builder.nir = analyzer.drop();
+    }
+
+    fn interpret_const_cfg(
+        &mut self,
+        cfg: &CFG,
+        const_key: ConstKey,
+        type_key: nazmc_nir::TypeKey,
+    ) -> Vec<u8> {
+        let mut interpreter = nazmc_nir_interpreter::Interpreter::new(
+            &self.nir_builder.nir,
+            &mut self.interpreter_data,
+        );
+        let value = interpreter.execute_cfg(&cfg, HashMap::new());
+
+        if let Ok(value) = value {
+            if interpreter
+                .check_dangling_pointer(&value, type_key)
+                .is_err()
+            {
+                let msg = format!(
+                    "تم العثور على مؤشر منقطع عند حساب قيمة الثابت `{}`",
+                    self.fmt_item_name(self.ast.consts[const_key].info)
+                );
+                let const_id_span = self.ast.consts[const_key].info.id_span;
+                let mut code_window = CodeWindow::new(
+                    &self.files_infos[self.current_file_key],
+                    const_id_span.start,
+                );
+                code_window.mark_error(const_id_span, vec![]);
+                let diagnostic = Diagnostic::error(msg, vec![code_window]);
+                self.diagnostics.push(diagnostic);
+                vec![0]
+            } else {
+                value
+            }
+        } else {
+            let msg = format!(
+                "يوجد محاولة وصول إلى بيانات من مؤشر منقطع عند حساب قيمة الثابت `{}`",
+                self.fmt_item_name(self.ast.consts[const_key].info)
+            );
+            let const_id_span = self.ast.consts[const_key].info.id_span;
+            let mut code_window = CodeWindow::new(
+                &self.files_infos[self.current_file_key],
+                const_id_span.start,
+            );
+            code_window.mark_error(const_id_span, vec![]);
+            let diagnostic = Diagnostic::error(msg, vec![code_window]);
+            self.diagnostics.push(diagnostic);
+
+            vec![0]
+        }
     }
 }
