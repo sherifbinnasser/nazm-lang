@@ -426,7 +426,7 @@ impl<'a> Interpreter<'a> {
 
     fn evaluate_lvalue(&mut self, lv: LValueKey) -> Result<&[u8], ()> {
         let ptr_key = self.evaluate_lvalue_ptr(lv)?;
-        if self.data.memory.get_top().0 >= ptr_key.0 {
+        if ptr_key.0 >= self.data.memory.get_top().0 {
             Err(())
         } else {
             Ok(self.get_bytes_at(ptr_key, self.current_cfg.unwrap().lvalues[lv].typ))
