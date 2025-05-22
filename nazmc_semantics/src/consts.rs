@@ -110,7 +110,7 @@ impl<'a> SemanticsAnalyzer<'a> {
         self.typed_ast.consts.insert(const_key, Const { typ });
         self.nir_builder.nir.consts.insert(
             nazmc_nir::ConstKey(const_key.0),
-            nazmc_nir::NamedConst {
+            nazmc_nir::GlobalConst {
                 info: self.ast.consts[const_key].info,
                 typ: type_key,
                 value,

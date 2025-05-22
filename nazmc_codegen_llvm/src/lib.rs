@@ -12,7 +12,7 @@ use rvalue::*;
 use std::{
     cell::{Cell, RefCell},
     cmp::max,
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
 };
 use stm::*;
 use types::*;
@@ -50,14 +50,15 @@ pub struct LLVMCodeGen<'ctx, 'nir> {
     builder: Builder<'ctx>,
     machine: TargetMachine,
     nir: NIR<'nir>,
+    interpreter_consts_sorted_ptrs: BTreeMap<PtrKey, ConstKey>,
     interpreter_data: InterpreterData,
     llvm_fns: TiVec<FnKey, FunctionValue<'ctx>>,
     llvm_str_pool: TiVec<StrKey, GlobalValue<'ctx>>,
     llvm_str_slices_pool: TiVec<StrKey, GlobalValue<'ctx>>,
-    llvm_statics: TiVec<StaticKey, PointerValue<'ctx>>,
-    llvm_consts: HashMap<ConstKey, PointerValue<'ctx>>,
+    llvm_statics: TiVec<StaticKey, GlobalValue<'ctx>>,
     llvm_temps_counter: Cell<usize>,
     ret_ptr: Cell<Option<PointerValue<'ctx>>>,
+    llvm_consts: RefCell<HashMap<ConstKey, GlobalValue<'ctx>>>,
     llvm_temps: RefCell<Vec<String>>,
     fn_ptr_types: RefCell<HashMap<FnPtrTypeKey, FnPtrLayout<'ctx>>>,
     structs_layouts: RefCell<HashMap<StructKey, TypeLayout<'ctx>>>,
@@ -161,19 +162,26 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
 
         let builder = context.create_builder();
 
+        let interpreter_consts_sorted_ptrs = nir
+            .consts
+            .iter()
+            .map(|(const_key, _const)| (_const.value, *const_key))
+            .collect();
+
         Self {
             context: &context,
             module,
             builder,
             machine,
             interpreter_data,
+            interpreter_consts_sorted_ptrs,
             llvm_fns: TiVec::with_capacity(nir.fns.len()),
             llvm_str_pool: TiVec::with_capacity(nir.str_pool.len()),
             llvm_str_slices_pool: TiVec::with_capacity(nir.str_pool.len()),
             llvm_statics: TiVec::with_capacity(nir.statics.len()),
-            llvm_consts: HashMap::with_capacity(nir.consts.len()),
             llvm_temps_counter: Cell::new(0),
             ret_ptr: Default::default(),
+            llvm_consts: RefCell::new(HashMap::with_capacity(nir.consts.len())),
             llvm_temps: RefCell::new(Vec::new()),
             fn_ptr_types: RefCell::new(HashMap::with_capacity(nir.fn_ptr_types.len())),
             structs_layouts: RefCell::new(HashMap::with_capacity(nir.structs.len())),
@@ -266,8 +274,8 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         }
     }
 
-    fn lower_const(&mut self, const_key: ConstKey) -> PointerValue {
-        if let Some(ptr) = self.llvm_consts.get(&const_key) {
+    fn lower_const(&self, const_key: ConstKey) -> GlobalValue {
+        if let Some(ptr) = self.llvm_consts.borrow().get(&const_key) {
             return ptr.clone();
         }
 
@@ -285,8 +293,9 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         global_const.set_constant(true);
         global_const.set_unnamed_addr(true);
         global_const.set_linkage(Linkage::Private);
-        let global_const = global_const.as_pointer_value();
-        self.llvm_consts.insert(const_key, global_const);
+        self.llvm_consts
+            .borrow_mut()
+            .insert(const_key, global_const);
         global_const
     }
 
@@ -385,6 +394,9 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                     .as_basic_value_enum()
             }
             Type::Struct(struct_key) => {
+                let AnyTypeEnum::StructType(ty) = llvm_typ else {
+                    unreachable!()
+                };
                 let mut fields = Vec::with_capacity(self.nir.structs[&struct_key].fields.len());
                 for (&offset, typ) in self.interpreter_data.structs_layouts[&struct_key]
                     .offsets
@@ -395,9 +407,6 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                     let field = self.lower_bytes(value_ptr, typ);
                     fields.push(field);
                 }
-                let AnyTypeEnum::StructType(ty) = llvm_typ else {
-                    unreachable!()
-                };
                 ty.const_named_struct(&fields).as_basic_value_enum()
             }
             Type::Tuple(tuple_type_key) => {
@@ -496,7 +505,13 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             .nir
             .interpreter_str_slices_pool
             .last()
-            .is_some_and(|&last_ptr_key| ptr_key <= last_ptr_key)
+            .is_some_and(|&last_ptr_key| {
+                ptr_key <= last_ptr_key
+                    || self
+                        .interpreter_consts_sorted_ptrs
+                        .first_key_value()
+                        .is_some_and(|(&const_ptr_key, _)| ptr_key < const_ptr_key)
+            })
         {
             let found_str_key = self.nir.interpreter_str_slices_pool.binary_search(&ptr_key);
             match found_str_key {
@@ -518,94 +533,43 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                 }
             }
         }
-        todo!()
+
+        // Binary search
+        if let Some((&found_ptr_key, &const_key)) =
+            self.interpreter_consts_sorted_ptrs.range(ptr_key..).next()
+        {
+            if found_ptr_key == ptr_key {
+                // Exact match found
+                return self.lower_const(const_key).as_basic_value_enum();
+            }
+
+            // Handle case where ptr_key is between two existing pointers
+            let prev_entry = self
+                .interpreter_consts_sorted_ptrs
+                .range(..ptr_key)
+                .next_back();
+
+            if let Some((&prev_ptr_key, &prev_const_key)) = prev_entry {
+                let offset = ptr_key.0 - prev_ptr_key.0;
+                let llvm_offset = self.context.i32_type().const_int(offset as u64, false);
+                let zero = self.context.i32_type().const_zero();
+                let const_ptr = self.lower_const(prev_const_key);
+                let const_typ = any_type_enum_to_basic_type_enum(const_ptr.get_value_type());
+
+                return unsafe {
+                    const_ptr
+                        .as_pointer_value()
+                        .const_gep(const_typ, &[zero, llvm_offset])
+                }
+                .as_basic_value_enum();
+            }
+        }
+
+        self.context
+            .ptr_type(AddressSpace::default())
+            .const_null()
+            .as_basic_value_enum()
     }
-
-    // fn lower_rc_value(&mut self, value: RcValue, typ: AnyTypeEnum<'ctx>) -> BasicValueEnum<'ctx> {
-    //     match &*value.borrow() {
-    //         Value::Unit => self
-    //             .context
-    //             .i64_type()
-    //             .const_int(0, false)
-    //             .as_basic_value_enum(),
-    //         Value::Int(int) => typ
-    //             .into_int_type()
-    //             .const_int(*int as u64, false)
-    //             .as_basic_value_enum(),
-    //         Value::UInt(int) => typ
-    //             .into_int_type()
-    //             .const_int(*int, false)
-    //             .as_basic_value_enum(),
-    //         Value::Float(float) => typ
-    //             .into_float_type()
-    //             .const_float(*float as f64)
-    //             .as_basic_value_enum(),
-    //         Value::Bool(b) => typ
-    //             .into_int_type() // i8
-    //             .const_int(*b as u64, false)
-    //             .as_basic_value_enum(),
-    //         Value::Char(c) => typ
-    //             .into_int_type() // i32
-    //             .const_int(*c as u64, false)
-    //             .as_basic_value_enum(),
-    //         Value::FnPtr(fn_key) => self.llvm_fns[*fn_key]
-    //             .as_global_value()
-    //             .as_pointer_value()
-    //             .as_basic_value_enum(),
-    //         Value::Ptr(rc_value) => {
-    //             if let Some(str_key) = self.nir.interpreter_str_pool.get(rc_value) {
-    //                 // Prepare GEP indices
-    //                 let i32_type = self.context.i32_type();
-    //                 let zero = i32_type.const_zero();
-    //                 let two = i32_type.const_int(2, false);
-    //                 let str_ptr = self.llvm_str_pool[*str_key];
-    //                 let str_typ = any_type_enum_to_basic_type_enum(str_ptr.get_value_type());
-    //                 unsafe { str_ptr.as_pointer_value().const_gep(str_typ, &[zero, two]) }
-    //             } else {
-    //                 todo!()
-    //             }
-    //             .as_basic_value_enum()
-    //         }
-    //         Value::Agg(vec) => match typ {
-    //             AnyTypeEnum::ArrayType(array_type) => {
-    //                 let underlying_typ = array_type.get_element_type().as_any_type_enum();
-    //                 let values_iter = vec
-    //                     .iter()
-    //                     .map(|val| self.lower_rc_value(val.clone(), underlying_typ));
-
-    //                 macro_rules! map {
-    //                     ($id: ident, $typ: expr) => {
-    //                         $typ.const_array(&values_iter.map(|val| val.$id()).collect::<Vec<_>>())
-    //                     };
-    //                 }
-
-    //                 match underlying_typ {
-    //                     AnyTypeEnum::ArrayType(typ) => map!(into_array_value, typ),
-    //                     AnyTypeEnum::FloatType(typ) => map!(into_float_value, typ),
-    //                     AnyTypeEnum::IntType(typ) => map!(into_int_value, typ),
-    //                     AnyTypeEnum::PointerType(typ) => map!(into_pointer_value, typ),
-    //                     AnyTypeEnum::StructType(typ) => map!(into_struct_value, typ),
-    //                     AnyTypeEnum::FunctionType(typ) => map!(
-    //                         into_pointer_value,
-    //                         typ.get_context().ptr_type(AddressSpace::default())
-    //                     ),
-    //                     _ => unreachable!(),
-    //                 }
-    //                 .as_basic_value_enum()
-    //             }
-    //             AnyTypeEnum::StructType(struct_type) => {
-    //                 let mut fields = Vec::with_capacity(vec.len());
-    //                 for (rc_value, typ) in vec.iter().zip(struct_type.get_field_types_iter()) {
-    //                     fields.push(self.lower_rc_value(rc_value.clone(), typ.as_any_type_enum()));
-    //                 }
-    //                 struct_type
-    //                     .const_named_struct(&fields)
-    //                     .as_basic_value_enum()
-    //             }
-    //             _ => unreachable!(),
-    //         },
-    //     }
-    // }
 
     fn get_id(&self, id: IdKey) -> &str {
         &self.nir.id_pool[id]

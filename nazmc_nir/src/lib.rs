@@ -46,7 +46,7 @@ pub struct NIR<'a> {
     pub pkgs_names: &'a TiSlice<PkgKey, &'a ThinVec<IdKey>>,
     pub id_pool: &'a TiSlice<IdKey, String>,
     pub str_pool: TiVec<StrKey, String>,
-    pub consts: HashMap<ConstKey, NamedConst>,
+    pub consts: HashMap<ConstKey, GlobalConst>,
     pub interpreter_str_pool: TiVec<StrKey, PtrKey>,
     pub interpreter_str_slices_pool: TiVec<StrKey, PtrKey>,
 }
@@ -124,7 +124,7 @@ pub struct Field {
     pub typ: TypeKey,
 }
 
-pub struct NamedConst {
+pub struct GlobalConst {
     pub info: ItemInfo,
     pub typ: TypeKey,
     pub value: PtrKey,

@@ -100,8 +100,10 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
     ) -> PointerValue<'ctx> {
         match cfg.lvalues[lvalue_key].kind {
             LValueKind::Binding(binding_key) => self.locals.borrow()[&binding_key],
-            LValueKind::Static(static_key) => self.llvm_statics[static_key],
-            LValueKind::Const(const_key) => self.llvm_consts[&const_key],
+            LValueKind::Static(static_key) => self.llvm_statics[static_key].as_pointer_value(),
+            LValueKind::Const(const_key) => {
+                self.llvm_consts.borrow()[&const_key].as_pointer_value()
+            }
             LValueKind::Arg(arg_key) => self.args.borrow()[&arg_key],
             LValueKind::Temp(temp_key) => self.temps.borrow()[&temp_key].into_pointer_value(),
             LValueKind::Deref(lvalue_key) | LValueKind::MutDeref(lvalue_key) => {
