@@ -28,7 +28,13 @@ new_data_pool_key! { FnPtrTypeKey }
 new_data_pool_key! { TempKey }
 new_data_pool_key! { LValueKey }
 new_data_pool_key! { ConstKey }
-new_data_pool_key! { PtrKey }
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default, Ord, PartialOrd, From, Into)]
+pub struct PtrKey(pub isize);
+
+impl PtrKey {
+    pub const NULL: Self = Self(-1);
+}
 
 /// NIR, the Nazm Intermediate Representation
 #[derive(Default)]
@@ -49,68 +55,6 @@ pub struct NIR<'a> {
     pub consts: HashMap<ConstKey, GlobalConst>,
     pub interpreter_str_pool: TiVec<StrKey, PtrKey>,
     pub interpreter_str_slices_pool: TiVec<StrKey, PtrKey>,
-}
-
-#[derive(Default, Debug, Clone)]
-pub struct RcValue {
-    pub data: Rc<RefCell<Value>>,
-}
-
-impl RcValue {
-    pub fn new(value: Value) -> Self {
-        Self {
-            data: Rc::new(RefCell::new(value)),
-        }
-    }
-
-    pub fn copy(&self) -> Self {
-        let data = match &*self.borrow() {
-            Value::Agg(elements) => Value::Agg(Rc::new(
-                elements.iter().map(|element| element.copy()).collect(),
-            )),
-            data => data.clone(),
-        };
-        Self {
-            data: Rc::new(RefCell::new(data)),
-        }
-    }
-
-    pub fn borrow(&self) -> Ref<'_, Value> {
-        self.data.borrow()
-    }
-
-    pub fn inner(&self) -> Value {
-        self.borrow().clone()
-    }
-}
-
-impl PartialEq for RcValue {
-    fn eq(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.data, &other.data)
-    }
-}
-
-impl Eq for RcValue {}
-
-impl Hash for RcValue {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        Rc::as_ptr(&self.data).hash(state);
-    }
-}
-
-#[derive(Default, Debug, Clone)]
-pub enum Value {
-    #[default]
-    Unit,
-    Int(i64),
-    UInt(u64),
-    Float(f64),
-    Bool(bool),
-    Char(char),
-    FnPtr(FnKey),
-    Ptr(RcValue),
-    /// Add Rc around Vec to avoid deep cloning
-    Agg(Rc<Vec<RcValue>>),
 }
 
 #[derive(Default)]

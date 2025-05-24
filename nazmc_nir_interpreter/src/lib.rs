@@ -114,6 +114,9 @@ impl<'a> Interpreter<'a> {
 
         let ptr_key = bytes::to_ptr_key(&value).unwrap();
 
+        if ptr_key.0 < 0 {
+            return Ok(());
+        }
         if ptr_key.0 >= top.0 {
             return Err(());
         }
@@ -391,9 +394,8 @@ impl<'a> Interpreter<'a> {
                     _ => unreachable!(),
                 };
 
-                let mut on = self.evaluate_lvalue_ptr(on)?;
-                on.0 += field_offset;
-                on
+                let on = self.evaluate_lvalue_ptr(on)?;
+                self.data.memory.add_ptr_offset(on, field_offset as isize)
             }
             LValueKind::ArrayConstIdx { on, idx } | LValueKind::MutArrayConstIdx { on, idx } => {
                 let Type::Array(array_type_key) = self.nir.types[cfg.lvalues[on].typ] else {
@@ -403,30 +405,29 @@ impl<'a> Interpreter<'a> {
                     self.get_type_size(self.nir.array_types[array_type_key].underlying_typ);
                 let offset = underlying_size * idx;
 
-                let mut on = self.evaluate_lvalue_ptr(on)?;
-                on.0 += offset;
-                on
+                let on = self.evaluate_lvalue_ptr(on)?;
+                self.data.memory.add_ptr_offset(on, offset as isize)
             }
             LValueKind::ArrayIdx { on, idx } | LValueKind::MutArrayIdx { on, idx } => {
                 let Type::Array(array_type_key) = self.nir.types[cfg.lvalues[on].typ] else {
                     unreachable!()
                 };
-                let underlying_size =
-                    self.get_type_size(self.nir.array_types[array_type_key].underlying_typ);
+                let underlying_size = self
+                    .get_type_size(self.nir.array_types[array_type_key].underlying_typ)
+                    as isize;
 
-                let mut on = self.evaluate_lvalue_ptr(on)?;
+                let on = self.evaluate_lvalue_ptr(on)?;
                 let idx = self.evaluate_lvalue(idx)?;
-                let idx = bytes::to_usize(idx).unwrap();
-                let offset = underlying_size * idx as u32;
-                on.0 += offset;
-                on
+                let idx = bytes::to_isize(idx).unwrap();
+                let offset = underlying_size * idx;
+                self.data.memory.add_ptr_offset(on, offset as isize)
             }
         })
     }
 
     fn evaluate_lvalue(&mut self, lv: LValueKey) -> Result<&[u8], ()> {
         let ptr_key = self.evaluate_lvalue_ptr(lv)?;
-        if ptr_key.0 >= self.data.memory.get_top().0 {
+        if ptr_key.0 < 0 || ptr_key.0 >= self.data.memory.get_top().0 {
             Err(())
         } else {
             Ok(self.get_bytes_at(ptr_key, self.current_cfg.unwrap().lvalues[lv].typ))
@@ -436,7 +437,7 @@ impl<'a> Interpreter<'a> {
     fn evaluate_constant(&self, c: &Const) -> Box<dyn Iterator<Item = u8> + '_> {
         let bytes = match c {
             Const::Unit => vec![],
-            Const::Null => usize::MAX.to_le_bytes().to_vec(),
+            Const::Null => PtrKey::NULL.0.to_le_bytes().to_vec(),
             Const::I(v) => v.to_le_bytes().to_vec(),
             Const::I1(v) => v.to_le_bytes().to_vec(),
             Const::I2(v) => v.to_le_bytes().to_vec(),
@@ -470,7 +471,7 @@ impl<'a> Interpreter<'a> {
                 .to_vec(),
             RValue::RefMut(lv) | RValue::Ref(lv) => {
                 let ptr = self.evaluate_lvalue_ptr(*lv)?;
-                (ptr.0 as usize).to_le_bytes().to_vec()
+                (ptr.0).to_le_bytes().to_vec()
             }
             RValue::Struct {
                 struct_key: _,
@@ -632,32 +633,48 @@ impl<'a> Interpreter<'a> {
             Type::Ptr(type_key) | Type::MutPtr(type_key)
                 if matches!(self.nir.types[rhs_typ], Type::U) =>
             {
-                let lhs = bytes::to_ptr_key(&lhs).unwrap().0;
-                let rhs = bytes::to_usize(&rhs).unwrap() as u32;
-                let type_size = self.get_type_size(type_key);
+                let lhs = bytes::to_ptr_key(&lhs).unwrap();
+                let rhs = bytes::to_isize(&rhs).unwrap();
+                let type_size = self.get_type_size(type_key) as isize;
+                let mut offset = rhs * type_size;
 
-                let ptr = if let BinOp::Minus = op {
-                    lhs - rhs * type_size
-                } else {
-                    lhs + rhs * type_size
-                } as usize;
+                if let BinOp::Minus = op {
+                    offset *= -1;
+                }
 
-                ptr.to_le_bytes().to_vec()
+                self.data
+                    .memory
+                    .add_ptr_offset(lhs, offset)
+                    .0
+                    .to_le_bytes()
+                    .to_vec()
             }
             Type::Ptr(type_key) | Type::MutPtr(type_key) => {
-                let lhs = bytes::to_ptr_key(&lhs).unwrap().0;
-                let rhs = bytes::to_ptr_key(&rhs).unwrap().0;
-
+                use mem::PtrCmp::*;
+                let lhs = bytes::to_ptr_key(&lhs).unwrap();
+                let rhs = bytes::to_ptr_key(&rhs).unwrap();
+                macro_rules! ptr_cmp {
+                    ($cmp: ident) => {
+                        self.data.memory.ptr_cmp(lhs, rhs, $cmp)
+                    };
+                }
                 vec![match op {
-                    BinOp::EqualEqual => lhs == rhs,
-                    BinOp::NotEqual => lhs != rhs,
-                    BinOp::GE => lhs >= rhs,
-                    BinOp::GT => lhs > rhs,
-                    BinOp::LE => lhs <= rhs,
-                    BinOp::LT => lhs < rhs,
+                    BinOp::EqualEqual => ptr_cmp!(Eq),
+                    BinOp::NotEqual => ptr_cmp!(Ne),
+                    BinOp::GE => ptr_cmp!(Ge),
+                    BinOp::GT => ptr_cmp!(Gt),
+                    BinOp::LE => ptr_cmp!(Le),
+                    BinOp::LT => ptr_cmp!(Lt),
                     BinOp::Minus => {
-                        let type_size = self.get_type_size(type_key);
-                        return Ok(((lhs - rhs) / type_size).to_le_bytes().to_vec());
+                        let type_size = self.get_type_size(type_key) as isize;
+                        let diff = self.data.memory.add_ptr_offset(lhs, -rhs.0);
+                        let diff = if diff.0 < 0 {
+                            *self.data.memory.unproven_ptrs.get_by_left(&diff).unwrap() as isize
+                                / type_size
+                        } else {
+                            diff.0 / type_size
+                        };
+                        return Ok(diff.to_le_bytes().to_vec());
                     }
                     _ => unreachable!(),
                 } as u8]
@@ -677,7 +694,7 @@ impl<'a> Interpreter<'a> {
 
             let ptr = self.evaluate_lvalue_ptr(lvalue_key)?;
             let mut vec = Vec::with_capacity(2 * std::mem::size_of::<usize>());
-            vec.extend_from_slice((ptr.0 as usize).to_le_bytes().as_slice());
+            vec.extend_from_slice(ptr.0.to_le_bytes().as_slice());
             vec.extend_from_slice((len as usize).to_le_bytes().as_slice());
             return Ok(vec);
         }
@@ -777,7 +794,14 @@ impl<'a> Interpreter<'a> {
 
         Ok(match kind {
             ArrayToSlice { len } => unreachable!(),
-            PtrToPtr | PtrToUInt | UIntToPtr => val, // no op
+            UIntToPtr => self
+                .data
+                .memory
+                .new_unproven_ptr(convert!(to_usize))
+                .0
+                .to_le_bytes()
+                .to_vec(),
+            PtrToPtr | PtrToUInt => val, // no op
             U1ToChar => (convert!(to_u8) as char as u32).to_le_bytes().to_vec(),
             F4ToF8 => convert!(to_f32 as f64),
             F8ToF4 => convert!(to_f64 as f32),

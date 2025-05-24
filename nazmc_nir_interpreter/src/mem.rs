@@ -1,15 +1,77 @@
+use bimap::BiMap;
 use nazmc_data_pool::typed_index_collections::TiVec;
 use nazmc_nir::PtrKey;
 
-#[derive(Default)]
 pub struct Memory {
     stack: TiVec<PtrKey, u8>,
+    pub unproven_ptrs: BiMap<PtrKey, usize>,
+}
+
+pub(crate) enum PtrCmp {
+    Eq,
+    Ne,
+    Ge,
+    Gt,
+    Le,
+    Lt,
+}
+
+impl Default for Memory {
+    fn default() -> Self {
+        let mut s = Self {
+            stack: TiVec::with_capacity(4096),
+            unproven_ptrs: BiMap::new(),
+        };
+        s.new_unproven_ptr(0);
+        s
+    }
 }
 
 impl Memory {
-    pub fn new() -> Self {
-        Self {
-            stack: TiVec::with_capacity(4096),
+    pub fn new_unproven_ptr(&mut self, value: usize) -> PtrKey {
+        if let Some(ptr) = self.unproven_ptrs.get_by_right(&value) {
+            *ptr
+        } else {
+            let len = self.unproven_ptrs.len() as isize;
+            let ptr = PtrKey(-(len + 1));
+            self.unproven_ptrs.insert(ptr, value);
+            ptr
+        }
+    }
+
+    pub fn add_ptr_offset(&mut self, ptr: PtrKey, offset: isize) -> PtrKey {
+        if ptr.0 < 0 {
+            let ptr_addr = *self.unproven_ptrs.get_by_left(&ptr).unwrap() as isize;
+            let new_addr = ptr_addr + offset;
+            self.new_unproven_ptr(new_addr as usize)
+        } else {
+            let ptr_addr = ptr.0;
+            let mut new_addr = ptr_addr + offset;
+            if new_addr < 0 {
+                let raw = (ptr.0 as i128 + offset as i128).rem_euclid(isize::MAX as i128 + 1);
+                new_addr = raw as isize;
+            }
+            PtrKey(new_addr)
+        }
+    }
+
+    pub fn ptr_cmp(&self, lhs: PtrKey, rhs: PtrKey, cmp: PtrCmp) -> bool {
+        let (lhs, rhs) = if lhs.0 < 0 && rhs.0 < 0 {
+            let lhs = *self.unproven_ptrs.get_by_left(&lhs).unwrap();
+            let rhs = *self.unproven_ptrs.get_by_left(&rhs).unwrap();
+            (lhs, rhs)
+        } else if lhs.0 >= 0 && rhs.0 >= 0 {
+            (lhs.0 as usize, rhs.0 as usize)
+        } else {
+            return false;
+        };
+        match cmp {
+            PtrCmp::Eq => lhs == rhs,
+            PtrCmp::Ne => lhs != rhs,
+            PtrCmp::Ge => lhs >= rhs,
+            PtrCmp::Gt => lhs > rhs,
+            PtrCmp::Le => lhs <= rhs,
+            PtrCmp::Lt => lhs < rhs,
         }
     }
 
@@ -21,7 +83,7 @@ impl Memory {
 
         // offset is isize, must be >= 0 and fits in u32
         assert!(offset >= 0, "slice is not inside the stack buffer");
-        PtrKey(offset as u32)
+        PtrKey(offset as isize)
     }
 
     pub fn set_top(&mut self, ptr: PtrKey) {
@@ -29,7 +91,7 @@ impl Memory {
     }
 
     pub fn get_top(&self) -> PtrKey {
-        PtrKey(self.stack.len() as u32)
+        PtrKey(self.stack.len() as isize)
     }
 
     pub fn alloc(&mut self, size: usize) -> PtrKey {
@@ -152,7 +214,7 @@ pub mod bytes {
     }
 
     pub fn to_ptr_key(bytes: &[u8]) -> Option<PtrKey> {
-        to_usize(bytes).map(|p| PtrKey(p as u32))
+        to_isize(bytes).map(|p| PtrKey(p))
     }
 
     pub fn to_fn_key(bytes: &[u8]) -> Option<FnKey> {

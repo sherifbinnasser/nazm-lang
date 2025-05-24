@@ -1,5 +1,3 @@
-use nazmc_nir::RcValue;
-
 use crate::*;
 
 #[derive(Default)]

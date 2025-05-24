@@ -403,7 +403,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                     .iter()
                     .zip(self.nir.structs[&struct_key].fields.iter().map(|f| f.typ))
                 {
-                    let value_ptr = PtrKey(value_ptr.0 + offset);
+                    let value_ptr = PtrKey(value_ptr.0 + offset as isize);
                     let field = self.lower_bytes(value_ptr, typ);
                     fields.push(field);
                 }
@@ -417,7 +417,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                     .iter()
                     .zip(self.nir.tuple_types[tuple_type_key].types.iter())
                 {
-                    let value_ptr = PtrKey(value_ptr.0 + offset);
+                    let value_ptr = PtrKey(value_ptr.0 + offset as isize);
                     let field = self.lower_bytes(value_ptr, typ);
                     fields.push(field);
                 }
@@ -441,7 +441,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
 
                 let iter = (0..len).into_iter().map(|idx| {
                     let offset = idx * underlying_typ_interpreter_size;
-                    let value_ptr = PtrKey(value_ptr.0 + offset);
+                    let value_ptr = PtrKey(value_ptr.0 + offset as isize);
                     self.lower_bytes(value_ptr, nir_underlying_typ)
                 });
 
@@ -470,7 +470,18 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
     }
 
     fn lower_ptr(&self, ptr_key: PtrKey, ptr_type_key: TypeKey) -> BasicValueEnum {
-        if self
+        if ptr_key.0 < 0 {
+            let raw_ptr = *self
+                .interpreter_data
+                .memory
+                .unproven_ptrs
+                .get_by_left(&ptr_key)
+                .unwrap();
+            let const_int = self.isize_type().const_int(raw_ptr as u64, false);
+            return const_int
+                .const_to_pointer(self.ptr_type())
+                .as_basic_value_enum();
+        } else if self
             .nir
             .interpreter_str_pool
             .last()
@@ -533,9 +544,8 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
                 }
             }
         }
-
         // Binary search
-        if let Some((&found_ptr_key, &const_key)) =
+        else if let Some((&found_ptr_key, &const_key)) =
             self.interpreter_consts_sorted_ptrs.range(ptr_key..).next()
         {
             if found_ptr_key == ptr_key {
