@@ -45,13 +45,13 @@ pub struct NIR<'a> {
     pub lambda_types: TiVec<LambdaTypeKey, LambdaType>,
     pub fn_ptr_types: TiVec<FnPtrTypeKey, FnPtrType>,
     pub structs: HashMap<StructKey, Struct>,
-    pub statics: TiVec<StaticKey, Static>,
     pub fns: TiVec<FnKey, Fn>,
     pub files_infos: &'a TiSlice<FileKey, FileInfo>,
     pub files_to_pkgs: &'a TiSlice<FileKey, PkgKey>,
     pub pkgs_names: &'a TiSlice<PkgKey, &'a ThinVec<IdKey>>,
     pub id_pool: &'a TiSlice<IdKey, String>,
     pub str_pool: TiVec<StrKey, String>,
+    pub statics: HashMap<StaticKey, GlobalConst>,
     pub consts: HashMap<ConstKey, GlobalConst>,
     pub interpreter_str_pool: TiVec<StrKey, PtrKey>,
     pub interpreter_str_slices_pool: TiVec<StrKey, PtrKey>,
@@ -72,12 +72,6 @@ pub struct GlobalConst {
     pub info: ItemInfo,
     pub typ: TypeKey,
     pub value: PtrKey,
-}
-
-pub struct Static {
-    pub info: ItemInfo,
-    pub typ: TypeKey,
-    pub cfg: CFG,
 }
 
 pub struct Fn {

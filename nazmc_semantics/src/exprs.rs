@@ -119,7 +119,10 @@ impl<'a> SemanticsAnalyzer<'a> {
                 self.analyze_const(key, self.current_file_key, self.get_expr_span(expr_key));
                 &self.typed_ast.consts[&key].typ
             }
-            Item::Static { vis: _, key } => todo!(),
+            Item::Static { vis: _, key } => {
+                self.analyze_static(key, self.current_file_key, self.get_expr_span(expr_key));
+                &self.typed_ast.statics[&key].typ
+            }
             Item::Fn { vis: _, key } => &self.typed_ast.fns_signatures[&key],
             Item::LocalVar { id, key } => self
                 .typed_ast
@@ -171,7 +174,10 @@ impl<'a> SemanticsAnalyzer<'a> {
                 self.analyze_const(key, self.current_file_key, self.get_expr_span(expr_key));
                 &self.typed_ast.consts[&key].typ
             }
-            Item::Static { vis: _, key } => todo!(),
+            Item::Static { vis: _, key } => {
+                self.analyze_static(key, self.current_file_key, self.get_expr_span(expr_key));
+                &self.typed_ast.statics[&key].typ
+            }
             Item::Fn { vis: _, key } => &self.typed_ast.fns_signatures[&key],
             _ => unreachable!(),
         };

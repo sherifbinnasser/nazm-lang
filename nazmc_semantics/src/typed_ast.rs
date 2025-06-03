@@ -40,6 +40,7 @@ pub struct Const {
     pub typ: Type,
 }
 
+#[derive(Default)]
 pub struct Static {
     pub typ: Type,
 }

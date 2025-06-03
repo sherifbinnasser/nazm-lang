@@ -31,6 +31,7 @@ use typed_ast::{LetStm, TypedAST};
 struct SemanticsStack {
     stack: Vec<ItemStackCall>,
     consts: HashMap<ConstKey, ()>,
+    statics: HashMap<StaticKey, ()>,
     structs: HashMap<StructKey, ()>,
     bad_consts_detected: bool,
 }
@@ -43,6 +44,7 @@ struct ItemStackCall {
 
 pub enum ItemStackCallKind {
     Const(ConstKey),
+    Static(StaticKey),
     Struct(StructKey),
 }
 
@@ -114,7 +116,8 @@ impl<'a> SemanticsAnalyzer<'a> {
             nir_builder: NIRBuilder {
                 nir: NIR {
                     structs: HashMap::with_capacity(ast.structs.len()),
-                    statics: TiVec::with_capacity(ast.statics.len()),
+                    statics: HashMap::with_capacity(ast.statics.len()),
+                    consts: HashMap::with_capacity(ast.consts.len()),
                     fns: TiVec::with_capacity(ast.fns.len()),
                     files_infos,
                     files_to_pkgs,
@@ -148,7 +151,7 @@ impl<'a> SemanticsAnalyzer<'a> {
         //     self.analyze_type_expr(type_expr_key);
         // }
 
-        self.analyze_consts();
+        self.analyze_consts_and_statics();
 
         if !self.diagnostics.is_empty() {
             eprint_diagnostics(self.diagnostics);
@@ -251,6 +254,10 @@ impl<'a> SemanticsAnalyzer<'a> {
                 let item_info = self.ast.consts[*const_key].info;
                 format!("حساب قيمة الثابت `{}`", self.fmt_item_name(item_info))
             }
+            ItemStackCallKind::Static(static_key) => {
+                let item_info = self.ast.statics[*static_key].info;
+                format!("حساب قيمة المشترك `{}`", self.fmt_item_name(item_info))
+            }
             ItemStackCallKind::Struct(struct_key) => {
                 let item_info = self.ast.structs[*struct_key].info;
                 format!("تحديد حجم الهيكل `{}`", self.fmt_item_name(item_info))
@@ -259,6 +266,7 @@ impl<'a> SemanticsAnalyzer<'a> {
 
         let get_id_span = |kind: &ItemStackCallKind| match kind {
             ItemStackCallKind::Const(const_key) => self.ast.consts[*const_key].info.id_span,
+            ItemStackCallKind::Static(static_key) => self.ast.statics[*static_key].info.id_span,
             ItemStackCallKind::Struct(struct_key) => self.ast.structs[*struct_key].info.id_span,
         };
 
