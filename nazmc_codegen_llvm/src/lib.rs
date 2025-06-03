@@ -55,9 +55,9 @@ pub struct LLVMCodeGen<'ctx, 'nir> {
     llvm_fns: TiVec<FnKey, FunctionValue<'ctx>>,
     llvm_str_pool: TiVec<StrKey, GlobalValue<'ctx>>,
     llvm_str_slices_pool: TiVec<StrKey, GlobalValue<'ctx>>,
-    llvm_statics: TiVec<StaticKey, GlobalValue<'ctx>>,
     llvm_temps_counter: Cell<usize>,
     ret_ptr: Cell<Option<PointerValue<'ctx>>>,
+    llvm_statics: RefCell<HashMap<StaticKey, GlobalValue<'ctx>>>,
     llvm_consts: RefCell<HashMap<ConstKey, GlobalValue<'ctx>>>,
     llvm_temps: RefCell<Vec<String>>,
     fn_ptr_types: RefCell<HashMap<FnPtrTypeKey, FnPtrLayout<'ctx>>>,
@@ -178,9 +178,9 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             llvm_fns: TiVec::with_capacity(nir.fns.len()),
             llvm_str_pool: TiVec::with_capacity(nir.str_pool.len()),
             llvm_str_slices_pool: TiVec::with_capacity(nir.str_pool.len()),
-            llvm_statics: TiVec::with_capacity(nir.statics.len()),
             llvm_temps_counter: Cell::new(0),
             ret_ptr: Default::default(),
+            llvm_statics: RefCell::new(HashMap::with_capacity(nir.statics.len())),
             llvm_consts: RefCell::new(HashMap::with_capacity(nir.consts.len())),
             llvm_temps: RefCell::new(Vec::new()),
             fn_ptr_types: RefCell::new(HashMap::with_capacity(nir.fn_ptr_types.len())),
@@ -199,7 +199,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         // So lower functions signatures first as extern functions may have string consts link names
         self.lower_fns_signatures();
         self.lower_string_consts();
-        self.lower_consts();
+        self.lower_consts_and_statics();
         self.lower_fns_bodies();
     }
 
@@ -268,9 +268,12 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         }
     }
 
-    fn lower_consts(&mut self) {
+    fn lower_consts_and_statics(&mut self) {
         for i in 0..self.nir.consts.len() as u32 {
             self.lower_const(ConstKey(i));
+        }
+        for i in 0..self.nir.statics.len() as u32 {
+            self.lower_static(StaticKey(i));
         }
     }
 
@@ -291,12 +294,32 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
 
         global_const.set_initializer(&value);
         global_const.set_constant(true);
-        global_const.set_unnamed_addr(true);
-        global_const.set_linkage(Linkage::Private);
         self.llvm_consts
             .borrow_mut()
             .insert(const_key, global_const);
         global_const
+    }
+
+    fn lower_static(&self, static_key: StaticKey) -> GlobalValue {
+        if let Some(ptr) = self.llvm_statics.borrow().get(&static_key) {
+            return ptr.clone();
+        }
+
+        let typ = self.nir.statics[&static_key].typ;
+        let llvm_typ = self.lower_type(typ);
+        let global_static = self.module.add_global(
+            any_type_enum_to_basic_type_enum(llvm_typ),
+            None,
+            &format!("STATIC{}", static_key.0),
+        );
+
+        let value = self.lower_bytes(self.nir.statics[&static_key].value, typ);
+
+        global_static.set_initializer(&value);
+        self.llvm_statics
+            .borrow_mut()
+            .insert(static_key, global_static);
+        global_static
     }
 
     fn get_interpreter_type_size(&self, type_key: TypeKey) -> u32 {
