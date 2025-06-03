@@ -44,13 +44,19 @@ use nazmc_data_pool::*;
 use nazmc_nir::*;
 use typed_index_collections::{TiSlice, TiVec};
 
+#[derive(Clone, Copy)]
+enum ConstOrStatic {
+    Const(ConstKey),
+    Static(StaticKey),
+}
+
 pub struct LLVMCodeGen<'ctx, 'nir> {
     context: &'ctx Context,
     module: Module<'ctx>,
     builder: Builder<'ctx>,
     machine: TargetMachine,
     nir: NIR<'nir>,
-    interpreter_consts_sorted_ptrs: BTreeMap<PtrKey, ConstKey>,
+    interpreter_consts_statics_sorted_ptrs: BTreeMap<PtrKey, ConstOrStatic>,
     interpreter_data: InterpreterData,
     llvm_fns: TiVec<FnKey, FunctionValue<'ctx>>,
     llvm_str_pool: TiVec<StrKey, GlobalValue<'ctx>>,
@@ -162,11 +168,19 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
 
         let builder = context.create_builder();
 
-        let interpreter_consts_sorted_ptrs = nir
+        let mut interpreter_consts_sorted_ptrs: BTreeMap<_, _> = nir
             .consts
             .iter()
-            .map(|(const_key, _const)| (_const.value, *const_key))
+            .map(|(const_key, _const)| (_const.value, ConstOrStatic::Const(*const_key)))
             .collect();
+
+        nir.statics.iter().for_each(|(static_key, _static)| {
+            if interpreter_consts_sorted_ptrs.contains_key(&_static.value) {
+                return;
+            }
+            interpreter_consts_sorted_ptrs
+                .insert(_static.value, ConstOrStatic::Static(*static_key));
+        });
 
         Self {
             context: &context,
@@ -174,7 +188,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             builder,
             machine,
             interpreter_data,
-            interpreter_consts_sorted_ptrs,
+            interpreter_consts_statics_sorted_ptrs: interpreter_consts_sorted_ptrs,
             llvm_fns: TiVec::with_capacity(nir.fns.len()),
             llvm_str_pool: TiVec::with_capacity(nir.str_pool.len()),
             llvm_str_slices_pool: TiVec::with_capacity(nir.str_pool.len()),
@@ -542,7 +556,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             .is_some_and(|&last_ptr_key| {
                 ptr_key <= last_ptr_key
                     || self
-                        .interpreter_consts_sorted_ptrs
+                        .interpreter_consts_statics_sorted_ptrs
                         .first_key_value()
                         .is_some_and(|(&const_ptr_key, _)| ptr_key < const_ptr_key)
             })
@@ -568,25 +582,34 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             }
         }
         // Binary search
-        else if let Some((&found_ptr_key, &const_key)) =
-            self.interpreter_consts_sorted_ptrs.range(ptr_key..).next()
+        else if let Some((&found_ptr_key, &const_or_static)) = self
+            .interpreter_consts_statics_sorted_ptrs
+            .range(ptr_key..)
+            .next()
         {
             if found_ptr_key == ptr_key {
                 // Exact match found
-                return self.lower_const(const_key).as_basic_value_enum();
+                return match const_or_static {
+                    ConstOrStatic::Const(const_key) => self.lower_const(const_key),
+                    ConstOrStatic::Static(static_key) => self.lower_static(static_key),
+                }
+                .as_basic_value_enum();
             }
 
             // Handle case where ptr_key is between two existing pointers
             let prev_entry = self
-                .interpreter_consts_sorted_ptrs
+                .interpreter_consts_statics_sorted_ptrs
                 .range(..ptr_key)
                 .next_back();
 
-            if let Some((&prev_ptr_key, &prev_const_key)) = prev_entry {
+            if let Some((&prev_ptr_key, &prev_const_or_static)) = prev_entry {
                 let offset = ptr_key.0 - prev_ptr_key.0;
                 let llvm_offset = self.context.i32_type().const_int(offset as u64, false);
                 let zero = self.context.i32_type().const_zero();
-                let const_ptr = self.lower_const(prev_const_key);
+                let const_ptr = match prev_const_or_static {
+                    ConstOrStatic::Const(const_key) => self.lower_const(const_key),
+                    ConstOrStatic::Static(static_key) => self.lower_static(static_key),
+                };
                 let const_typ = any_type_enum_to_basic_type_enum(const_ptr.get_value_type());
 
                 return unsafe {

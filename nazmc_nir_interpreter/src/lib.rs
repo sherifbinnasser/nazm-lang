@@ -373,9 +373,9 @@ impl<'a> Interpreter<'a> {
         Ok(match cfg.lvalues[lv].kind {
             LValueKind::Binding(binding_key) => self.current_frame.bindings[binding_key],
             LValueKind::Const(const_key) => self.nir.consts[&const_key].value,
+            LValueKind::Static(static_key) => self.nir.statics[&static_key].value,
             LValueKind::Temp(temp_key) => self.current_frame.temps[temp_key],
             LValueKind::Arg(arg_key) => self.current_frame.args[&arg_key],
-            LValueKind::Static(static_key) => todo!(),
             LValueKind::Deref(on) | LValueKind::MutDeref(on) => {
                 let on = self.evaluate_lvalue(on)?;
                 bytes::to_ptr_key(on).unwrap()
