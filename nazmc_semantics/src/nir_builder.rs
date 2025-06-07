@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use iter_tools::Itertools;
-use nazmc_ast::{ASTId, BinaryOpExpr, CastExpr, ExprKey, IfExpr, LetStmKey, ScopeKey};
-use nazmc_data_pool::{typed_index_collections::TiVec, DataPoolBuilder, IdKey};
+use nazmc_ast::{ASTId, BinaryOpExpr, ExprKey, IfExpr, LetStmKey, ScopeKey};
+use nazmc_data_pool::{DataPoolBuilder, IdKey};
 use nazmc_nir::{
     ArgKey, ArrayType, ArrayTypeKey, BasicBlock, BasicBlockKey, BinOp, Binding, BindingKey, Branch,
     BranchKey, CastKind, Const, FnKey, FnPtrType, FnPtrTypeKey, LValue, LValueKey, LValueKind,

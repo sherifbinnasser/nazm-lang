@@ -249,7 +249,7 @@ impl<'a> Interpreter<'a> {
         &mut self,
         fn_key: FnKey,
         args: HashMap<ArgKey, PtrKey>,
-    ) -> Result<Vec<u8>, ()> {
+    ) -> Result<Vec<u8>, &'static str> {
         let function = &self.nir.fns[fn_key];
         let FnLinkage::Local(cfg) = &function.linkage else {
             unreachable!()
@@ -261,7 +261,7 @@ impl<'a> Interpreter<'a> {
         &mut self,
         cfg: &'a CFG,
         args: HashMap<ArgKey, PtrKey>,
-    ) -> Result<Vec<u8>, ()> {
+    ) -> Result<Vec<u8>, &'static str> {
         let prev_frame = std::mem::take(&mut self.current_frame);
         let prev_cfg = self.current_cfg;
         self.current_frame.args = args;
@@ -296,13 +296,16 @@ impl<'a> Interpreter<'a> {
         Ok(ret_value)
     }
 
-    fn execute_block(&mut self, bb: &BasicBlock) -> Result<Vec<u8>, ()> {
+    fn execute_block(&mut self, bb: &BasicBlock) -> Result<Vec<u8>, &'static str> {
         for stm in &bb.stms {
             match stm {
                 Stm::Assign { lhs, rhs, typ } => {
                     let LValue { typ, kind } = self.current_cfg.unwrap().lvalues[*lhs];
                     let rhs = self.evaluate_rvalue(rhs)?;
                     let lhs = self.evaluate_lvalue_ptr(*lhs)?;
+                    if lhs.0 < self.data.memory.get_const_mem_len() {
+                        return Err("يوجد محاولة تعديل على قيمة ثابت أو مشترك");
+                    }
                     self.data.memory.push_bytes_at(lhs, &rhs);
                 }
                 Stm::Phi { lhs, cases, typ } => {
@@ -310,6 +313,9 @@ impl<'a> Interpreter<'a> {
                     let (_, op) = cases.iter().find(|(pred, _)| *pred == frame_pred).unwrap();
                     let val = self.evaluate_operand_kind(op)?.collect::<Vec<_>>();
                     let lhs = self.evaluate_lvalue_ptr(*lhs)?;
+                    if lhs.0 < self.data.memory.get_const_mem_len() {
+                        return Err("يوجد محاولة تعديل على قيمة ثابت أو مشترك");
+                    }
                     self.data.memory.push_bytes_at(lhs, &val);
                 }
                 Stm::Return { rvalue, typ } => {
@@ -325,7 +331,7 @@ impl<'a> Interpreter<'a> {
         Ok(vec![])
     }
 
-    fn execute_branches(&mut self, bb: &BasicBlock) -> Result<(), ()> {
+    fn execute_branches(&mut self, bb: &BasicBlock) -> Result<(), &'static str> {
         let cfg = self.current_cfg.unwrap();
         let next_block = if let Some(bk) = bb.conditional_goto {
             let branch = &cfg.branches[&bk];
@@ -349,25 +355,28 @@ impl<'a> Interpreter<'a> {
         Ok(())
     }
 
-    fn evaluate_operand_to_vec(&mut self, op: &Operand) -> Result<Vec<u8>, ()> {
+    fn evaluate_operand_to_vec(&mut self, op: &Operand) -> Result<Vec<u8>, &'static str> {
         Ok(self.evaluate_operand(op)?.collect())
     }
 
-    fn evaluate_operand(&mut self, op: &Operand) -> Result<Box<dyn Iterator<Item = u8> + '_>, ()> {
+    fn evaluate_operand(
+        &mut self,
+        op: &Operand,
+    ) -> Result<Box<dyn Iterator<Item = u8> + '_>, &'static str> {
         self.evaluate_operand_kind(&op.kind)
     }
 
     fn evaluate_operand_kind(
         &mut self,
         kind: &OperandKind,
-    ) -> Result<Box<dyn Iterator<Item = u8> + '_>, ()> {
+    ) -> Result<Box<dyn Iterator<Item = u8> + '_>, &'static str> {
         match kind {
             OperandKind::LValue(lv) => Ok(Box::new(self.evaluate_lvalue(*lv)?.iter().copied())),
             OperandKind::Const(c) => Ok(self.evaluate_constant(c)),
         }
     }
 
-    fn evaluate_lvalue_ptr(&mut self, lv: LValueKey) -> Result<PtrKey, ()> {
+    fn evaluate_lvalue_ptr(&mut self, lv: LValueKey) -> Result<PtrKey, &'static str> {
         let cfg = self.current_cfg.unwrap();
 
         Ok(match cfg.lvalues[lv].kind {
@@ -425,10 +434,10 @@ impl<'a> Interpreter<'a> {
         })
     }
 
-    fn evaluate_lvalue(&mut self, lv: LValueKey) -> Result<&[u8], ()> {
+    fn evaluate_lvalue(&mut self, lv: LValueKey) -> Result<&[u8], &'static str> {
         let ptr_key = self.evaluate_lvalue_ptr(lv)?;
         if ptr_key.0 < 0 || ptr_key.0 >= self.data.memory.get_top().0 {
-            Err(())
+            Err("يوجد محاولة وصول إلى بيانات من مؤشر منقطع")
         } else {
             Ok(self.get_bytes_at(ptr_key, self.current_cfg.unwrap().lvalues[lv].typ))
         }
@@ -458,7 +467,7 @@ impl<'a> Interpreter<'a> {
         Box::new(bytes.into_iter())
     }
 
-    fn evaluate_rvalue(&mut self, rvalue: &RValue) -> Result<Vec<u8>, ()> {
+    fn evaluate_rvalue(&mut self, rvalue: &RValue) -> Result<Vec<u8>, &'static str> {
         Ok(match rvalue {
             RValue::Use(op) => self.evaluate_operand_to_vec(op)?,
             RValue::Str(sk) => self
@@ -513,7 +522,7 @@ impl<'a> Interpreter<'a> {
         })
     }
 
-    fn apply_unaryop(&mut self, op: UnaryOp, operand: &Operand) -> Result<Vec<u8>, ()> {
+    fn apply_unaryop(&mut self, op: UnaryOp, operand: &Operand) -> Result<Vec<u8>, &'static str> {
         let typ = operand.typ;
         let val = self.evaluate_operand_to_vec(operand)?;
 
@@ -559,7 +568,12 @@ impl<'a> Interpreter<'a> {
         })
     }
 
-    fn apply_binop(&mut self, op: BinOp, lhs: &Operand, rhs: &Operand) -> Result<Vec<u8>, ()> {
+    fn apply_binop(
+        &mut self,
+        op: BinOp,
+        lhs: &Operand,
+        rhs: &Operand,
+    ) -> Result<Vec<u8>, &'static str> {
         let lhs_typ = lhs.typ;
         let rhs_typ = rhs.typ;
         let lhs = self.evaluate_operand_to_vec(lhs)?;
@@ -683,7 +697,7 @@ impl<'a> Interpreter<'a> {
         })
     }
 
-    fn apply_cast(&mut self, val: &Operand, kind: CastKind) -> Result<Vec<u8>, ()> {
+    fn apply_cast(&mut self, val: &Operand, kind: CastKind) -> Result<Vec<u8>, &'static str> {
         use CastKind::*;
         use Size::*;
 

@@ -4,6 +4,7 @@ use nazmc_nir::PtrKey;
 
 pub struct Memory {
     stack: TiVec<PtrKey, u8>,
+    const_mem_len: isize,
     pub unproven_ptrs: BiMap<PtrKey, usize>,
 }
 
@@ -20,6 +21,7 @@ impl Default for Memory {
     fn default() -> Self {
         let mut s = Self {
             stack: TiVec::with_capacity(4096),
+            const_mem_len: 0,
             unproven_ptrs: BiMap::new(),
         };
         s.new_unproven_ptr(0);
@@ -55,7 +57,7 @@ impl Memory {
         }
     }
 
-    pub fn ptr_cmp(&self, lhs: PtrKey, rhs: PtrKey, cmp: PtrCmp) -> bool {
+    pub(crate) fn ptr_cmp(&self, lhs: PtrKey, rhs: PtrKey, cmp: PtrCmp) -> bool {
         let (lhs, rhs) = if lhs.0 < 0 && rhs.0 < 0 {
             let lhs = *self.unproven_ptrs.get_by_left(&lhs).unwrap();
             let rhs = *self.unproven_ptrs.get_by_left(&rhs).unwrap();
@@ -84,6 +86,14 @@ impl Memory {
         // offset is isize, must be >= 0 and fits in u32
         assert!(offset >= 0, "slice is not inside the stack buffer");
         PtrKey(offset as isize)
+    }
+
+    pub fn set_const_mem_len_to_top(&mut self) {
+        self.const_mem_len = self.get_top().0;
+    }
+
+    pub fn get_const_mem_len(&self) -> isize {
+        self.const_mem_len
     }
 
     pub fn set_top(&mut self, ptr: PtrKey) {

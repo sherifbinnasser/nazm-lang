@@ -230,43 +230,23 @@ impl<'a> SemanticsAnalyzer<'a> {
         is_const: bool,
         type_key: nazmc_nir::TypeKey,
     ) -> Vec<u8> {
+        self.interpreter_data.memory.set_const_mem_len_to_top();
         let mut interpreter = nazmc_nir_interpreter::Interpreter::new(
             &self.nir_builder.nir,
             &mut self.interpreter_data,
         );
         let value = interpreter.execute_cfg(&cfg, HashMap::new());
-        let name = if is_const {
+        let global_type = if is_const {
             "الثابت"
         } else {
             "المشترك"
         };
 
-        if let Ok(value) = value {
-            if interpreter
-                .check_dangling_pointer(&value, type_key)
-                .is_err()
-            {
-                let msg = format!(
-                    "تم العثور على مؤشر منقطع عند حساب قيمة {} `{}`",
-                    name,
-                    self.fmt_item_name(*info)
-                );
-                let const_id_span = info.id_span;
-                let mut code_window = CodeWindow::new(
-                    &self.files_infos[self.current_file_key],
-                    const_id_span.start,
-                );
-                code_window.mark_error(const_id_span, vec![]);
-                let diagnostic = Diagnostic::error(msg, vec![code_window]);
-                self.diagnostics.push(diagnostic);
-                vec![0]
-            } else {
-                value
-            }
-        } else {
+        if let Err(msg) = value {
             let msg = format!(
-                "يوجد محاولة وصول إلى بيانات من مؤشر منقطع عند حساب قيمة {} `{}`",
-                name,
+                "{} عند حساب قيمة {} `{}`",
+                msg,
+                global_type,
                 self.fmt_item_name(*info)
             );
             let const_id_span = info.id_span;
@@ -278,7 +258,31 @@ impl<'a> SemanticsAnalyzer<'a> {
             let diagnostic = Diagnostic::error(msg, vec![code_window]);
             self.diagnostics.push(diagnostic);
 
+            return vec![0];
+        }
+
+        let value = value.unwrap();
+
+        if interpreter
+            .check_dangling_pointer(&value, type_key)
+            .is_err()
+        {
+            let msg = format!(
+                "تم العثور على مؤشر منقطع عند حساب قيمة {} `{}`",
+                global_type,
+                self.fmt_item_name(*info)
+            );
+            let const_id_span = info.id_span;
+            let mut code_window = CodeWindow::new(
+                &self.files_infos[self.current_file_key],
+                const_id_span.start,
+            );
+            code_window.mark_error(const_id_span, vec![]);
+            let diagnostic = Diagnostic::error(msg, vec![code_window]);
+            self.diagnostics.push(diagnostic);
             vec![0]
+        } else {
+            value
         }
     }
 }
