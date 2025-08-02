@@ -19,9 +19,10 @@ use nazmc_diagnostics::{
     span::{Span, SpanCursor},
     CodeWindow, Diagnostic,
 };
-use nazmc_nir::{Arg, Field, RcValue, Value, CFG, NIR};
+use nazmc_nir::{Arg, Field, CFG, NIR};
+use nazmc_nir_interpreter::InterpreterData;
 use nir_builder::{CFGBuilder, NIRBuilder};
-use std::{collections::HashMap, process::exit, rc::Rc};
+use std::{collections::HashMap, process::exit};
 use thin_vec::ThinVec;
 use type_infer::{CompositeType, ConcreteType, Type, TypeInferenceCtx, TypeVarKey};
 use typed_ast::{LetStm, TypedAST};
@@ -30,6 +31,7 @@ use typed_ast::{LetStm, TypedAST};
 struct SemanticsStack {
     stack: Vec<ItemStackCall>,
     consts: HashMap<ConstKey, ()>,
+    statics: HashMap<StaticKey, ()>,
     structs: HashMap<StructKey, ()>,
     bad_consts_detected: bool,
 }
@@ -42,6 +44,7 @@ struct ItemStackCall {
 
 pub enum ItemStackCallKind {
     Const(ConstKey),
+    Static(StaticKey),
     Struct(StructKey),
 }
 
@@ -60,6 +63,7 @@ pub struct SemanticsAnalyzer<'a> {
     type_inf_ctx: TypeInferenceCtx,
     nir_builder: NIRBuilder<'a>,
     cfg_builder: CFGBuilder,
+    interpreter_data: InterpreterData,
     /// For fns and lambdas only
     current_scope_expected_return_ty: Type,
     current_lambda_first_implicit_return_ty_span: Option<Span>,
@@ -81,24 +85,18 @@ impl<'a> SemanticsAnalyzer<'a> {
         str_pool: TiVec<StrKey, String>,
         ast: nazmc_ast::AST<Resolved>,
     ) -> Self {
-        let mut interpreter_str_pool = HashMap::with_capacity(str_pool.len());
+        let mut interpreter_data = InterpreterData::default();
+        let mut interpreter_str_pool = TiVec::with_capacity(str_pool.len());
         let mut interpreter_str_slices_pool = TiVec::with_capacity(str_pool.len());
         for string in &str_pool {
-            let byte_array = RcValue::new(Value::Agg(Rc::new(
-                string
-                    .bytes()
-                    .map(|byte| RcValue::new(Value::UInt(byte as u64)))
-                    .collect(),
-            )));
-            interpreter_str_pool.insert(
-                byte_array.clone(),
-                StrKey(interpreter_str_slices_pool.len() as u32),
-            );
-            let slice = RcValue::new(Value::Agg(Rc::new(vec![
-                RcValue::new(Value::Ptr(byte_array)),
-                RcValue::new(Value::UInt(string.len() as u64)),
-            ])));
-            interpreter_str_slices_pool.push(slice);
+            let str_ptr_key = interpreter_data.memory.push_bytes(string.as_bytes());
+            interpreter_str_pool.push(str_ptr_key);
+        }
+        for (str_key, string) in str_pool.iter_enumerated() {
+            let str_ptr_key = interpreter_str_pool[str_key];
+            let str_slice_key = interpreter_data.memory.push_ptr(str_ptr_key);
+            interpreter_data.memory.push_usize(string.len());
+            interpreter_str_slices_pool.push(str_slice_key);
         }
 
         Self {
@@ -118,7 +116,8 @@ impl<'a> SemanticsAnalyzer<'a> {
             nir_builder: NIRBuilder {
                 nir: NIR {
                     structs: HashMap::with_capacity(ast.structs.len()),
-                    statics: TiVec::with_capacity(ast.statics.len()),
+                    statics: HashMap::with_capacity(ast.statics.len()),
+                    consts: HashMap::with_capacity(ast.consts.len()),
                     fns: TiVec::with_capacity(ast.fns.len()),
                     files_infos,
                     files_to_pkgs,
@@ -134,11 +133,12 @@ impl<'a> SemanticsAnalyzer<'a> {
                 ..Default::default()
             },
             ast,
+            interpreter_data,
             ..Default::default()
         }
     }
 
-    pub fn analyze(mut self) -> NIR<'a> {
+    pub fn analyze(mut self) -> (NIR<'a>, InterpreterData) {
         self.cfg_builder.build(); // To init first cfg start and end blocks
 
         // This will initialize bool type to TypeKey(0)
@@ -151,7 +151,7 @@ impl<'a> SemanticsAnalyzer<'a> {
         //     self.analyze_type_expr(type_expr_key);
         // }
 
-        self.analyze_consts();
+        self.analyze_consts_and_statics();
 
         if !self.diagnostics.is_empty() {
             eprint_diagnostics(self.diagnostics);
@@ -243,7 +243,7 @@ impl<'a> SemanticsAnalyzer<'a> {
             exit(1);
         }
 
-        self.nir_builder.nir
+        (self.nir_builder.nir, self.interpreter_data)
     }
 
     fn report_cycle_detected(&mut self, last_call_file: FileKey, last_call_span: Span) {
@@ -254,6 +254,10 @@ impl<'a> SemanticsAnalyzer<'a> {
                 let item_info = self.ast.consts[*const_key].info;
                 format!("حساب قيمة الثابت `{}`", self.fmt_item_name(item_info))
             }
+            ItemStackCallKind::Static(static_key) => {
+                let item_info = self.ast.statics[*static_key].info;
+                format!("حساب قيمة المشترك `{}`", self.fmt_item_name(item_info))
+            }
             ItemStackCallKind::Struct(struct_key) => {
                 let item_info = self.ast.structs[*struct_key].info;
                 format!("تحديد حجم الهيكل `{}`", self.fmt_item_name(item_info))
@@ -262,6 +266,7 @@ impl<'a> SemanticsAnalyzer<'a> {
 
         let get_id_span = |kind: &ItemStackCallKind| match kind {
             ItemStackCallKind::Const(const_key) => self.ast.consts[*const_key].info.id_span,
+            ItemStackCallKind::Static(static_key) => self.ast.statics[*static_key].info.id_span,
             ItemStackCallKind::Struct(struct_key) => self.ast.structs[*struct_key].info.id_span,
         };
 

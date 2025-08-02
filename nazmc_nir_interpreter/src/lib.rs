@@ -1,41 +1,258 @@
+use mem::{bytes::to_f32, Memory};
+use nazmc_data_pool::typed_index_collections::TiVec;
 use nazmc_nir::*;
-use std::{collections::HashMap, rc::Rc};
+use std::collections::HashMap;
+mod mem;
+pub use mem::bytes;
 
 pub struct Interpreter<'a> {
     nir: &'a NIR<'a>,
     current_cfg: Option<&'a CFG>,
     current_frame: Frame,
-    null_ptr: RcValue,
+    data: &'a mut InterpreterData,
+}
+
+#[derive(Default)]
+pub struct InterpreterData {
+    pub memory: Memory,
+    pub structs_layouts: HashMap<StructKey, AggLayout>,
+    pub tuples_layouts: HashMap<TupleTypeKey, AggLayout>,
+}
+
+pub struct AggLayout {
+    pub offsets: Vec<u32>,
+    pub size: u32,
 }
 
 #[derive(Default)]
 struct Frame {
-    args: HashMap<ArgKey, RcValue>,
-    bindings: HashMap<BindingKey, RcValue>,
-    temps: HashMap<TempKey, RcValue>,
+    args: HashMap<ArgKey, PtrKey>,
+    bindings: TiVec<BindingKey, PtrKey>,
+    temps: TiVec<TempKey, PtrKey>,
     current_block: BasicBlockKey,
     predecessor: Option<BasicBlockKey>,
 }
 
 impl<'a> Interpreter<'a> {
-    pub fn new(nir: &'a NIR) -> Self {
+    pub fn new(nir: &'a NIR, data: &'a mut InterpreterData) -> Self {
         Self {
             nir,
+            data,
             current_cfg: None,
             current_frame: Default::default(),
-            null_ptr: RcValue::default(),
+        }
+    }
+
+    pub fn check_dangling_pointer(&mut self, value: &[u8], type_key: TypeKey) -> Result<(), ()> {
+        match self.nir.types[type_key] {
+            nazmc_nir::Type::Slice(type_key)
+            | nazmc_nir::Type::MutSlice(type_key)
+            | nazmc_nir::Type::Ptr(type_key)
+            | nazmc_nir::Type::MutPtr(type_key) => self.check_dangling_ptr_key(value, type_key),
+            nazmc_nir::Type::Struct(struct_key) => {
+                self.compute_struct_layout(struct_key);
+                for (offset, typ) in self.data.structs_layouts[&struct_key]
+                    .offsets
+                    .iter()
+                    .copied()
+                    .zip(self.nir.structs[&struct_key].fields.iter().map(|f| f.typ))
+                    .collect::<Vec<_>>()
+                {
+                    let value = &value[offset as usize..];
+                    self.check_dangling_pointer(value, typ)?;
+                }
+                Ok(())
+            }
+            nazmc_nir::Type::Tuple(tuple_type_key) => {
+                self.compute_tuple_layout(tuple_type_key);
+                for (offset, &typ) in self.data.tuples_layouts[&tuple_type_key]
+                    .offsets
+                    .iter()
+                    .copied()
+                    .zip(self.nir.tuple_types[tuple_type_key].types.iter())
+                    .collect::<Vec<_>>()
+                {
+                    let value = &value[offset as usize..];
+                    self.check_dangling_pointer(value, typ)?;
+                }
+                Ok(())
+            }
+            nazmc_nir::Type::Array(array_type_key) => {
+                let mut ptr_offsets = Vec::new();
+
+                self.detect_array_ptr_offset(
+                    self.nir.array_types[array_type_key].underlying_typ,
+                    &mut ptr_offsets,
+                );
+
+                let len = self.nir.array_types[array_type_key].size;
+
+                for (offset, type_key) in ptr_offsets {
+                    for i in 0..len {
+                        let idx = (i + offset) as usize;
+                        let value = &value[idx..];
+                        self.check_dangling_ptr_key(value, type_key)?;
+                    }
+                }
+
+                Ok(())
+            }
+            nazmc_nir::Type::FnPtr(fn_ptr_type_key) => {
+                if bytes::to_fn_key(value).is_some() {
+                    Ok(())
+                } else {
+                    Err(())
+                }
+            }
+            nazmc_nir::Type::Lambda(lambda_type_key) => todo!(),
+            _ => Ok(()),
+        }
+    }
+
+    fn check_dangling_ptr_key(&mut self, value: &[u8], type_key: TypeKey) -> Result<(), ()> {
+        let top = self.data.memory.get_top();
+
+        let ptr_key = bytes::to_ptr_key(&value).unwrap();
+
+        if ptr_key.0 < 0 {
+            return Ok(());
+        }
+        if ptr_key.0 >= top.0 {
+            return Err(());
+        }
+
+        let value = self.get_bytes_at(ptr_key, type_key).to_vec();
+        self.check_dangling_pointer(&value, type_key)
+    }
+
+    fn detect_array_ptr_offset(
+        &self,
+        underlying_typ: TypeKey,
+        ptr_offsets: &mut Vec<(u32, TypeKey)>,
+    ) {
+        match self.nir.types[underlying_typ] {
+            nazmc_nir::Type::FnPtr(_) => ptr_offsets.push((0, underlying_typ)),
+            nazmc_nir::Type::Slice(type_key)
+            | nazmc_nir::Type::MutSlice(type_key)
+            | nazmc_nir::Type::Ptr(type_key)
+            | nazmc_nir::Type::MutPtr(type_key) => {
+                ptr_offsets.push((0, type_key));
+            }
+            nazmc_nir::Type::Struct(struct_key) => {
+                for (&offset, typ) in self.data.structs_layouts[&struct_key]
+                    .offsets
+                    .iter()
+                    .zip(self.nir.structs[&struct_key].fields.iter().map(|f| f.typ))
+                {
+                    let base = ptr_offsets.len();
+                    self.detect_array_ptr_offset(typ, ptr_offsets);
+                    for (i, _) in &mut ptr_offsets[base..] {
+                        *i += offset;
+                    }
+                }
+            }
+            nazmc_nir::Type::Tuple(tuple_type_key) => {
+                for (&offset, &typ) in self.data.tuples_layouts[&tuple_type_key]
+                    .offsets
+                    .iter()
+                    .zip(self.nir.tuple_types[tuple_type_key].types.iter())
+                {
+                    let base = ptr_offsets.len();
+                    self.detect_array_ptr_offset(typ, ptr_offsets);
+                    for (i, _) in &mut ptr_offsets[base..] {
+                        *i += offset;
+                    }
+                }
+            }
+            nazmc_nir::Type::Array(array_type_key) => {
+                self.detect_array_ptr_offset(
+                    self.nir.array_types[array_type_key].underlying_typ,
+                    ptr_offsets,
+                );
+            }
+            nazmc_nir::Type::Lambda(lambda_type_key) => todo!(),
+            _ => {}
+        }
+    }
+
+    fn get_bytes_at(&mut self, at: PtrKey, type_key: TypeKey) -> &[u8] {
+        let type_size = self.get_type_size(type_key);
+        self.data.memory.get_bytes_at(at, type_size as usize)
+    }
+
+    fn compute_struct_layout(&mut self, struct_key: StructKey) {
+        if self.data.structs_layouts.contains_key(&struct_key) {
+            return;
+        }
+        let mut offsets = Vec::with_capacity(self.nir.structs[&struct_key].fields.len());
+        let mut size = 0;
+        for field in &self.nir.structs[&struct_key].fields {
+            offsets.push(size);
+            let field_size = self.get_type_size(field.typ);
+            size += field_size;
+        }
+
+        self.data
+            .structs_layouts
+            .insert(struct_key, AggLayout { offsets, size });
+    }
+
+    fn compute_tuple_layout(&mut self, tuple_type_key: TupleTypeKey) {
+        if self.data.tuples_layouts.contains_key(&tuple_type_key) {
+            return;
+        }
+
+        let mut offsets = Vec::with_capacity(self.nir.tuple_types[tuple_type_key].types.len());
+        let mut size = 0;
+        for &typ in &self.nir.tuple_types[tuple_type_key].types {
+            offsets.push(size);
+            let typ_size = self.get_type_size(typ);
+            size += typ_size;
+        }
+
+        self.data
+            .tuples_layouts
+            .insert(tuple_type_key, AggLayout { offsets, size });
+    }
+
+    fn get_type_size(&mut self, type_key: TypeKey) -> u32 {
+        match self.nir.types[type_key] {
+            Type::Unit => 0,
+            Type::I | Type::U | Type::MutPtr(_) | Type::Ptr(_) | Type::FnPtr(_) => {
+                std::mem::size_of::<usize>() as u32
+            }
+            Type::I1 | Type::U1 | Type::Bool => 1,
+            Type::I2 | Type::U2 => 2,
+            Type::I4 | Type::U4 | Type::F4 | Type::Char => 4,
+            Type::I8 | Type::U8 | Type::F8 => 8,
+            Type::Slice(_) | Type::MutSlice(_) => 2 * std::mem::size_of::<usize>() as u32,
+            Type::Struct(struct_key) => {
+                self.compute_struct_layout(struct_key);
+                self.data.structs_layouts[&struct_key].size
+            }
+            Type::Tuple(tuple_type_key) => {
+                self.compute_tuple_layout(tuple_type_key);
+                self.data.tuples_layouts[&tuple_type_key].size
+            }
+            Type::Array(array_type_key) => {
+                let ArrayType {
+                    underlying_typ,
+                    size,
+                } = self.nir.array_types[array_type_key];
+                self.get_type_size(underlying_typ) * size
+            }
+            Type::Lambda(lambda_type_key) => todo!(),
         }
     }
 
     pub fn execute_function(
         &mut self,
         fn_key: FnKey,
-        args: HashMap<ArgKey, RcValue>,
-    ) -> Result<RcValue, String> {
+        args: HashMap<ArgKey, PtrKey>,
+    ) -> Result<Vec<u8>, &'static str> {
         let function = &self.nir.fns[fn_key];
-        let cfg = match &function.linkage {
-            FnLinkage::Local(cfg) => cfg,
-            _ => return Err("External functions cannot be executed".into()),
+        let FnLinkage::Local(cfg) = &function.linkage else {
+            unreachable!()
         };
         self.execute_cfg(&cfg, args)
     }
@@ -43,77 +260,91 @@ impl<'a> Interpreter<'a> {
     pub fn execute_cfg(
         &mut self,
         cfg: &'a CFG,
-        args: HashMap<ArgKey, RcValue>,
-    ) -> Result<RcValue, String> {
+        args: HashMap<ArgKey, PtrKey>,
+    ) -> Result<Vec<u8>, &'static str> {
         let prev_frame = std::mem::take(&mut self.current_frame);
         let prev_cfg = self.current_cfg;
         self.current_frame.args = args;
+
+        let top = self.data.memory.get_top();
+
+        for binding in &cfg.bindings {
+            let type_size = self.get_type_size(binding.typ);
+            let ptr = self.data.memory.alloc(type_size as usize);
+            self.current_frame.bindings.push(ptr);
+        }
+
+        for temp in &cfg.temps {
+            let type_size = self.get_type_size(temp.typ);
+            let ptr = self.data.memory.alloc(type_size as usize);
+            self.current_frame.temps.push(ptr);
+        }
+
         self.current_frame.current_block = BasicBlockKey::START_BASIC_BLOCK;
         self.current_cfg = Some(cfg);
-        let mut ret_value = RcValue::new(Value::Unit);
+        let mut ret_value = vec![];
 
         while self.current_frame.current_block != BasicBlockKey::END_BASIC_BLOCK {
-            let bb = cfg
-                .basic_blocks
-                .get(&self.current_frame.current_block)
-                .ok_or_else(|| {
-                    format!("Missing basic block {:?}", self.current_frame.current_block)
-                })?;
-
+            let bb = &cfg.basic_blocks[&self.current_frame.current_block];
             ret_value = self.execute_block(bb)?;
         }
 
+        self.data.memory.set_top(top);
         self.current_frame = prev_frame;
         self.current_cfg = prev_cfg;
+
         Ok(ret_value)
     }
 
-    fn execute_block(&mut self, bb: &BasicBlock) -> Result<RcValue, String> {
+    fn execute_block(&mut self, bb: &BasicBlock) -> Result<Vec<u8>, &'static str> {
         for stm in &bb.stms {
             match stm {
                 Stm::Assign { lhs, rhs, typ } => {
+                    let LValue { typ, kind } = self.current_cfg.unwrap().lvalues[*lhs];
                     let rhs = self.evaluate_rvalue(rhs)?;
-                    let lhs = self.evaluate_lvalue(*lhs)?;
-                    *lhs.data.borrow_mut() = rhs.inner();
+                    let lhs = self.evaluate_lvalue_ptr(*lhs)?;
+                    if lhs.0 < self.data.memory.get_const_mem_len() {
+                        return Err("يوجد محاولة تعديل على قيمة ثابت أو مشترك");
+                    }
+                    self.data.memory.push_bytes_at(lhs, &rhs);
                 }
                 Stm::Phi { lhs, cases, typ } => {
-                    let val = cases
-                        .iter()
-                        .find(|(pred, _)| *pred == self.current_frame.predecessor.unwrap())
-                        .map(|(_, op)| self.evaluate_operand_kind(op))
-                        .ok_or("Phi node missing predecessor")??;
-                    let ptr = self.evaluate_lvalue(*lhs)?;
-                    *ptr.data.borrow_mut() = val.inner();
+                    let frame_pred = self.current_frame.predecessor.unwrap();
+                    let (_, op) = cases.iter().find(|(pred, _)| *pred == frame_pred).unwrap();
+                    let val = self.evaluate_operand_kind(op)?.collect::<Vec<_>>();
+                    let lhs = self.evaluate_lvalue_ptr(*lhs)?;
+                    if lhs.0 < self.data.memory.get_const_mem_len() {
+                        return Err("يوجد محاولة تعديل على قيمة ثابت أو مشترك");
+                    }
+                    self.data.memory.push_bytes_at(lhs, &val);
                 }
                 Stm::Return { rvalue, typ } => {
-                    let value = self.evaluate_rvalue(rvalue)?;
+                    let value = self.evaluate_rvalue(rvalue);
                     self.current_frame.current_block = BasicBlockKey::END_BASIC_BLOCK;
-                    return Ok(value);
+                    return value;
                 }
                 Stm::Drop(lvalue) => todo!(),
             }
         }
 
         self.execute_branches(bb)?;
-        Ok(RcValue::new(Value::Unit))
+        Ok(vec![])
     }
 
-    fn execute_branches(&mut self, bb: &BasicBlock) -> Result<(), String> {
+    fn execute_branches(&mut self, bb: &BasicBlock) -> Result<(), &'static str> {
         let cfg = self.current_cfg.unwrap();
         let next_block = if let Some(bk) = bb.conditional_goto {
             let branch = &cfg.branches[&bk];
-            if let BranchKind::If(op) = &branch.kind {
-                let Value::Bool(cond_bool) = self.evaluate_operand(op)?.inner() else {
-                    return Err("Non-boolean condition in if branch".into());
-                };
+            let BranchKind::If(op) = &branch.kind else {
+                unreachable!()
+            };
 
-                if cond_bool {
-                    branch.to
-                } else {
-                    cfg.branches[&bb.goto.unwrap()].to
-                }
+            let cond_bool = bytes::to_bool(&self.evaluate_operand_to_vec(op)?).unwrap();
+
+            if cond_bool {
+                branch.to
             } else {
-                return Err("Non-conditional branch marked as conditional".into());
+                cfg.branches[&bb.goto.unwrap()].to
             }
         } else {
             cfg.branches[&bb.goto.unwrap()].to
@@ -124,392 +355,510 @@ impl<'a> Interpreter<'a> {
         Ok(())
     }
 
-    fn evaluate_operand(&mut self, op: &Operand) -> Result<RcValue, String> {
+    fn evaluate_operand_to_vec(&mut self, op: &Operand) -> Result<Vec<u8>, &'static str> {
+        Ok(self.evaluate_operand(op)?.collect())
+    }
+
+    fn evaluate_operand(
+        &mut self,
+        op: &Operand,
+    ) -> Result<Box<dyn Iterator<Item = u8> + '_>, &'static str> {
         self.evaluate_operand_kind(&op.kind)
     }
 
-    fn evaluate_operand_kind(&mut self, kind: &OperandKind) -> Result<RcValue, String> {
+    fn evaluate_operand_kind(
+        &mut self,
+        kind: &OperandKind,
+    ) -> Result<Box<dyn Iterator<Item = u8> + '_>, &'static str> {
         match kind {
-            OperandKind::LValue(lv) => self.evaluate_lvalue(*lv).map(|v| v.copy()),
-            OperandKind::Const(c) => self.evaluate_constant(*c),
+            OperandKind::LValue(lv) => Ok(Box::new(self.evaluate_lvalue(*lv)?.iter().copied())),
+            OperandKind::Const(c) => Ok(self.evaluate_constant(c)),
         }
     }
 
-    fn evaluate_lvalue(&mut self, lv: LValueKey) -> Result<RcValue, String> {
-        let rc_value = match self.current_cfg.unwrap().lvalues[lv].kind {
-            LValueKind::Binding(binding_key) => self
-                .current_frame
-                .bindings
-                .entry(binding_key)
-                .or_default()
-                .clone(),
-            LValueKind::Const(const_key) => self.nir.consts[&const_key].value.clone(),
-            LValueKind::Temp(temp_key) => self
-                .current_frame
-                .temps
-                .entry(temp_key)
-                .or_default()
-                .clone(),
-            LValueKind::Arg(arg_key) => self.current_frame.args[&arg_key].clone(), // Args should be provided before any fn call, so no entry
-            LValueKind::Static(static_key) => todo!(),
+    fn evaluate_lvalue_ptr(&mut self, lv: LValueKey) -> Result<PtrKey, &'static str> {
+        let cfg = self.current_cfg.unwrap();
+
+        Ok(match cfg.lvalues[lv].kind {
+            LValueKind::Binding(binding_key) => self.current_frame.bindings[binding_key],
+            LValueKind::Const(const_key) => self.nir.consts[&const_key].value,
+            LValueKind::Static(static_key) => self.nir.statics[&static_key].value,
+            LValueKind::Temp(temp_key) => self.current_frame.temps[temp_key],
+            LValueKind::Arg(arg_key) => self.current_frame.args[&arg_key],
             LValueKind::Deref(on) | LValueKind::MutDeref(on) => {
                 let on = self.evaluate_lvalue(on)?;
-                if Rc::ptr_eq(&on.data, &self.null_ptr.data) {
-                    return Err("NullPointerException".into());
-                };
-                let Value::Ptr(ptr) = &*on.borrow() else {
-                    unreachable!()
-                };
-                ptr.clone()
+                bytes::to_ptr_key(on).unwrap()
             }
-            LValueKind::Field { on, idx }
-            | LValueKind::MutField { on, idx }
-            | LValueKind::ArrayConstIdx { on, idx }
-            | LValueKind::MutArrayConstIdx { on, idx } => {
-                let on = self.evaluate_lvalue(on)?;
-                let Value::Agg(elements) = &*on.borrow() else {
+            LValueKind::Field { on, idx } | LValueKind::MutField { on, idx } => {
+                let field_offset = match self.nir.types[cfg.lvalues[on].typ] {
+                    Type::Struct(struct_key) => {
+                        self.compute_struct_layout(struct_key);
+                        self.data.structs_layouts[&struct_key].offsets[idx as usize]
+                    }
+                    Type::Tuple(tuple_type_key) => {
+                        self.compute_tuple_layout(tuple_type_key);
+                        self.data.tuples_layouts[&tuple_type_key].offsets[idx as usize]
+                    }
+                    Type::Slice(_) | Type::MutSlice(_) => idx * std::mem::size_of::<usize>() as u32,
+                    _ => unreachable!(),
+                };
+
+                let on = self.evaluate_lvalue_ptr(on)?;
+                self.data.memory.add_ptr_offset(on, field_offset as isize)
+            }
+            LValueKind::ArrayConstIdx { on, idx } | LValueKind::MutArrayConstIdx { on, idx } => {
+                let Type::Array(array_type_key) = self.nir.types[cfg.lvalues[on].typ] else {
                     unreachable!()
                 };
-                elements[idx as usize].clone()
+                let underlying_size =
+                    self.get_type_size(self.nir.array_types[array_type_key].underlying_typ);
+                let offset = underlying_size * idx;
+
+                let on = self.evaluate_lvalue_ptr(on)?;
+                self.data.memory.add_ptr_offset(on, offset as isize)
             }
             LValueKind::ArrayIdx { on, idx } | LValueKind::MutArrayIdx { on, idx } => {
-                let on = self.evaluate_lvalue(on)?;
-                let Value::Agg(elements) = &*on.borrow() else {
+                let Type::Array(array_type_key) = self.nir.types[cfg.lvalues[on].typ] else {
                     unreachable!()
                 };
-                let Value::Int(idx) = *self.evaluate_lvalue(idx)?.borrow() else {
-                    unreachable!()
-                };
-                elements[idx as usize].clone()
+                let underlying_size = self
+                    .get_type_size(self.nir.array_types[array_type_key].underlying_typ)
+                    as isize;
+
+                let on = self.evaluate_lvalue_ptr(on)?;
+                let idx = self.evaluate_lvalue(idx)?;
+                let idx = bytes::to_isize(idx).unwrap();
+                let offset = underlying_size * idx;
+                self.data.memory.add_ptr_offset(on, offset as isize)
             }
-        };
-        Ok(rc_value)
+        })
     }
 
-    fn evaluate_constant(&self, c: Const) -> Result<RcValue, String> {
-        let value = match c {
-            Const::Unit => Value::Unit,
-            Const::I(v) => Value::Int(v as i64),
-            Const::I1(v) => Value::Int(v as i64),
-            Const::I2(v) => Value::Int(v as i64),
-            Const::I4(v) => Value::Int(v as i64),
-            Const::I8(v) => Value::Int(v),
-            Const::U(v) => Value::UInt(v as u64),
-            Const::U1(v) => Value::UInt(v as u64),
-            Const::U2(v) => Value::UInt(v as u64),
-            Const::U4(v) => Value::UInt(v as u64),
-            Const::U8(v) => Value::UInt(v as u64),
-            Const::F4(v) => Value::Float(v as f64),
-            Const::F8(v) => Value::Float(v),
-            Const::Bool(b) => Value::Bool(b),
-            Const::Char(c) => Value::Char(c),
-            Const::Fn(fk) => Value::FnPtr(fk),
-            Const::Null => Value::Ptr(self.null_ptr.clone()),
-        };
-        Ok(RcValue::new(value))
+    fn evaluate_lvalue(&mut self, lv: LValueKey) -> Result<&[u8], &'static str> {
+        let ptr_key = self.evaluate_lvalue_ptr(lv)?;
+        if ptr_key.0 < 0 || ptr_key.0 >= self.data.memory.get_top().0 {
+            Err("يوجد محاولة وصول إلى بيانات من مؤشر منقطع")
+        } else {
+            Ok(self.get_bytes_at(ptr_key, self.current_cfg.unwrap().lvalues[lv].typ))
+        }
     }
 
-    fn evaluate_rvalue(&mut self, rvalue: &RValue) -> Result<RcValue, String> {
-        let value = match rvalue {
-            RValue::Use(op) => return self.evaluate_operand(op),
-            RValue::Str(sk) => return Ok(self.nir.interpreter_str_slices_pool[*sk].clone()),
-            RValue::RefMut(lv) | RValue::Ref(lv) => Value::Ptr(self.evaluate_lvalue(*lv)?),
-            RValue::Tuple(elements) | RValue::ArrayElements(elements) => {
-                let mut eval_elements = Vec::with_capacity(elements.len());
-                for element in elements {
-                    let eval_element = self.evaluate_operand(element)?;
-                    eval_elements.push(eval_element);
-                }
-                Value::Agg(Rc::new(eval_elements))
+    fn evaluate_constant(&self, c: &Const) -> Box<dyn Iterator<Item = u8> + '_> {
+        let bytes = match c {
+            Const::Unit => vec![],
+            Const::Null => PtrKey::NULL.0.to_le_bytes().to_vec(),
+            Const::I(v) => v.to_le_bytes().to_vec(),
+            Const::I1(v) => v.to_le_bytes().to_vec(),
+            Const::I2(v) => v.to_le_bytes().to_vec(),
+            Const::I4(v) => v.to_le_bytes().to_vec(),
+            Const::I8(v) => v.to_le_bytes().to_vec(),
+            Const::U(v) => v.to_le_bytes().to_vec(),
+            Const::U1(v) => v.to_le_bytes().to_vec(),
+            Const::U2(v) => v.to_le_bytes().to_vec(),
+            Const::U4(v) => v.to_le_bytes().to_vec(),
+            Const::U8(v) => v.to_le_bytes().to_vec(),
+            Const::F4(v) => v.to_le_bytes().to_vec(),
+            Const::F8(v) => v.to_le_bytes().to_vec(),
+            Const::Bool(b) => vec![*b as u8],
+            Const::Char(c) => (*c as u32).to_le_bytes().to_vec(),
+            Const::Fn(fk) => (fk.0 as usize).to_le_bytes().to_vec(),
+        };
+
+        Box::new(bytes.into_iter())
+    }
+
+    fn evaluate_rvalue(&mut self, rvalue: &RValue) -> Result<Vec<u8>, &'static str> {
+        Ok(match rvalue {
+            RValue::Use(op) => self.evaluate_operand_to_vec(op)?,
+            RValue::Str(sk) => self
+                .data
+                .memory
+                .get_bytes_at(
+                    self.nir.interpreter_str_slices_pool[*sk],
+                    std::mem::size_of::<usize>() * 2,
+                )
+                .to_vec(),
+            RValue::RefMut(lv) | RValue::Ref(lv) => {
+                let ptr = self.evaluate_lvalue_ptr(*lv)?;
+                (ptr.0).to_le_bytes().to_vec()
+            }
+            RValue::Struct {
+                struct_key: _,
+                fields: elements,
+            }
+            | RValue::Tuple(elements)
+            | RValue::ArrayElements(elements) => {
+                elements.iter().try_fold(Vec::new(), |mut acc, element| {
+                    acc.extend(self.evaluate_operand_to_vec(element)?);
+                    Ok(acc)
+                })?
             }
             RValue::ArrayRepeated { repeated, size } => {
-                let val = self.evaluate_operand(repeated)?;
-                let mut eval_elements = Vec::with_capacity(*size as usize);
-                for _ in 0..*size {
-                    eval_elements.push(val.copy());
-                }
-                Value::Agg(Rc::new(eval_elements))
+                let val = self.evaluate_operand_to_vec(repeated)?.into_iter();
+                (0..*size).flat_map(move |_| val.clone()).collect()
             }
-            RValue::Struct { struct_key, fields } => {
-                let mut eval_elements = vec![RcValue::default(); fields.len()];
-                for (idx, op) in fields {
-                    eval_elements[*idx as usize] = self.evaluate_operand(op)?;
-                }
-                Value::Agg(Rc::new(eval_elements))
-            }
+            RValue::UnaryOp { op, operand } => self.apply_unaryop(*op, operand)?,
+            RValue::BinOp { op, lhs, rhs } => self.apply_binop(*op, lhs, rhs)?,
             RValue::Cast { val, kind } => self.apply_cast(val, *kind)?,
-            RValue::BinOp { op, lhs, rhs } => {
-                let lhs_val = self.evaluate_operand(lhs)?;
-                let rhs_val = self.evaluate_operand(rhs)?;
-                self.apply_binop(*op, lhs_val.inner(), rhs_val.inner())?
-            }
-            RValue::UnaryOp { op, operand } => {
-                let val = self.evaluate_operand(operand)?;
-                self.apply_unaryop(*op, val.inner())?
-            }
             RValue::Call { on, args } => {
-                let Value::FnPtr(fn_key) = self.evaluate_operand(on)?.inner() else {
-                    unreachable!();
-                };
+                let on = self.evaluate_operand_to_vec(on)?;
+                let on = bytes::to_usize(&on).unwrap();
+                let fn_key = FnKey(on as u32);
+                let top = self.data.memory.get_top();
 
                 let mut frame_args = HashMap::with_capacity(args.len());
                 for (i, arg) in args.iter().enumerate() {
-                    let arg = self.evaluate_operand(arg)?;
-                    frame_args.insert(ArgKey::from(i), arg);
+                    let arg = self.evaluate_operand_to_vec(arg)?;
+                    let arg_ptr = self.data.memory.push_bytes(&arg);
+                    frame_args.insert(ArgKey::from(i), arg_ptr);
                 }
 
-                return self.execute_function(fn_key, frame_args);
+                let return_value = self.execute_function(fn_key, frame_args)?;
+
+                self.data.memory.set_top(top);
+
+                return_value
             }
-        };
-        Ok(RcValue::new(value))
+        })
     }
 
-    fn apply_unaryop(&self, op: UnaryOp, val: Value) -> Result<Value, String> {
-        match op {
-            UnaryOp::LNot => match val {
-                Value::Bool(b) => Ok(Value::Bool(!b)),
-                _ => Err(format!(
-                    "Logical NOT requires boolean operand, got {:?}",
-                    val
-                )),
-            },
-            UnaryOp::BNot => match val {
-                Value::Int(i) => Ok(Value::Int(!i)),
-                Value::UInt(i) => Ok(Value::UInt(!i)),
-                _ => Err(format!(
-                    "Bitwise NOT requires integer operand, got {:?}",
-                    val
-                )),
-            },
-            UnaryOp::Minus => match val {
-                Value::Int(i) => Ok(Value::Int(-i)),
-                Value::Float(f) => Ok(Value::Float(-f)),
-                _ => Err(format!("Negation requires numeric operand, got {:?}", val)),
-            },
+    fn apply_unaryop(&mut self, op: UnaryOp, operand: &Operand) -> Result<Vec<u8>, &'static str> {
+        let typ = operand.typ;
+        let val = self.evaluate_operand_to_vec(operand)?;
+
+        Ok(match op {
+            UnaryOp::LNot => vec![!bytes::to_bool(&val).unwrap() as u8],
+            UnaryOp::BNot => {
+                macro_rules! bnot {
+                    ($method: ident) => {
+                        (!bytes::$method(&val).unwrap()).to_le_bytes().to_vec()
+                    };
+                }
+                match self.nir.types[typ] {
+                    Type::I => bnot!(to_isize),
+                    Type::I1 => bnot!(to_i8),
+                    Type::I2 => bnot!(to_i16),
+                    Type::I4 => bnot!(to_i32),
+                    Type::I8 => bnot!(to_i64),
+                    Type::U => bnot!(to_usize),
+                    Type::U1 => bnot!(to_u8),
+                    Type::U2 => bnot!(to_u16),
+                    Type::U4 => bnot!(to_u32),
+                    Type::U8 => bnot!(to_u64),
+                    _ => unreachable!(),
+                }
+            }
+            UnaryOp::Minus => {
+                macro_rules! minus {
+                    ($method: ident) => {
+                        (-bytes::$method(&val).unwrap()).to_le_bytes().to_vec()
+                    };
+                }
+                match self.nir.types[typ] {
+                    Type::I => minus!(to_isize),
+                    Type::I1 => minus!(to_i8),
+                    Type::I2 => minus!(to_i16),
+                    Type::I4 => minus!(to_i32),
+                    Type::I8 => minus!(to_i64),
+                    Type::F4 => minus!(to_f32),
+                    Type::F8 => minus!(to_f64),
+                    _ => unreachable!(),
+                }
+            }
+        })
+    }
+
+    fn apply_binop(
+        &mut self,
+        op: BinOp,
+        lhs: &Operand,
+        rhs: &Operand,
+    ) -> Result<Vec<u8>, &'static str> {
+        let lhs_typ = lhs.typ;
+        let rhs_typ = rhs.typ;
+        let lhs = self.evaluate_operand_to_vec(lhs)?;
+        let rhs = self.evaluate_operand_to_vec(rhs)?;
+
+        macro_rules! apply_int_op {
+            ($method:ident) => {{
+                let (lhs, rhs) = (bytes::$method(&lhs).unwrap(), bytes::$method(&rhs).unwrap());
+                match op {
+                    BinOp::Plus => (lhs + rhs).to_le_bytes().to_vec(),
+                    BinOp::Minus => (lhs - rhs).to_le_bytes().to_vec(),
+                    BinOp::Times => (lhs * rhs).to_le_bytes().to_vec(),
+                    BinOp::Div => (lhs / rhs).to_le_bytes().to_vec(),
+                    BinOp::Mod => (lhs % rhs).to_le_bytes().to_vec(),
+                    BinOp::EqualEqual => vec![(lhs == rhs) as u8],
+                    BinOp::NotEqual => vec![(lhs != rhs) as u8],
+                    BinOp::GE => vec![(lhs >= rhs) as u8],
+                    BinOp::GT => vec![(lhs > rhs) as u8],
+                    BinOp::LE => vec![(lhs <= rhs) as u8],
+                    BinOp::LT => vec![(lhs < rhs) as u8],
+                    BinOp::BOr => (lhs | rhs).to_le_bytes().to_vec(),
+                    BinOp::Xor => (lhs ^ rhs).to_le_bytes().to_vec(),
+                    BinOp::BAnd => (lhs & rhs).to_le_bytes().to_vec(),
+                    BinOp::Shr => (lhs >> rhs).to_le_bytes().to_vec(),
+                    BinOp::Shl => (lhs << rhs).to_le_bytes().to_vec(),
+                }
+            }};
         }
-    }
 
-    fn apply_binop(&self, op: BinOp, lhs: Value, rhs: Value) -> Result<Value, String> {
-        match (lhs, rhs) {
-            (Value::Int(a), Value::Int(b)) => match op {
-                BinOp::Plus => Ok(Value::Int(a + b)),
-                BinOp::Minus => Ok(Value::Int(a - b)),
-                BinOp::Times => Ok(Value::Int(a * b)),
-                BinOp::Div => Ok(Value::Int(a / b)),
-                BinOp::Mod => Ok(Value::Int(a % b)),
-                BinOp::EqualEqual => Ok(Value::Bool(a == b)),
-                BinOp::NotEqual => Ok(Value::Bool(a != b)),
-                BinOp::GE => Ok(Value::Bool(a >= b)),
-                BinOp::GT => Ok(Value::Bool(a > b)),
-                BinOp::LE => Ok(Value::Bool(a <= b)),
-                BinOp::LT => Ok(Value::Bool(a < b)),
-                BinOp::BOr => Ok(Value::Int(a | b)),
-                BinOp::Xor => Ok(Value::Int(a ^ b)),
-                BinOp::BAnd => Ok(Value::Int(a & b)),
-                BinOp::Shr => Ok(Value::Int(a >> b)),
-                BinOp::Shl => Ok(Value::Int(a << b)),
-            },
-            (Value::UInt(a), Value::UInt(b)) => match op {
-                BinOp::Plus => Ok(Value::UInt(a + b)),
-                BinOp::Minus => Ok(Value::UInt(a - b)),
-                BinOp::Times => Ok(Value::UInt(a * b)),
-                BinOp::Div => Ok(Value::UInt(a / b)),
-                BinOp::Mod => Ok(Value::UInt(a % b)),
-                BinOp::EqualEqual => Ok(Value::Bool(a == b)),
-                BinOp::NotEqual => Ok(Value::Bool(a != b)),
-                BinOp::GE => Ok(Value::Bool(a >= b)),
-                BinOp::GT => Ok(Value::Bool(a > b)),
-                BinOp::LE => Ok(Value::Bool(a <= b)),
-                BinOp::LT => Ok(Value::Bool(a < b)),
-                BinOp::BOr => Ok(Value::UInt(a | b)),
-                BinOp::Xor => Ok(Value::UInt(a ^ b)),
-                BinOp::BAnd => Ok(Value::UInt(a & b)),
-                BinOp::Shr => Ok(Value::UInt(a >> b)),
-                BinOp::Shl => Ok(Value::UInt(a << b)),
-            },
-            (Value::Float(a), Value::Float(b)) => match op {
-                BinOp::Plus => Ok(Value::Float(a + b)),
-                BinOp::Minus => Ok(Value::Float(a - b)),
-                BinOp::Times => Ok(Value::Float(a * b)),
-                BinOp::Div => Ok(Value::Float(a / b)),
-                BinOp::EqualEqual => Ok(Value::Bool(a == b)),
-                BinOp::NotEqual => Ok(Value::Bool(a != b)),
-                BinOp::GE => Ok(Value::Bool(a >= b)),
-                BinOp::GT => Ok(Value::Bool(a > b)),
-                BinOp::LE => Ok(Value::Bool(a <= b)),
-                BinOp::LT => Ok(Value::Bool(a < b)),
-                _ => Err("Invalid operation for floats".into()),
-            },
-            (Value::Bool(a), Value::Bool(b)) => match op {
-                BinOp::EqualEqual => Ok(Value::Bool(a == b)),
-                BinOp::NotEqual => Ok(Value::Bool(a != b)),
-                _ => Err("Invalid operation for booleans".into()),
-            },
-            _ => Err("Type mismatch in binary operation".into()),
+        macro_rules! apply_float_op {
+            ($method:ident) => {{
+                let (lhs, rhs) = (bytes::$method(&lhs).unwrap(), bytes::$method(&rhs).unwrap());
+                match op {
+                    BinOp::Plus => (lhs + rhs).to_le_bytes().to_vec(),
+                    BinOp::Minus => (lhs - rhs).to_le_bytes().to_vec(),
+                    BinOp::Times => (lhs * rhs).to_le_bytes().to_vec(),
+                    BinOp::Div => (lhs / rhs).to_le_bytes().to_vec(),
+                    BinOp::Mod => (lhs % rhs).to_le_bytes().to_vec(),
+                    BinOp::EqualEqual => vec![(lhs == rhs) as u8],
+                    BinOp::NotEqual => vec![(lhs != rhs) as u8],
+                    BinOp::GE => vec![(lhs >= rhs) as u8],
+                    BinOp::GT => vec![(lhs > rhs) as u8],
+                    BinOp::LE => vec![(lhs <= rhs) as u8],
+                    BinOp::LT => vec![(lhs < rhs) as u8],
+                    _ => unreachable!(),
+                }
+            }};
         }
+
+        Ok(match self.nir.types[lhs_typ] {
+            Type::I => apply_int_op!(to_isize),
+            Type::I1 => apply_int_op!(to_i8),
+            Type::I2 => apply_int_op!(to_i16),
+            Type::I4 => apply_int_op!(to_i32),
+            Type::I8 => apply_int_op!(to_i64),
+            Type::U => apply_int_op!(to_usize),
+            Type::U1 => apply_int_op!(to_u8),
+            Type::U2 => apply_int_op!(to_u16),
+            Type::U4 => apply_int_op!(to_u32),
+            Type::U8 => apply_int_op!(to_u64),
+            Type::F4 => apply_float_op!(to_f32),
+            Type::F8 => apply_float_op!(to_f64),
+            Type::Bool => {
+                let (lhs, rhs) = (bytes::to_bool(&lhs).unwrap(), bytes::to_bool(&rhs).unwrap());
+                match op {
+                    BinOp::EqualEqual => vec![(rhs == lhs) as u8],
+                    BinOp::NotEqual => vec![(rhs != lhs) as u8],
+                    _ => unreachable!(),
+                }
+            }
+            Type::Ptr(type_key) | Type::MutPtr(type_key)
+                if matches!(self.nir.types[rhs_typ], Type::U) =>
+            {
+                let lhs = bytes::to_ptr_key(&lhs).unwrap();
+                let rhs = bytes::to_isize(&rhs).unwrap();
+                let type_size = self.get_type_size(type_key) as isize;
+                let mut offset = rhs * type_size;
+
+                if let BinOp::Minus = op {
+                    offset *= -1;
+                }
+
+                self.data
+                    .memory
+                    .add_ptr_offset(lhs, offset)
+                    .0
+                    .to_le_bytes()
+                    .to_vec()
+            }
+            Type::Ptr(type_key) | Type::MutPtr(type_key) => {
+                use mem::PtrCmp::*;
+                let lhs = bytes::to_ptr_key(&lhs).unwrap();
+                let rhs = bytes::to_ptr_key(&rhs).unwrap();
+                macro_rules! ptr_cmp {
+                    ($cmp: ident) => {
+                        self.data.memory.ptr_cmp(lhs, rhs, $cmp)
+                    };
+                }
+                vec![match op {
+                    BinOp::EqualEqual => ptr_cmp!(Eq),
+                    BinOp::NotEqual => ptr_cmp!(Ne),
+                    BinOp::GE => ptr_cmp!(Ge),
+                    BinOp::GT => ptr_cmp!(Gt),
+                    BinOp::LE => ptr_cmp!(Le),
+                    BinOp::LT => ptr_cmp!(Lt),
+                    BinOp::Minus => {
+                        let type_size = self.get_type_size(type_key) as isize;
+                        let diff = self.data.memory.add_ptr_offset(lhs, -rhs.0);
+                        let diff = if diff.0 < 0 {
+                            *self.data.memory.unproven_ptrs.get_by_left(&diff).unwrap() as isize
+                                / type_size
+                        } else {
+                            diff.0 / type_size
+                        };
+                        return Ok(diff.to_le_bytes().to_vec());
+                    }
+                    _ => unreachable!(),
+                } as u8]
+            }
+            _ => unreachable!(),
+        })
     }
 
-    fn apply_cast(&mut self, val: &Operand, kind: CastKind) -> Result<Value, String> {
+    fn apply_cast(&mut self, val: &Operand, kind: CastKind) -> Result<Vec<u8>, &'static str> {
         use CastKind::*;
-        use Value::*;
+        use Size::*;
 
-        let rc_value = self.evaluate_operand(val)?;
-        let value = &*rc_value.borrow();
+        if let ArrayToSlice { len } = kind {
+            let OperandKind::LValue(lvalue_key) = val.kind else {
+                unreachable!()
+            };
 
-        match kind {
-            U1ToChar => match value {
-                UInt(i) => Ok(Char(*i as u8 as char)),
-                _ => Err("U1ToChar requires integer operand".into()),
-            },
+            let ptr = self.evaluate_lvalue_ptr(lvalue_key)?;
+            let mut vec = Vec::with_capacity(2 * std::mem::size_of::<usize>());
+            vec.extend_from_slice(ptr.0.to_le_bytes().as_slice());
+            vec.extend_from_slice((len as usize).to_le_bytes().as_slice());
+            return Ok(vec);
+        }
 
-            F4ToF8 => match value {
-                Float(f) => Ok(Float(*f)),
-                _ => Err("F4ToF8 requires float operand".into()),
-            },
+        let val = self.evaluate_operand_to_vec(val)?;
 
-            F8ToF4 => match value {
-                Float(f) => Ok(Float(*f)), // Preserve f32 precision
-                _ => Err("F8ToF4 requires float operand".into()),
-            },
+        macro_rules! convert {
+            ($method: ident) => {
+                bytes::$method(&val).unwrap()
+            };
 
-            ArrayToSlice { len } => match value {
-                Agg(_elements) => Ok(Value::Agg(Rc::new(vec![
-                    RcValue::new(Value::Ptr(rc_value.clone())),
-                    RcValue::new(Value::UInt(len as u64)),
-                ]))),
-                _ => Err("ArrayToSlice requires array operand".into()),
-            },
+            ($method: ident as $as_expr: ty) => {
+                (convert!($method) as $as_expr).to_le_bytes().to_vec()
+            };
+        }
 
-            PtrToPtr => Ok(value.clone()),
+        macro_rules! convert_to_int {
 
-            UIntToPtr { int_size } => match value {
-                UInt(i) => todo!(),
-                _ => Err("UIntToPtr requires integer operand".into()),
-            },
+            ($e: expr, $int_size: ident) => {
+                match $int_size {
+                    Ptr => ($e as isize).to_le_bytes().to_vec(),
+                    Byte => ($e as i8).to_le_bytes().to_vec(),
+                    Word => ($e as i16).to_le_bytes().to_vec(),
+                    DWord => ($e as i32).to_le_bytes().to_vec(),
+                    QWord => ($e as i64).to_le_bytes().to_vec(),
+                }
+            };
 
-            PtrToUInt { int_size } => match value {
-                Value::Ptr(ptr) => Ok(UInt(ptr.data.as_ptr() as u64)),
-                _ => Err("PtrToUInt requires pointer operand".into()),
-            },
+	    // $m for method
+            ($method: ident, $int_size: ident, $m: ident) => {{
+                let c = convert!($method);
+		convert_to_int!(c, $int_size)
+            }};
+        }
 
-            F4ToInt { int_size } => match value {
-                Float(f) => Ok(Int(*f as i64)),
-                _ => Err("F4ToInt requires float operand".into()),
-            },
+        macro_rules! convert_to_uint {
+            ($e: expr, $int_size: ident) => {
+                match $int_size {
+                    Ptr => ($e as usize).to_le_bytes().to_vec(),
+                    Byte => ($e as u8).to_le_bytes().to_vec(),
+                    Word => ($e as u16).to_le_bytes().to_vec(),
+                    DWord => ($e as u32).to_le_bytes().to_vec(),
+                    QWord => ($e as u64).to_le_bytes().to_vec(),
+                }
+            };
 
-            F4ToUInt { int_size } => match value {
-                Float(f) => Ok(UInt(*f as u64)),
-                _ => Err("F4ToUInt requires float operand".into()),
-            },
+	    // $m for method
+            ($method: ident, $int_size: ident, $m: ident) => {{
+                let c = convert!($method);
+                convert_to_uint!(c, $int_size)
+            }};
+        }
 
-            F8ToInt { int_size } => match value {
-                Float(f) => Ok(Int(*f as i64)),
-                _ => Err("F8ToInt requires float operand".into()),
-            },
+        macro_rules! convert_from_int {
+            ($int_size: ident as $as_expr: ty) => {{
+                match $int_size {
+                    Ptr => (convert!(to_isize) as $as_expr),
+                    Byte => (convert!(to_i8) as $as_expr),
+                    Word => (convert!(to_i16) as $as_expr),
+                    DWord => (convert!(to_i32) as $as_expr),
+                    QWord => (convert!(to_i64) as $as_expr),
+                }
+            }};
 
-            F8ToUInt { int_size } => match value {
-                Float(f) => Ok(UInt(*f as u64)),
-                _ => Err("F8ToUInt requires float operand".into()),
-            },
+            ($int_size: ident as $as_expr: ty, $to_vec: ident) => {{
+                match $int_size {
+                    Ptr => (convert!(to_isize) as $as_expr).to_le_bytes().to_vec(),
+                    Byte => (convert!(to_i8) as $as_expr).to_le_bytes().to_vec(),
+                    Word => (convert!(to_i16) as $as_expr).to_le_bytes().to_vec(),
+                    DWord => (convert!(to_i32) as $as_expr).to_le_bytes().to_vec(),
+                    QWord => (convert!(to_i64) as $as_expr).to_le_bytes().to_vec(),
+                }
+            }};
+        }
 
-            BoolToInt { int_size } => match value {
-                Bool(b) => Ok(Int(*b as i64)),
-                _ => Err("BoolToInt requires boolean operand".into()),
-            },
+        macro_rules! convert_from_uint {
+            ($int_size: ident as $as_expr: ty, $to_vec: ident) => {{
+                match $int_size {
+                    Ptr => (convert!(to_usize) as $as_expr).to_le_bytes().to_vec(),
+                    Byte => (convert!(to_u8) as $as_expr).to_le_bytes().to_vec(),
+                    Word => (convert!(to_u16) as $as_expr).to_le_bytes().to_vec(),
+                    DWord => (convert!(to_u32) as $as_expr).to_le_bytes().to_vec(),
+                    QWord => (convert!(to_u64) as $as_expr).to_le_bytes().to_vec(),
+                }
+            }};
 
-            BoolToUInt { int_size } => match value {
-                Bool(b) => Ok(Int(*b as i64)),
-                _ => Err("BoolToUInt requires boolean operand".into()),
-            },
+            ($int_size: ident as $as_expr: ty) => {{
+                match $int_size {
+                    Ptr => (convert!(to_usize) as $as_expr),
+                    Byte => (convert!(to_u8) as $as_expr),
+                    Word => (convert!(to_u16) as $as_expr),
+                    DWord => (convert!(to_u32) as $as_expr),
+                    QWord => (convert!(to_u64) as $as_expr),
+                }
+            }};
+        }
 
-            CharToInt { int_size } => match value {
-                Char(c) => Ok(Int(*c as i64)),
-                _ => Err("CharToInt requires char operand".into()),
-            },
-
-            CharToUInt { int_size } => match value {
-                Char(c) => Ok(UInt(*c as u64)),
-                _ => Err("CharToUInt requires char operand".into()),
-            },
-
+        Ok(match kind {
+            ArrayToSlice { len } => unreachable!(),
+            UIntToPtr => self
+                .data
+                .memory
+                .new_unproven_ptr(convert!(to_usize))
+                .0
+                .to_le_bytes()
+                .to_vec(),
+            PtrToPtr | PtrToUInt => val, // no op
+            U1ToChar => (convert!(to_u8) as char as u32).to_le_bytes().to_vec(),
+            F4ToF8 => convert!(to_f32 as f64),
+            F8ToF4 => convert!(to_f64 as f32),
+            F4ToInt { int_size } => convert_to_int!(to_f32, int_size),
+            F4ToUInt { int_size } => convert_to_uint!(to_f32, int_size),
+            F8ToInt { int_size } => convert_to_int!(to_f64, int_size, m),
+            F8ToUInt { int_size } => convert_to_uint!(to_f64, int_size, m),
+            BoolToInt { int_size } => convert_to_int!(to_bool, int_size, m),
+            BoolToUInt { int_size } => convert_to_uint!(to_bool, int_size, m),
+            CharToInt { int_size } => convert_to_int!(to_char, int_size, m),
+            CharToUInt { int_size } => convert_to_uint!(to_char, int_size, m),
+            IntToF4 { int_size } => convert_from_int!(int_size as f32, to_vec),
+            IntToF8 { int_size } => convert_from_int!(int_size as f64, to_vec),
+            UIntToF4 { int_size } => convert_from_uint!(int_size as f32, to_vec),
+            UIntToF8 { int_size } => convert_from_uint!(int_size as f64, to_vec),
             IntToInt {
                 int1_size,
                 int2_size,
             } => {
-                let mask = mask_for_size(int2_size);
-                match value {
-                    Int(i) => Ok(Int((*i as u64 & mask) as i64)),
-                    _ => Err("IntToInt requires integer operand".into()),
-                }
+                let int = convert_from_int!(int1_size as i64);
+                convert_to_int!(int, int2_size)
             }
-
             IntToUInt {
                 int1_size,
                 int2_size,
             } => {
-                let mask = mask_for_size(int2_size);
-                match value {
-                    Int(i) => Ok(Int((*i as u64 & mask) as i64)),
-                    _ => Err("IntToUInt requires integer operand".into()),
-                }
+                let int = convert_from_int!(int1_size as i64);
+                convert_to_uint!(int, int2_size)
             }
-
-            IntToF4 { int_size } => match value {
-                Int(i) => Ok(Float(*i as f64)),
-                _ => Err("IntToF4 requires integer operand".into()),
-            },
-
-            IntToF8 { int_size } => match value {
-                Int(i) => Ok(Float(*i as f64)),
-                _ => Err("IntToF8 requires integer operand".into()),
-            },
-
             UIntToInt {
                 int1_size,
                 int2_size,
             } => {
-                let mask = mask_for_size(int2_size);
-                match value {
-                    UInt(i) => Ok(Int((*i & mask) as i64)),
-                    _ => Err("UIntToInt requires integer operand".into()),
-                }
+                let int = convert_from_uint!(int1_size as u64);
+                convert_to_int!(int, int2_size)
             }
-
             UIntToUInt {
                 int1_size,
                 int2_size,
             } => {
-                let mask = mask_for_size(int2_size);
-                match value {
-                    UInt(i) => Ok(UInt((*i as u64 & mask) as u64)),
-                    _ => Err("UIntToUInt requires integer operand".into()),
-                }
+                let int = convert_from_uint!(int1_size as u64);
+                convert_to_uint!(int, int2_size)
             }
-
-            UIntToF4 { int_size } => match value {
-                UInt(i) => Ok(Float(*i as f64)),
-                _ => Err("UIntToF4 requires integer operand".into()),
-            },
-
-            UIntToF8 { int_size } => match value {
-                UInt(i) => Ok(Float(*i as f64)),
-                _ => Err("UIntToF8 requires integer operand".into()),
-            },
-        }
-    }
-}
-
-// Helper function to create bit masks for different integer sizes
-fn mask_for_size(size: Size) -> u64 {
-    match size {
-        Size::Byte => 0xFF,
-        Size::Word => 0xFFFF,
-        Size::DWord => 0xFFFFFFFF,
-        Size::QWord => 0xFFFFFFFFFFFFFFFF,
-        Size::Ptr => match std::mem::size_of::<usize>() {
-            4 => 0xFFFFFFFF,
-            8 => 0xFFFFFFFFFFFFFFFF,
-            _ => unreachable!(),
-        },
+        })
     }
 }

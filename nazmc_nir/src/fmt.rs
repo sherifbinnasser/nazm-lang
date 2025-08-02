@@ -289,6 +289,7 @@ impl<'a> NIR<'a> {
                 self.fmt_item_name(self.structs[*&struct_key].info),
                 fields
                     .iter()
+                    .enumerate()
                     .map(|(idx, op)| format!("{}: {}", idx, self.fmt_operand(cfg, op)))
                     .collect::<Vec<_>>()
                     .join(", ")

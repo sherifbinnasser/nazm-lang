@@ -29,6 +29,13 @@ new_data_pool_key! { TempKey }
 new_data_pool_key! { LValueKey }
 new_data_pool_key! { ConstKey }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default, Ord, PartialOrd, From, Into)]
+pub struct PtrKey(pub isize);
+
+impl PtrKey {
+    pub const NULL: Self = Self(-1);
+}
+
 /// NIR, the Nazm Intermediate Representation
 #[derive(Default)]
 pub struct NIR<'a> {
@@ -38,77 +45,16 @@ pub struct NIR<'a> {
     pub lambda_types: TiVec<LambdaTypeKey, LambdaType>,
     pub fn_ptr_types: TiVec<FnPtrTypeKey, FnPtrType>,
     pub structs: HashMap<StructKey, Struct>,
-    pub statics: TiVec<StaticKey, Static>,
     pub fns: TiVec<FnKey, Fn>,
     pub files_infos: &'a TiSlice<FileKey, FileInfo>,
     pub files_to_pkgs: &'a TiSlice<FileKey, PkgKey>,
     pub pkgs_names: &'a TiSlice<PkgKey, &'a ThinVec<IdKey>>,
     pub id_pool: &'a TiSlice<IdKey, String>,
     pub str_pool: TiVec<StrKey, String>,
-    pub consts: HashMap<ConstKey, NamedConst>,
-    pub interpreter_str_pool: HashMap<RcValue, StrKey>,
-    pub interpreter_str_slices_pool: TiVec<StrKey, RcValue>,
-}
-
-#[derive(Default, Debug, Clone)]
-pub struct RcValue {
-    pub data: Rc<RefCell<Value>>,
-}
-
-impl RcValue {
-    pub fn new(value: Value) -> Self {
-        Self {
-            data: Rc::new(RefCell::new(value)),
-        }
-    }
-
-    pub fn copy(&self) -> Self {
-        let data = match &*self.borrow() {
-            Value::Agg(elements) => Value::Agg(Rc::new(
-                elements.iter().map(|element| element.copy()).collect(),
-            )),
-            data => data.clone(),
-        };
-        Self {
-            data: Rc::new(RefCell::new(data)),
-        }
-    }
-
-    pub fn borrow(&self) -> Ref<'_, Value> {
-        self.data.borrow()
-    }
-
-    pub fn inner(&self) -> Value {
-        self.borrow().clone()
-    }
-}
-
-impl PartialEq for RcValue {
-    fn eq(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.data, &other.data)
-    }
-}
-
-impl Eq for RcValue {}
-
-impl Hash for RcValue {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        Rc::as_ptr(&self.data).hash(state);
-    }
-}
-
-#[derive(Default, Debug, Clone)]
-pub enum Value {
-    #[default]
-    Unit,
-    Int(i64),
-    UInt(u64),
-    Float(f64),
-    Bool(bool),
-    Char(char),
-    FnPtr(FnKey),
-    Ptr(RcValue),
-    Agg(Rc<Vec<RcValue>>),
+    pub statics: HashMap<StaticKey, GlobalConst>,
+    pub consts: HashMap<ConstKey, GlobalConst>,
+    pub interpreter_str_pool: TiVec<StrKey, PtrKey>,
+    pub interpreter_str_slices_pool: TiVec<StrKey, PtrKey>,
 }
 
 #[derive(Default)]
@@ -122,16 +68,10 @@ pub struct Field {
     pub typ: TypeKey,
 }
 
-pub struct NamedConst {
+pub struct GlobalConst {
     pub info: ItemInfo,
     pub typ: TypeKey,
-    pub value: RcValue,
-}
-
-pub struct Static {
-    pub info: ItemInfo,
-    pub typ: TypeKey,
-    pub cfg: CFG,
+    pub value: PtrKey,
 }
 
 pub struct Fn {
@@ -354,7 +294,7 @@ pub enum RValue {
     },
     Struct {
         struct_key: StructKey,
-        fields: ThinVec<(u32, Operand)>,
+        fields: ThinVec<Operand>,
     },
     Cast {
         val: Operand,
@@ -467,13 +407,9 @@ pub enum CastKind {
     /// It is used when casting a slice of pointers to another slice of pointers, or array of pointers to another array (same length) of pointers
     PtrToPtr,
     /// Cast only from unsigned ptr-sized integers
-    UIntToPtr {
-        int_size: Size,
-    },
+    UIntToPtr,
     /// Cast only to unsigned ptr-sized integers
-    PtrToUInt {
-        int_size: Size,
-    },
+    PtrToUInt,
 
     // Primtives to integers
     F4ToInt {

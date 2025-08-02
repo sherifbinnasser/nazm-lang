@@ -1,5 +1,3 @@
-use nazmc_nir::RcValue;
-
 use crate::*;
 
 #[derive(Default)]
@@ -42,6 +40,7 @@ pub struct Const {
     pub typ: Type,
 }
 
+#[derive(Default)]
 pub struct Static {
     pub typ: Type,
 }

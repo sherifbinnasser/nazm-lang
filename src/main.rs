@@ -244,7 +244,7 @@ fn main() {
 
     let ast = NameResolver::new(&files_infos, &id_pool, &pkgs.map, &pkgs_names, ast).resolve();
 
-    let nir = nazmc_semantics::SemanticsAnalyzer::new(
+    let (nir, interpreter_data) = nazmc_semantics::SemanticsAnalyzer::new(
         &files_infos,
         &files_to_pkgs,
         &id_pool,
@@ -297,7 +297,7 @@ fn main() {
 
     let llvm_ctx = LLVMCodeGen::new_ctx();
     let mut llvm_codegen =
-        LLVMCodeGen::new(&llvm_ctx, nir, &name, None, OptimizationLevel::Default);
+        LLVMCodeGen::new(&llvm_ctx, nir, interpreter_data,&name, None, OptimizationLevel::Default);
     llvm_codegen.lower();
     // llvm_codegen.optimize_module(OptimizationLevel::Default);
     llvm_codegen.print_ir();

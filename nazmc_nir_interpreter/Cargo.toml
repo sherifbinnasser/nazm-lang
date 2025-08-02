@@ -6,3 +6,5 @@ edition = "2024"
 [dependencies]
 nazmc_nir = { path = "../nazmc_nir" }
 nazmc_data_pool = { path = "../nazmc_data_pool" }
+derive_more = { version = "*", features = ["from", "into"] }
+bimap = "*"

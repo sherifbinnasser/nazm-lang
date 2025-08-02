@@ -6,5 +6,6 @@ edition = "2024"
 [dependencies]
 nazmc_data_pool = { path = "../nazmc_data_pool" }
 nazmc_nir = { path = "../nazmc_nir" }
+nazmc_nir_interpreter = { path = "../nazmc_nir_interpreter" }
 thin-vec = "*"
 inkwell =  { version = "*", features = ["llvm17-0"] }
