@@ -6,7 +6,7 @@ use nazmc_data_pool::{
     DataPoolBuilder, FileKey, IdKey, ItemInfo, PkgKey, StrKey,
 };
 use nazmc_diagnostics::span::{Span, SpanCursor};
-use std::collections::HashMap;
+use std::{collections::HashMap, default};
 use thin_vec::ThinVec;
 pub use typ::*;
 mod item;
@@ -255,14 +255,26 @@ pub enum VisModifier {
 pub struct Const {
     pub info: ItemInfo,
     pub typ: TypeExprKey,
-    pub expr_scope_key: ScopeKey,
+    pub linkage: Linkage,
 }
 
 #[derive(Clone, Default)]
 pub struct Static {
     pub info: ItemInfo,
     pub typ: TypeExprKey,
-    pub expr_scope_key: ScopeKey,
+    pub linkage: Linkage,
+}
+
+#[derive(Clone, Copy, Default)]
+pub enum Linkage {
+    #[default]
+    ExternWithSameId,
+    Extern {
+        name: StrKey,
+    },
+    Local {
+        expr_scope_key: ScopeKey,
+    },
 }
 
 #[derive(Clone, Default)]
@@ -285,6 +297,7 @@ pub struct Fn {
     pub return_type: Option<TypeExprKey>,
     pub linkage: FnLinkage,
 }
+
 #[derive(Clone, Copy)]
 pub enum FnLinkage {
     ExternWithSameId { is_vararg: bool },

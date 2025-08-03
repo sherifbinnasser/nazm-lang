@@ -168,18 +168,29 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
 
         let builder = context.create_builder();
 
-        let mut interpreter_consts_sorted_ptrs: BTreeMap<_, _> = nir
+        let mut interpreter_consts_statics_sorted_ptrs: BTreeMap<_, _> = nir
             .consts
             .iter()
-            .map(|(const_key, _const)| (_const.value, ConstOrStatic::Const(*const_key)))
+            .filter_map(|(const_key, _const)| {
+                if let nazmc_nir::Linkage::Local(value) = nir.consts[const_key].linkage {
+                    Some((value, ConstOrStatic::Const(*const_key)))
+                } else {
+                    None
+                }
+            })
             .collect();
 
         nir.statics.iter().for_each(|(static_key, _static)| {
-            if interpreter_consts_sorted_ptrs.contains_key(&_static.value) {
+            let nazmc_nir::Linkage::Local(value) = nir.statics[static_key].linkage else {
+                return;
+            };
+
+            if interpreter_consts_statics_sorted_ptrs.contains_key(&value) {
                 return;
             }
-            interpreter_consts_sorted_ptrs
-                .insert(_static.value, ConstOrStatic::Static(*static_key));
+
+            interpreter_consts_statics_sorted_ptrs
+                .insert(value, ConstOrStatic::Static(*static_key));
         });
 
         Self {
@@ -188,7 +199,7 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             builder,
             machine,
             interpreter_data,
-            interpreter_consts_statics_sorted_ptrs: interpreter_consts_sorted_ptrs,
+            interpreter_consts_statics_sorted_ptrs,
             llvm_fns: TiVec::with_capacity(nir.fns.len()),
             llvm_str_pool: TiVec::with_capacity(nir.str_pool.len()),
             llvm_str_slices_pool: TiVec::with_capacity(nir.str_pool.len()),
@@ -212,8 +223,8 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
         // lower_string_consts will take the ownership of str_pool
         // So lower functions signatures first as extern functions may have string consts link names
         self.lower_fns_signatures();
-        self.lower_string_consts();
         self.lower_consts_and_statics();
+        self.lower_string_consts();
         self.lower_fns_bodies();
     }
 
@@ -298,15 +309,26 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
 
         let typ = self.nir.consts[&const_key].typ;
         let llvm_typ = self.lower_type(typ);
-        let global_const = self.module.add_global(
-            any_type_enum_to_basic_type_enum(llvm_typ),
-            None,
-            &format!("CONST{}", const_key.0),
-        );
 
-        let value = self.lower_bytes(self.nir.consts[&const_key].value, typ);
+        let linkage = self.nir.consts[&const_key].linkage;
 
-        global_const.set_initializer(&value);
+        let name = match linkage {
+            nazmc_nir::Linkage::ExternWithSameId => self
+                .get_id(self.nir.consts[&const_key].info.id_key)
+                .to_string(),
+            nazmc_nir::Linkage::Extern(str_key) => self.nir.str_pool[str_key].clone(),
+            nazmc_nir::Linkage::Local(_) => format!("CONST{}", const_key.0),
+        };
+
+        let global_const =
+            self.module
+                .add_global(any_type_enum_to_basic_type_enum(llvm_typ), None, &name);
+
+        if let nazmc_nir::Linkage::Local(value) = linkage {
+            let value = self.lower_bytes(value, typ);
+            global_const.set_initializer(&value);
+        }
+
         global_const.set_constant(true);
         self.llvm_consts
             .borrow_mut()
@@ -321,15 +343,25 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
 
         let typ = self.nir.statics[&static_key].typ;
         let llvm_typ = self.lower_type(typ);
-        let global_static = self.module.add_global(
-            any_type_enum_to_basic_type_enum(llvm_typ),
-            None,
-            &format!("STATIC{}", static_key.0),
-        );
+        let linkage = self.nir.statics[&static_key].linkage;
 
-        let value = self.lower_bytes(self.nir.statics[&static_key].value, typ);
+        let name = match linkage {
+            nazmc_nir::Linkage::ExternWithSameId => self
+                .get_id(self.nir.statics[&static_key].info.id_key)
+                .to_string(),
+            nazmc_nir::Linkage::Extern(str_key) => self.nir.str_pool[str_key].clone(),
+            nazmc_nir::Linkage::Local(_) => format!("STATIC{}", static_key.0),
+        };
 
-        global_static.set_initializer(&value);
+        let global_static =
+            self.module
+                .add_global(any_type_enum_to_basic_type_enum(llvm_typ), None, &name);
+
+        if let nazmc_nir::Linkage::Local(value) = linkage {
+            let value = self.lower_bytes(value, typ);
+            global_static.set_initializer(&value);
+        }
+
         self.llvm_statics
             .borrow_mut()
             .insert(static_key, global_static);

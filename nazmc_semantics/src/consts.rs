@@ -1,4 +1,5 @@
 use nazmc_data_pool::ItemInfo;
+use nazmc_nir_interpreter::InterpreterErr;
 use typed_ast::{Const, Static};
 
 use crate::*;
@@ -51,10 +52,10 @@ impl<'a> SemanticsAnalyzer<'a> {
         self.semantics_stack.consts.insert(const_key, ());
 
         let info = self.ast.consts[const_key].info.clone();
-        let (typ, type_key, value) = self.analyze_const_or_static(
+        let (typ, type_key, linkage) = self.analyze_const_or_static(
             self.ast.consts[const_key].info.file_key,
             self.ast.consts[const_key].typ,
-            self.ast.consts[const_key].expr_scope_key,
+            self.ast.consts[const_key].linkage,
             &info,
             true,
         );
@@ -72,7 +73,7 @@ impl<'a> SemanticsAnalyzer<'a> {
             nazmc_nir::GlobalConst {
                 info,
                 typ: type_key,
-                value,
+                linkage,
             },
         );
     }
@@ -107,10 +108,10 @@ impl<'a> SemanticsAnalyzer<'a> {
         self.semantics_stack.statics.insert(static_key, ());
 
         let info = self.ast.statics[static_key].info.clone();
-        let (typ, type_key, value) = self.analyze_const_or_static(
+        let (typ, type_key, linkage) = self.analyze_const_or_static(
             self.ast.statics[static_key].info.file_key,
             self.ast.statics[static_key].typ,
-            self.ast.statics[static_key].expr_scope_key,
+            self.ast.statics[static_key].linkage,
             &info,
             false,
         );
@@ -124,7 +125,7 @@ impl<'a> SemanticsAnalyzer<'a> {
             nazmc_nir::GlobalConst {
                 info,
                 typ: type_key,
-                value,
+                linkage,
             },
         );
     }
@@ -133,10 +134,10 @@ impl<'a> SemanticsAnalyzer<'a> {
         &mut self,
         decl_file_key: FileKey,
         type_expr_key: TypeExprKey,
-        expr_scope_key: ScopeKey,
+        linkage: Linkage,
         info: &ItemInfo,
         is_const: bool,
-    ) -> (Type, nazmc_nir::TypeKey, nazmc_nir::PtrKey) {
+    ) -> (Type, nazmc_nir::TypeKey, nazmc_nir::Linkage) {
         let current_file_key = self.current_file_key;
         let typed_ast_exprs = std::mem::take(&mut self.typed_ast.exprs);
         let typed_ast_lets = std::mem::take(&mut self.typed_ast.lets);
@@ -145,6 +146,22 @@ impl<'a> SemanticsAnalyzer<'a> {
         self.current_file_key = decl_file_key;
 
         let typ = self.analyze_type_expr(type_expr_key);
+
+        let Linkage::Local { expr_scope_key } = linkage else {
+            let linkage = if let Linkage::Extern { name } = linkage {
+                nazmc_nir::Linkage::Extern(name)
+            } else {
+                nazmc_nir::Linkage::ExternWithSameId
+            };
+
+            let Type::Concrete(concrete_ty) = &typ else {
+                unreachable!()
+            };
+
+            let type_key = self.nir_builder.get_unique_type(concrete_ty);
+
+            return (typ, type_key, linkage);
+        };
         let scope_type = self.infer_scope(expr_scope_key);
 
         if !self.semantics_stack.bad_consts_detected {
@@ -198,7 +215,7 @@ impl<'a> SemanticsAnalyzer<'a> {
         self.type_inf_ctx = type_inf_ctx;
         self.current_file_key = current_file_key;
 
-        (typ, type_key, value)
+        (typ, type_key, nazmc_nir::Linkage::Local(value))
     }
 
     fn analyze_cfg(&mut self, is_unit_typ: bool, cfg: &mut CFG, info: &ItemInfo) {
@@ -235,54 +252,64 @@ impl<'a> SemanticsAnalyzer<'a> {
             &self.nir_builder.nir,
             &mut self.interpreter_data,
         );
-        let value = interpreter.execute_cfg(&cfg, HashMap::new());
+        let value = interpreter.execute_const_static_cfg(&cfg, type_key);
+
+        let Err(err) = value else {
+            return value.unwrap();
+        };
+
         let global_type = if is_const {
             "الثابت"
         } else {
             "المشترك"
         };
 
-        if let Err(msg) = value {
-            let msg = format!(
-                "{} عند حساب قيمة {} `{}`",
-                msg,
-                global_type,
-                self.fmt_item_name(*info)
-            );
-            let const_id_span = info.id_span;
-            let mut code_window = CodeWindow::new(
-                &self.files_infos[self.current_file_key],
-                const_id_span.start,
-            );
-            code_window.mark_error(const_id_span, vec![]);
-            let diagnostic = Diagnostic::error(msg, vec![code_window]);
-            self.diagnostics.push(diagnostic);
+        let msg = match err {
+            InterpreterErr::ModifyingConstOrStatic => "يوجد محاولة تعديل على قيمة ثابت أو مشترك",
+            InterpreterErr::DanglingPtr => "تم العثور على مؤشر منقطع",
+            InterpreterErr::NonCompileTimeConst(_) => "يوجد محاولة قراءة ثابت مربوط",
+            InterpreterErr::NonCompileTimeStatic(_) => "يوجد محاولة قراءة مشترك مربوط",
+        };
 
-            return vec![0];
+        let msg = format!(
+            "{} عند حساب قيمة {} `{}`",
+            msg,
+            global_type,
+            self.fmt_item_name(*info)
+        );
+        let const_id_span = info.id_span;
+        let mut code_window = CodeWindow::new(
+            &self.files_infos[self.current_file_key],
+            const_id_span.start,
+        );
+        code_window.mark_error(const_id_span, vec![]);
+        let mut diagnostic = Diagnostic::error(msg, vec![code_window]);
+
+        if let InterpreterErr::NonCompileTimeConst(const_key) = err {
+            let const_key = ConstKey(const_key.0);
+            let const_file = self.ast.consts[const_key].info.file_key;
+            let const_span = self.ast.consts[const_key].info.id_span;
+
+            let msg = "تم ربط الثابت هنا".to_string();
+            let mut code_window = CodeWindow::new(&self.files_infos[const_file], const_span.start);
+            code_window.mark_note(const_span, vec![]);
+            let note = Diagnostic::note(msg, vec![code_window]);
+            diagnostic.chain(note);
+        } else if let InterpreterErr::NonCompileTimeStatic(static_key) = err {
+            let static_key = StaticKey(static_key.0);
+            let static_file = self.ast.statics[static_key].info.file_key;
+            let static_span = self.ast.statics[static_key].info.id_span;
+
+            let msg = "تم ربط المشترك هنا".to_string();
+            let mut code_window =
+                CodeWindow::new(&self.files_infos[static_file], static_span.start);
+            code_window.mark_note(static_span, vec![]);
+            let note = Diagnostic::note(msg, vec![code_window]);
+            diagnostic.chain(note);
         }
 
-        let value = value.unwrap();
+        self.diagnostics.push(diagnostic);
 
-        if interpreter
-            .check_dangling_pointer(&value, type_key)
-            .is_err()
-        {
-            let msg = format!(
-                "تم العثور على مؤشر منقطع عند حساب قيمة {} `{}`",
-                global_type,
-                self.fmt_item_name(*info)
-            );
-            let const_id_span = info.id_span;
-            let mut code_window = CodeWindow::new(
-                &self.files_infos[self.current_file_key],
-                const_id_span.start,
-            );
-            code_window.mark_error(const_id_span, vec![]);
-            let diagnostic = Diagnostic::error(msg, vec![code_window]);
-            self.diagnostics.push(diagnostic);
-            vec![0]
-        } else {
-            value
-        }
+        return vec![0];
     }
 }

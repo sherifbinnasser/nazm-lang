@@ -199,7 +199,11 @@ impl<'a> SemanticsAnalyzer<'a> {
             self.ast.consts[size_const].info.file_key,
             self.ast.consts[size_const].info.id_span,
         );
-        let ptr = self.nir_builder.nir.consts[&nazmc_nir::ConstKey(size_const.0)].value;
+        let nazmc_nir::Linkage::Local(ptr) =
+            self.nir_builder.nir.consts[&nazmc_nir::ConstKey(size_const.0)].linkage
+        else {
+            unreachable!()
+        };
         let size = self
             .interpreter_data
             .memory

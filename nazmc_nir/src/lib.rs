@@ -4,11 +4,8 @@ use nazmc_data_pool::{new_data_pool_key, typed_index_collections::TiVec, IdKey, 
 use nazmc_data_pool::{FileKey, PkgKey};
 use nazmc_diagnostics::file_info::FileInfo;
 use nazmc_diagnostics::span::Span;
-use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
 use std::hash::Hash;
-use std::hash::Hasher;
-use std::rc::Rc;
 use thin_vec::ThinVec;
 pub mod fmt;
 pub mod nir_analyzer;
@@ -71,7 +68,15 @@ pub struct Field {
 pub struct GlobalConst {
     pub info: ItemInfo,
     pub typ: TypeKey,
-    pub value: PtrKey,
+    pub linkage: Linkage,
+}
+
+#[derive(Default, Clone, Copy)]
+pub enum Linkage {
+    #[default]
+    ExternWithSameId,
+    Extern(StrKey),
+    Local(PtrKey),
 }
 
 pub struct Fn {

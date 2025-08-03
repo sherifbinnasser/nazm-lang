@@ -1,7 +1,7 @@
 use nazmc_ast::{
     ASTId, ArrayTypeExprKey, ConstKey, FnKey, FnLinkage, FnParam, Item, ItemPath, LetStmKey,
-    PathNoPkgKey, PathTypeExprKey, PathWithPkgKey, PkgPath, ScopeKey, StarImportStm, StaticKey,
-    StructKey, StructPathKey, VisModifier,
+    Linkage, PathNoPkgKey, PathTypeExprKey, PathWithPkgKey, PkgPath, ScopeKey, StarImportStm,
+    StaticKey, StructKey, StructPathKey, VisModifier,
 };
 use nazmc_data_pool::{
     typed_index_collections::{ti_vec, TiSlice, TiVec},
@@ -213,13 +213,15 @@ impl<'a> NameResolver<'a> {
         for i in 0..consts_len {
             names_stack.clear();
             let const_key = ConstKey::from(i);
+            let Linkage::Local { expr_scope_key } = self.ast.consts[const_key].linkage else {
+                continue;
+            };
             let at = self.ast.consts[const_key].info.file_key;
-            let scope_key = self.ast.consts[const_key].expr_scope_key;
             self.resolve_paths_in_scope(
                 at,
                 &mut names_stack,
                 None,
-                scope_key,
+                expr_scope_key,
                 &paths.paths_no_pkgs_exprs,
                 &mut resolved_paths_no_pkgs_exprs,
                 &resolved_imports,
@@ -232,13 +234,15 @@ impl<'a> NameResolver<'a> {
         for i in 0..statics_len {
             names_stack.clear();
             let static_key = StaticKey::from(i);
+            let Linkage::Local { expr_scope_key } = self.ast.statics[static_key].linkage else {
+                continue;
+            };
             let at = self.ast.statics[static_key].info.file_key;
-            let scope_key = self.ast.statics[static_key].expr_scope_key;
             self.resolve_paths_in_scope(
                 at,
                 &mut names_stack,
                 None,
-                scope_key,
+                expr_scope_key,
                 &paths.paths_no_pkgs_exprs,
                 &mut resolved_paths_no_pkgs_exprs,
                 &resolved_imports,

@@ -5,6 +5,14 @@ use std::collections::HashMap;
 mod mem;
 pub use mem::bytes;
 
+#[derive(Debug, Clone, Copy)]
+pub enum InterpreterErr {
+    ModifyingConstOrStatic,
+    DanglingPtr,
+    NonCompileTimeConst(ConstKey),
+    NonCompileTimeStatic(StaticKey),
+}
+
 pub struct Interpreter<'a> {
     nir: &'a NIR<'a>,
     current_cfg: Option<&'a CFG>,
@@ -43,7 +51,7 @@ impl<'a> Interpreter<'a> {
         }
     }
 
-    pub fn check_dangling_pointer(&mut self, value: &[u8], type_key: TypeKey) -> Result<(), ()> {
+    fn check_dangling_pointer(&mut self, value: &[u8], type_key: TypeKey) -> Result<(), ()> {
         match self.nir.types[type_key] {
             nazmc_nir::Type::Slice(type_key)
             | nazmc_nir::Type::MutSlice(type_key)
@@ -245,11 +253,27 @@ impl<'a> Interpreter<'a> {
         }
     }
 
+    pub fn execute_const_static_cfg(
+        &mut self,
+        cfg: &'a CFG,
+        type_key: TypeKey,
+    ) -> Result<Vec<u8>, InterpreterErr> {
+        let value = self.execute_cfg(cfg, HashMap::new());
+        if value.is_err() {
+            return value;
+        }
+        let value = value.unwrap();
+        if self.check_dangling_pointer(&value, type_key).is_err() {
+            return Err(InterpreterErr::DanglingPtr);
+        }
+        return Ok(value);
+    }
+
     pub fn execute_function(
         &mut self,
         fn_key: FnKey,
         args: HashMap<ArgKey, PtrKey>,
-    ) -> Result<Vec<u8>, &'static str> {
+    ) -> Result<Vec<u8>, InterpreterErr> {
         let function = &self.nir.fns[fn_key];
         let FnLinkage::Local(cfg) = &function.linkage else {
             unreachable!()
@@ -257,11 +281,11 @@ impl<'a> Interpreter<'a> {
         self.execute_cfg(&cfg, args)
     }
 
-    pub fn execute_cfg(
+    fn execute_cfg(
         &mut self,
         cfg: &'a CFG,
         args: HashMap<ArgKey, PtrKey>,
-    ) -> Result<Vec<u8>, &'static str> {
+    ) -> Result<Vec<u8>, InterpreterErr> {
         let prev_frame = std::mem::take(&mut self.current_frame);
         let prev_cfg = self.current_cfg;
         self.current_frame.args = args;
@@ -296,7 +320,7 @@ impl<'a> Interpreter<'a> {
         Ok(ret_value)
     }
 
-    fn execute_block(&mut self, bb: &BasicBlock) -> Result<Vec<u8>, &'static str> {
+    fn execute_block(&mut self, bb: &BasicBlock) -> Result<Vec<u8>, InterpreterErr> {
         for stm in &bb.stms {
             match stm {
                 Stm::Assign { lhs, rhs, typ } => {
@@ -304,7 +328,7 @@ impl<'a> Interpreter<'a> {
                     let rhs = self.evaluate_rvalue(rhs)?;
                     let lhs = self.evaluate_lvalue_ptr(*lhs)?;
                     if lhs.0 < self.data.memory.get_const_mem_len() {
-                        return Err("يوجد محاولة تعديل على قيمة ثابت أو مشترك");
+                        return Err(InterpreterErr::ModifyingConstOrStatic);
                     }
                     self.data.memory.push_bytes_at(lhs, &rhs);
                 }
@@ -314,7 +338,7 @@ impl<'a> Interpreter<'a> {
                     let val = self.evaluate_operand_kind(op)?.collect::<Vec<_>>();
                     let lhs = self.evaluate_lvalue_ptr(*lhs)?;
                     if lhs.0 < self.data.memory.get_const_mem_len() {
-                        return Err("يوجد محاولة تعديل على قيمة ثابت أو مشترك");
+                        return Err(InterpreterErr::ModifyingConstOrStatic);
                     }
                     self.data.memory.push_bytes_at(lhs, &val);
                 }
@@ -331,7 +355,7 @@ impl<'a> Interpreter<'a> {
         Ok(vec![])
     }
 
-    fn execute_branches(&mut self, bb: &BasicBlock) -> Result<(), &'static str> {
+    fn execute_branches(&mut self, bb: &BasicBlock) -> Result<(), InterpreterErr> {
         let cfg = self.current_cfg.unwrap();
         let next_block = if let Some(bk) = bb.conditional_goto {
             let branch = &cfg.branches[&bk];
@@ -355,34 +379,46 @@ impl<'a> Interpreter<'a> {
         Ok(())
     }
 
-    fn evaluate_operand_to_vec(&mut self, op: &Operand) -> Result<Vec<u8>, &'static str> {
+    fn evaluate_operand_to_vec(&mut self, op: &Operand) -> Result<Vec<u8>, InterpreterErr> {
         Ok(self.evaluate_operand(op)?.collect())
     }
 
     fn evaluate_operand(
         &mut self,
         op: &Operand,
-    ) -> Result<Box<dyn Iterator<Item = u8> + '_>, &'static str> {
+    ) -> Result<Box<dyn Iterator<Item = u8> + '_>, InterpreterErr> {
         self.evaluate_operand_kind(&op.kind)
     }
 
     fn evaluate_operand_kind(
         &mut self,
         kind: &OperandKind,
-    ) -> Result<Box<dyn Iterator<Item = u8> + '_>, &'static str> {
+    ) -> Result<Box<dyn Iterator<Item = u8> + '_>, InterpreterErr> {
         match kind {
             OperandKind::LValue(lv) => Ok(Box::new(self.evaluate_lvalue(*lv)?.iter().copied())),
             OperandKind::Const(c) => Ok(self.evaluate_constant(c)),
         }
     }
 
-    fn evaluate_lvalue_ptr(&mut self, lv: LValueKey) -> Result<PtrKey, &'static str> {
+    fn evaluate_lvalue_ptr(&mut self, lv: LValueKey) -> Result<PtrKey, InterpreterErr> {
         let cfg = self.current_cfg.unwrap();
 
         Ok(match cfg.lvalues[lv].kind {
             LValueKind::Binding(binding_key) => self.current_frame.bindings[binding_key],
-            LValueKind::Const(const_key) => self.nir.consts[&const_key].value,
-            LValueKind::Static(static_key) => self.nir.statics[&static_key].value,
+            LValueKind::Const(const_key) => {
+                if let Linkage::Local(value) = self.nir.consts[&const_key].linkage {
+                    value
+                } else {
+                    return Err(InterpreterErr::NonCompileTimeConst(const_key));
+                }
+            }
+            LValueKind::Static(static_key) => {
+                if let Linkage::Local(value) = self.nir.statics[&static_key].linkage {
+                    value
+                } else {
+                    return Err(InterpreterErr::NonCompileTimeStatic(static_key));
+                }
+            }
             LValueKind::Temp(temp_key) => self.current_frame.temps[temp_key],
             LValueKind::Arg(arg_key) => self.current_frame.args[&arg_key],
             LValueKind::Deref(on) | LValueKind::MutDeref(on) => {
@@ -434,10 +470,10 @@ impl<'a> Interpreter<'a> {
         })
     }
 
-    fn evaluate_lvalue(&mut self, lv: LValueKey) -> Result<&[u8], &'static str> {
+    fn evaluate_lvalue(&mut self, lv: LValueKey) -> Result<&[u8], InterpreterErr> {
         let ptr_key = self.evaluate_lvalue_ptr(lv)?;
         if ptr_key.0 < 0 || ptr_key.0 >= self.data.memory.get_top().0 {
-            Err("يوجد محاولة وصول إلى بيانات من مؤشر منقطع")
+            Err(InterpreterErr::DanglingPtr)
         } else {
             Ok(self.get_bytes_at(ptr_key, self.current_cfg.unwrap().lvalues[lv].typ))
         }
@@ -467,7 +503,7 @@ impl<'a> Interpreter<'a> {
         Box::new(bytes.into_iter())
     }
 
-    fn evaluate_rvalue(&mut self, rvalue: &RValue) -> Result<Vec<u8>, &'static str> {
+    fn evaluate_rvalue(&mut self, rvalue: &RValue) -> Result<Vec<u8>, InterpreterErr> {
         Ok(match rvalue {
             RValue::Use(op) => self.evaluate_operand_to_vec(op)?,
             RValue::Str(sk) => self
@@ -522,7 +558,7 @@ impl<'a> Interpreter<'a> {
         })
     }
 
-    fn apply_unaryop(&mut self, op: UnaryOp, operand: &Operand) -> Result<Vec<u8>, &'static str> {
+    fn apply_unaryop(&mut self, op: UnaryOp, operand: &Operand) -> Result<Vec<u8>, InterpreterErr> {
         let typ = operand.typ;
         let val = self.evaluate_operand_to_vec(operand)?;
 
@@ -573,7 +609,7 @@ impl<'a> Interpreter<'a> {
         op: BinOp,
         lhs: &Operand,
         rhs: &Operand,
-    ) -> Result<Vec<u8>, &'static str> {
+    ) -> Result<Vec<u8>, InterpreterErr> {
         let lhs_typ = lhs.typ;
         let rhs_typ = rhs.typ;
         let lhs = self.evaluate_operand_to_vec(lhs)?;
@@ -697,7 +733,7 @@ impl<'a> Interpreter<'a> {
         })
     }
 
-    fn apply_cast(&mut self, val: &Operand, kind: CastKind) -> Result<Vec<u8>, &'static str> {
+    fn apply_cast(&mut self, val: &Operand, kind: CastKind) -> Result<Vec<u8>, InterpreterErr> {
         use CastKind::*;
         use Size::*;
 

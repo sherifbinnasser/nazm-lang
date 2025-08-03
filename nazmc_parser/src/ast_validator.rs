@@ -1,5 +1,5 @@
 use crate::*;
-use nazmc_ast::{ASTId, ExprKind, FnLinkage, ReturnExpr, ScopeKey};
+use nazmc_ast::{ASTId, ExprKind, FnLinkage, Linkage, ReturnExpr, ScopeKey};
 use nazmc_data_pool::{typed_index_collections::TiSlice, IdKey};
 use nazmc_diagnostics::eprint_diagnostics;
 use std::{collections::HashMap, process::exit};
@@ -210,10 +210,22 @@ impl<'a> ASTValidator<'a> {
                 syntax::FileItem::WithoutModifier(item) => (item, nazmc_ast::VisModifier::Default),
             };
 
+            let is_const = matches!(&item, Item::ExternConst(_) | Item::Const(_));
+
             match item {
-                Item::Const(c) => {
-                    let body = c.body.unwrap();
-                    let name = body.id;
+                Item::ExternConst(ExternConst {
+                    extern_decl,
+                    id,
+                    typ,
+                    ..
+                })
+                | Item::ExternStatic(ExternStatic {
+                    extern_decl,
+                    id,
+                    typ,
+                    ..
+                }) => {
+                    let name = id.unwrap();
                     let id_key = name.data.val;
                     let id_span = name.span;
 
@@ -229,23 +241,43 @@ impl<'a> ASTValidator<'a> {
                         id_span,
                     };
 
-                    let typ = self.lower_type(body.typ.unwrap());
+                    let typ = self.lower_type(typ.unwrap());
 
-                    let expr_scope_key =
-                        self.lower_staic_or_const_expr_to_scope(body.expr.unwrap());
+                    let linkage = if let Some(link_name) = extern_decl.link_name {
+                        let LiteralKind::Str(str_key) = link_name.data else {
+                            unreachable!()
+                        };
+                        Linkage::Extern { name: str_key }
+                    } else {
+                        Linkage::ExternWithSameId
+                    };
 
-                    let key = self.ast.consts.push_and_get_key(nazmc_ast::Const {
-                        info,
-                        typ,
-                        expr_scope_key,
-                    });
-
-                    let item = nazmc_ast::Item::Const { vis, key };
-
+                    let item = if is_const {
+                        let key = self.ast.consts.push_and_get_key(nazmc_ast::Const {
+                            info,
+                            typ,
+                            linkage,
+                        });
+                        nazmc_ast::Item::Const { vis, key }
+                    } else {
+                        let key = self.ast.statics.push_and_get_key(nazmc_ast::Static {
+                            info,
+                            typ,
+                            linkage,
+                        });
+                        nazmc_ast::Item::Static { vis, key }
+                    };
                     self.ast.state.pkgs_to_items[self.pkg_key].insert(id_key, item);
                 }
-                Item::Static(s) => {
-                    let body = s.body.unwrap();
+                Item::Const(ConstStm {
+                    const_keyword: _,
+                    body,
+                })
+                | Item::Static(StaticStm {
+                    static_keyword: _,
+                    body,
+                }) => {
+                    let body = body.unwrap();
                     let name = body.id;
                     let id_key = name.data.val;
                     let id_span = name.span;
@@ -267,14 +299,23 @@ impl<'a> ASTValidator<'a> {
                     let expr_scope_key =
                         self.lower_staic_or_const_expr_to_scope(body.expr.unwrap());
 
-                    let key = self.ast.statics.push_and_get_key(nazmc_ast::Static {
-                        info,
-                        typ,
-                        expr_scope_key,
-                    });
+                    let linkage = Linkage::Local { expr_scope_key };
 
-                    let item = nazmc_ast::Item::Static { vis, key };
-
+                    let item = if is_const {
+                        let key = self.ast.consts.push_and_get_key(nazmc_ast::Const {
+                            info,
+                            typ,
+                            linkage,
+                        });
+                        nazmc_ast::Item::Const { vis, key }
+                    } else {
+                        let key = self.ast.statics.push_and_get_key(nazmc_ast::Static {
+                            info,
+                            typ,
+                            linkage,
+                        });
+                        nazmc_ast::Item::Static { vis, key }
+                    };
                     self.ast.state.pkgs_to_items[self.pkg_key].insert(id_key, item);
                 }
                 Item::Struct(s) => {
@@ -588,7 +629,9 @@ impl<'a> ASTValidator<'a> {
                         let size_const = self.ast.consts.push_and_get_key(nazmc_ast::Const {
                             info: size_info,
                             typ: size_typ,
-                            expr_scope_key: size,
+                            linkage: Linkage::Local {
+                                expr_scope_key: size,
+                            },
                         });
 
                         let key = self.ast.types_exprs.arrays.push_and_get_key(
@@ -1499,7 +1542,9 @@ impl<'a> ASTValidator<'a> {
             let size_const = self.ast.consts.push_and_get_key(nazmc_ast::Const {
                 info: size_info,
                 typ: size_typ,
-                expr_scope_key: size,
+                linkage: Linkage::Local {
+                    expr_scope_key: size,
+                },
             });
 
             let array_elements_sized_expr =

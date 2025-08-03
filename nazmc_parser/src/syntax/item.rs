@@ -43,10 +43,36 @@ pub(crate) struct ItemWithVisibility {
 
 #[derive(NazmcParse, Debug)]
 pub(crate) enum Item {
+    ExternConst(ExternConst),
+    ExternStatic(ExternStatic),
     Const(ConstStm),
     Static(StaticStm),
     Struct(Struct),
     Fn(Fn),
+}
+
+#[derive(NazmcParse, Debug)]
+pub(crate) struct ExternDecl {
+    pub(crate) extern_keyword: ExternKeyword,
+    pub(crate) link_name: Option<LiteralExpr>,
+}
+
+#[derive(NazmcParse, Debug)]
+pub(crate) struct ExternConst {
+    pub(crate) extern_decl: ExternDecl,
+    pub(crate) const_keyword: ConstKeyword,
+    pub(crate) id: ParseResult<Id>,
+    pub(crate) colon: ParseResult<ColonSymbol>,
+    pub(crate) typ: ParseResult<Type>,
+}
+
+#[derive(NazmcParse, Debug)]
+pub(crate) struct ExternStatic {
+    pub(crate) extern_decl: ExternDecl,
+    pub(crate) static_keyword: StaticKeyword,
+    pub(crate) id: ParseResult<Id>,
+    pub(crate) colon: ParseResult<ColonSymbol>,
+    pub(crate) typ: ParseResult<Type>,
 }
 
 #[derive(NazmcParse, Debug)]
@@ -93,12 +119,6 @@ generateDelimitedPunctuated!(
     StructField,
     CloseCurlyBraceSymbol
 );
-
-#[derive(NazmcParse, Debug)]
-pub(crate) struct ExternDecl {
-    pub(crate) extern_keyword: ExternKeyword,
-    pub(crate) link_name: Option<LiteralExpr>,
-}
 
 #[derive(NazmcParse, Debug)]
 pub(crate) struct Fn {

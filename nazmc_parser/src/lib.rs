@@ -491,6 +491,32 @@ impl<'a> ParseErrorsReporter<'a> {
             };
 
             match item {
+                Item::ExternConst(ExternConst {
+                    extern_decl: _,
+                    const_keyword: _,
+                    id,
+                    colon,
+                    typ,
+                })
+                | Item::ExternStatic(ExternStatic {
+                    extern_decl: _,
+                    static_keyword: _,
+                    id,
+                    colon,
+                    typ,
+                }) => {
+                    if let Err(err) = id {
+                        self.report_expected("مُعرِّف", err, vec![]);
+                        return;
+                    }
+
+                    if let Err(err) = colon {
+                        self.report_expected("`:`", err, vec![]);
+                        return;
+                    }
+
+                    self.check_type_result(typ);
+                }
                 Item::Const(_const) => self.check_const_static_stm_body(&_const.body),
                 Item::Static(_static) => self.check_const_static_stm_body(&_static.body),
                 Item::Struct(s) => self.check_struct(s),
