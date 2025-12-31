@@ -349,8 +349,14 @@ impl<'a> NameResolver<'a> {
                         continue 'label;
                     }
 
+                    // Here is the problem I think
                     // Searching in fn params
-                    if let (Some(fn_key), 0) = (fn_key, stack_start_idx) {
+
+                    // So, the algorithm just doing linear search for defined names in reverse
+                    // Hmmm, but why we restrict stack_start_idx to be zero
+
+                    // I think this would work
+                    if let Some(fn_key) = fn_key {
                         if let Some(idx) = self.ast.fns[fn_key].params.iter().position(
                             |FnParam {
                                  ast_id: ASTId { id, .. },
