@@ -1088,6 +1088,28 @@ impl<'a> SemanticsAnalyzer<'a> {
                 let lhs = self.lower_expr(binary_op_expr.left);
                 let rhs = self.lower_expr(binary_op_expr.right);
 
+                let is_void_ptr_arithmetic = matches!(
+                    binary_op_expr.op,
+                    nazmc_ast::BinOp::Plus
+                        | nazmc_ast::BinOp::Minus
+                        | nazmc_ast::BinOp::PlusAssign
+                        | nazmc_ast::BinOp::MinusAssign
+                ) && {
+                    let lhs_ty = &self.nir_builder.nir.types[lhs.typ];
+                    if let Type::Ptr(inner) | Type::MutPtr(inner) = lhs_ty {
+                        matches!(self.nir_builder.nir.types[*inner], Type::Unit)
+                    } else {
+                        false
+                    }
+                };
+
+                if is_void_ptr_arithmetic {
+                    self.add_cannot_perform_arithmetic_on_void_ptr_err(
+                        get_bin_op_span(binary_op_expr.op, binary_op_expr.op_span_cursor),
+                        self.get_expr_span(binary_op_expr.left),
+                    );
+                }
+
                 if let (OperandKind::Const(lhs), OperandKind::Const(rhs)) = (lhs.kind, rhs.kind) {
                     macro_rules! eval_bin_op_int_const {
 			($op: tt) => {

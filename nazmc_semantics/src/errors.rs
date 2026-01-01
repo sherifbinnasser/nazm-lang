@@ -1087,4 +1087,40 @@ impl<'a> SemanticsAnalyzer<'a> {
         let diagnostic = Diagnostic::error(msg, vec![code_window]);
         self.diagnostics.push(diagnostic);
     }
+
+    pub(crate) fn add_cannot_perform_arithmetic_on_void_ptr_err(
+        &mut self,
+        op_span: Span,
+        expr_span: Span,
+    ) {
+        let mut code_window =
+            CodeWindow::new(&self.files_infos[self.current_file_key], expr_span.start);
+
+        code_window.mark_error(
+            expr_span,
+            vec!["لا يمكن إجراء عمليات حسابية على مؤشر فارغ".into()],
+        );
+        code_window.mark_secondary(op_span, vec![]);
+
+        let mut diagnostic = Diagnostic::error(
+            "عملية حسابية غير صالحة على مؤشر فارغ".into(),
+            vec![code_window],
+        );
+
+        let note = Diagnostic::note(
+            "المؤشر الفارغ يمثل النوع *() أو *متغير()، فهو يشير إلى قيمة حجمها صفر؛ لذا لا يمكن إجراء عمليات حسابية عليه".into(),
+            vec![]
+        );
+
+        let help = Diagnostic::help(
+            "قم بتحويل المؤشر إلى نوع آخر قبل إجراء العملية الحسابية عن طريق استخدام المؤثر `كـ`"
+                .into(),
+            vec![],
+        );
+
+        diagnostic.chain(note);
+        diagnostic.chain(help);
+
+        self.diagnostics.push(diagnostic);
+    }
 }
