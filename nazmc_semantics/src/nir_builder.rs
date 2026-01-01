@@ -921,7 +921,13 @@ impl<'a> SemanticsAnalyzer<'a> {
                 } = self.lower_expr(idx_expr.idx);
 
                 // TODO: Support ranges indexing
-                let lvalue = if let Type::Ptr(_) = lvalue_typ {
+                let lvalue = if let Type::Ptr(inner) = lvalue_typ {
+                    if matches!(self.nir_builder.nir.types[inner], Type::Unit) {
+                        self.add_cannot_perform_arithmetic_on_void_ptr_err(
+                            idx_expr.brackets_span,
+                            self.get_expr_span(idx_expr.on),
+                        );
+                    }
                     let OperandKind::LValue(temp_key) = self.add_new_temp_assign_stm(
                         lvalue_typ_key,
                         RValue::BinOp {
@@ -933,7 +939,13 @@ impl<'a> SemanticsAnalyzer<'a> {
                         unreachable!()
                     };
                     LValueKind::Deref(temp_key)
-                } else if let Type::MutPtr(_) = lvalue_typ {
+                } else if let Type::MutPtr(inner) = lvalue_typ {
+                    if matches!(self.nir_builder.nir.types[inner], Type::Unit) {
+                        self.add_cannot_perform_arithmetic_on_void_ptr_err(
+                            idx_expr.brackets_span,
+                            self.get_expr_span(idx_expr.on),
+                        );
+                    }
                     let OperandKind::LValue(temp_key) = self.add_new_temp_assign_stm(
                         lvalue_typ_key,
                         RValue::BinOp {
