@@ -63,12 +63,17 @@ impl<'ctx, 'nir> LLVMCodeGen<'ctx, 'nir> {
             self.lower_block_jmp(&cfg.basic_blocks[&BasicBlockKey::START_BASIC_BLOCK], cfg);
 
             // Lower basic blocks
-            for (&bb_key, bb) in &cfg.basic_blocks {
-                if bb_key == BasicBlockKey::START_BASIC_BLOCK
-                    || bb_key == BasicBlockKey::END_BASIC_BLOCK
-                {
-                    continue;
-                }
+            let mut sorted_bbs = cfg
+                .basic_blocks
+                .iter()
+                .filter(|&(&bb_key, _)| {
+                    bb_key != BasicBlockKey::START_BASIC_BLOCK
+                        && bb_key != BasicBlockKey::END_BASIC_BLOCK
+                })
+                .collect::<Vec<_>>();
+            sorted_bbs.sort_by_key(|(k, _)| *k);
+
+            for (bb_key, bb) in sorted_bbs {
                 self.builder
                     .position_at_end(self.basic_blocks.borrow()[&bb_key]);
 
